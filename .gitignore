@@ -1,0 +1,9 @@
+archive/*
+*.log
+*.tmp
+.DS_Store
+quick_test_*/
+results/*
+unmicst*/
+rawdata/*
+mcmicro_env/*
