@@ -7,3 +7,5 @@ results/*
 unmicst*/
 rawdata/*
 mcmicro_env/*
+.nextflow*
+work/*
