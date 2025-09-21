@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  spatial-analysis:
+    build: .
+    container_name: spatial_analysis
+    volumes:
+      - ./spatial_pipeline:/app/spatial_pipeline:ro
+      - ./spatial_analysis:/app/spatial_analysis
+      - ./configs:/app/configs:ro
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    profiles:
+      - spatial
+
+  # Interactive session for development/debugging
+  spatial-dev:
+    build: .
+    container_name: spatial_dev
+    volumes:
+      - ./spatial_pipeline:/app/spatial_pipeline:ro
+      - ./spatial_analysis:/app/spatial_analysis
+      - ./configs:/app/configs
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    command: bash
+    stdin_open: true
+    tty: true
+    profiles:
+      - dev
