@@ -9,3 +9,4 @@ rawdata/*
 mcmicro_env/*
 .nextflow*
 phenotype_analysis/*
+spatial_analysis/outputs/*

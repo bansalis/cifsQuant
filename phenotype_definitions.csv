@@ -1,4 +1,0 @@
-phenotype_name,positive_markers,negative_markers,description
-Tumor cells,R1.0.1_TOM,,Tumor cells expressing TOM
-T cells,R1.0.4_CY5_CD45;R2.0.4_FITC_CD3,,T lymphocytes
-CD8+ T cells,R1.0.4_CY5_CD45;R2.0.4_FITC_CD3;R2.0.4_CY5_CD8B,,Cytotoxic T cells
