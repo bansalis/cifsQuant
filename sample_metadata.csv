@@ -1,3 +1,20 @@
 sample_id,group,treatment,timepoint
-GUEST29,control,vehicle,day0
-GUEST30,treatment,drug_A,day7
+GUEST29,cis,none,8
+GUEST30,trans,none,8
+Guest31,cis,none,10
+Guest32,trans,none,10
+Guest33,KPT Het trans,none,10
+Guest34,cis,none,12
+Guest35,trans,none,12
+Guest36,KPT Het cis,none,12
+Guest37,KPT Het trans,none,12
+Guest38,cis,none,14
+Guest39,trans,none,14
+Guest40,KPT Het cis,none,14
+Guest41,cis,none,16
+Guest42,trans,none,16
+Guest43,cis,none,18
+Guest44,trans,none,18
+Guest45,cis,none,20
+Guest46,trans,none,20
+Guest47,KPT Het cis,none,20
