@@ -10,3 +10,14 @@ mcmicro_env/*
 .nextflow*
 phenotype_analysis/*
 spatial_analysis/outputs/*
+scripts/minerva_author.exe
+manual_gating_output/*
+phenotyping_output/*
+scimap_analysis/*
+spatial_analysis_output/*
+subtype_analysis_output/*
+work/*
+test.ipynb
+run_cellprofiler_analyst.sh
+run_complete_spatial_analysis.sh
+run_enhanced_spatial.sh

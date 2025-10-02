@@ -82,6 +82,7 @@ containers=(
     "biocontainers/cellpose:3.0.1_cv1"
     "labsyspharm/quantification:latest"
     "labsyspharm/scimap:0.17.7"
+    "labsyspharm/basic-illumination:1.0.0"
 )
 
 for container in "${containers[@]}"; do
@@ -166,9 +167,9 @@ for img in "${selected[@]}"; do
         --markers_csv markers.csv
         --outdir "$outdir"
         --sample_name "$sample_name"
-        --tile_size 2048
-        --overlap 256
-        --pyramid_level 1
+        --tile_size 8192
+        --overlap 1024
+        --pyramid_level 0
         --cellpose true
         --mcquant true
         --scimap true
@@ -295,9 +296,9 @@ except Exception as e:
             --markers_csv markers.csv \
             --outdir results \
             --sample_name GUEST29 \
-            --tile_size 2048 \
-            --overlap 256 \
-            --pyramid_level 1 \
+            --tile_size 8192 \
+            --overlap 1024 \
+            --pyramid_level 0 \
             --cellpose true \
             --mcquant true \
             --scimap true \
