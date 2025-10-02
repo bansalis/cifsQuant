@@ -50,6 +50,22 @@ bash run_pipeline.sh
 
 **Output**: `results/[SAMPLE]/final/combined_quantification.csv`
 
+check status
+
+watch -n 10 '
+WORK=$(find work -type f -name ".command.log" -mmin -10 | head -1 | xargs dirname 2>/dev/null);
+echo "Work: $WORK";
+echo "";
+echo "=== Progress (from log) ===";
+tail -3 $WORK/.command.log 2>/dev/null;
+echo "";
+echo "=== Tiles Created ===";
+ls $WORK/tile_*.tif 2>/dev/null | wc -l;
+echo "";
+echo "=== CPU Usage ===";
+docker stats --no-stream | grep nxf
+'
+
 ### Stage 2: Cell Phenotyping and Statistical Analysis
 
 Build Docker image:

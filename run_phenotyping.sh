@@ -1,54 +1,78 @@
 #!/bin/bash
 
-# Run Phenotyping Pipeline
-
+# Configurable Phenotyping Workflow Runner - Auto-processes all samples
 set -euo pipefail
 
-echo "🧬 Running Cell Phenotyping Pipeline"
-echo "==================================="
+CONFIG_FILE=${1:-"phenotyping_config.yaml"}
 
-# Copy phenotyping scripts and configs
-echo "Setting up phenotyping files..."
-cp scripts/phenotype_cells.py spatial_analysis/scripts/
-cp configs/phenotyping_config.yaml spatial_analysis/configs/
-
-# Check if integrated data exists
-INTEGRATED_FILE=$(find spatial_analysis/outputs/integrated_data -name "*_integrated.h5ad" | head -1)
-
-if [ -z "$INTEGRATED_FILE" ]; then
-    echo "❌ Error: No integrated h5ad file found"
-    echo "Run batch loading first: ./run_batch_loading.sh"
-    exit 1
-fi
-
-echo "Found integrated data: $INTEGRATED_FILE"
-
-# Run phenotyping
+echo "🔬 CONFIGURABLE PHENOTYPING WORKFLOW"
+echo "====================================="
+echo "Config: ${CONFIG_FILE}"
 echo ""
-echo "🚀 Running phenotyping..."
-echo "========================"
 
-docker run --rm \
-    -v "$(pwd)/spatial_analysis:/app/spatial_analysis" \
-    spatial-analysis:latest \
-    /app/spatial_analysis/scripts/phenotype_cells.py \
-    --config /app/spatial_analysis/configs/experiment_config.yaml \
-    --phenotype-config /app/spatial_analysis/configs/phenotyping_config.yaml \
-    --input "/app/spatial_analysis/outputs/integrated_data/$(basename "$INTEGRATED_FILE")" \
-    --output /app/spatial_analysis/outputs
-
-# Check results
-if [ -f "spatial_analysis/outputs/phenotyping/"*"_phenotyped.h5ad" ]; then
-    echo ""
-    echo "✅ Phenotyping successful!"
-    echo "========================="
-    echo "Results saved to: spatial_analysis/outputs/phenotyping/"
-    echo ""
-    echo "Files created:"
-    ls -la spatial_analysis/outputs/phenotyping/
-    echo ""
-    echo "Next step: Run spatial neighborhood analysis"
-else
-    echo "❌ Phenotyping failed - check logs above"
+# Check if config exists
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "❌ Config file not found: ${CONFIG_FILE}"
     exit 1
 fi
+
+# Find all samples in results directory
+echo "Scanning for completed samples in results/..."
+samples=()
+for sample_dir in results/*/; do
+    if [[ -d "$sample_dir" ]]; then
+        sample_name=$(basename "$sample_dir")
+        csv_file="${sample_dir}final/combined_quantification.csv"
+        if [[ -f "$csv_file" ]]; then
+            samples+=("$sample_name")
+        fi
+    fi
+done
+
+if [[ ${#samples[@]} -eq 0 ]]; then
+    echo "❌ No completed samples found in results/"
+    echo "Expected: results/SAMPLE_NAME/final/combined_quantification.csv"
+    exit 1
+fi
+
+echo "Found ${#samples[@]} sample(s): ${samples[*]}"
+echo ""
+
+# Process each sample
+for SAMPLE_NAME in "${samples[@]}"; do
+    echo "Processing sample: ${SAMPLE_NAME}"
+    
+    # Step 1: Setup workflow
+    echo "Setting up workflow..."
+    python3 phenotyping_workflow.py --sample "${SAMPLE_NAME}" --config "${CONFIG_FILE}"
+
+    
+    OUTPUT_DIR="phenotyping_analysis/${SAMPLE_NAME}"
+    
+    echo ""
+    echo "Running SCIMAP phenotyping for ${SAMPLE_NAME}..."
+    
+    # Run SCIMAP using the generated script
+    docker run --rm \
+        -v "$(pwd)/${OUTPUT_DIR}:/data" \
+        -v "$(pwd)/${CONFIG_FILE}:/config.yaml" \
+        labsyspharm/scimap:latest \
+        python /data/scimap_results/run_phenotyping.py
+    
+    echo "✅ ${SAMPLE_NAME} complete!"
+    echo ""
+done
+
+echo "🎉 ALL SAMPLES PROCESSED!"
+echo ""
+echo "Results structure:"
+echo "phenotyping_analysis/"
+for SAMPLE_NAME in "${samples[@]}"; do
+    echo "├── ${SAMPLE_NAME}/"
+    echo "│   └── scimap_results/"
+    echo "│       ├── phenotyped_cells.csv"
+    echo "│       ├── phenotype_counts.csv"
+    echo "│       └── phenotyped_data.h5ad"
+done
+echo ""
+echo "To modify phenotypes, edit ${CONFIG_FILE} and re-run"

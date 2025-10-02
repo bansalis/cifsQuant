@@ -47,6 +47,8 @@ params.cyto_batch_size_tiles = 4  // Process 4 tiles per cyto batch
 process TILE_LARGE_IMAGE {
     tag "$sample_name"
     publishDir "${params.outdir}/tiles", mode: 'copy'
+    cpus 4
+    memory '32.GB'
     
     input:
     path image
@@ -64,101 +66,99 @@ process TILE_LARGE_IMAGE {
     script:
     """
 #!/usr/bin/env python3
-
 import tifffile
 import numpy as np
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
+import gc
 import os
-from pathlib import Path
-import pandas as pd
 
-def load_ome_tiff_properly(input_path, level=0):
-    \"\"\"Load OME-TIFF using the same method as the alignment script.\"\"\"
-    print(f"Loading OME-TIFF: {input_path}")
+def extract_tile(args):
+    y, x, y_end, x_end, input_path, n_channels, dapi_ch = args
     
-    with tifffile.TiffFile(input_path) as tif:
-        print(f"TIFF file has {len(tif.pages)} total pages")
-        print(f"TIFF file has {len(tif.series)} series (pyramid levels)")
+    try:
+        with tifffile.TiffFile(input_path) as tif:
+            pages = tif.series[0].pages if hasattr(tif, 'series') else tif.pages
+            
+            # Quick DAPI check
+            dapi = pages[dapi_ch].asarray()[y:y_end, x:x_end]
+            if dapi.max() == 0:
+                del dapi
+                return None
+            
+            # Check for nuclei signal
+            has_nuclei = np.percentile(dapi, 95) > np.percentile(dapi, 5) * 2
+            if not has_nuclei:
+                del dapi
+                return None
+            
+            # Read all channels
+            tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
+            for c in range(n_channels):
+                tile[c] = pages[c].asarray()[y:y_end, x:x_end]
         
-        if level >= len(tif.series):
-            print(f"Level {level} not available, using level 0")
-            level = 0
+        filename = f"tile_y{y:06d}_x{x:06d}.tif"
+        tifffile.imwrite(filename, tile, photometric='minisblack', compression='lzw')
         
-        selected_series = tif.series[level]
-        print(f"Using pyramid level {level} with {len(selected_series.pages)} pages")
+        # Free memory immediately
+        del tile, dapi
+        gc.collect()
         
-        image_data = selected_series.asarray()
-        print(f"Loaded series as array with shape: {image_data.shape}")
-        
-        if image_data.ndim == 2:
-            image_data = image_data[np.newaxis, :, :]
-        elif image_data.ndim == 3:
-            if image_data.shape[0] > 20:
-                image_data = np.transpose(image_data, (2, 0, 1))
-        elif image_data.ndim == 4 and image_data.shape[0] == 1:
-            image_data = image_data[0]
-        
-        channels, height, width = image_data.shape
-        print(f"Final image shape: {channels} channels, {height}x{width} pixels")
-        
-        return image_data
+        return {
+            'filename': filename,
+            'y_start': y, 'x_start': x,
+            'y_end': y_end, 'x_end': x_end,
+            'height': y_end - y, 'width': x_end - x,
+            'channels': n_channels,
+            'has_data': True
+        }
+    except Exception as e:
+        print(f"Error tile y{y}_x{x}: {e}", file=sys.stderr)
+        return None
 
-def tile_image(input_path, output_dir, tile_size=${tile_size}, overlap=${overlap}, level=${pyramid_level}):
-    print(f"Processing image: {input_path}")
-    
-    image = load_ome_tiff_properly(input_path, level)
-    channels, height, width = image.shape
-    
-    step = tile_size - overlap
-    tile_info = []
-    
-    tile_count = 0
-    tiles_with_data = 0
-    
-    for y in range(0, height - overlap, step):
-        for x in range(0, width - overlap, step):
-            y_end = min(y + tile_size, height)
-            x_end = min(x + tile_size, width)
-            
-            tile = image[:, y:y_end, x:x_end]
-            tile_filename = f"tile_y{y:06d}_x{x:06d}.tif"
-            
-            # Check if tile has meaningful data
-            has_data = bool(tile.max() > 0)
-            dapi_signal = tile[${params.dapi_channel}] if tile.shape[0] > ${params.dapi_channel} else tile[0]
-            has_nuclei = np.percentile(dapi_signal, 95) > np.percentile(dapi_signal, 5) * 2
-            
-            if has_data and has_nuclei:
-                tiles_with_data += 1
-                tifffile.imwrite(tile_filename, tile, photometric='minisblack')
-                
-                tile_info.append({
-                    'filename': tile_filename,
-                    'y_start': y, 'x_start': x, 'y_end': y_end, 'x_end': x_end,
-                    'height': y_end - y, 'width': x_end - x,
-                    'channels': channels, 'has_data': has_data
-                })
-            else:
-                if tile_count < 3:
-                    print(f"Skipping tile {tile_count + 1}: {tile_filename} (no nuclei signal)")
-            
-            tile_count += 1
-    
-    print(f"\\nTILING SUMMARY: {tile_count} total tiles, {tiles_with_data} with meaningful data")
-    return tile_info
+# Get metadata without loading full image
+print("Reading image metadata...")
+with tifffile.TiffFile('${image}') as tif:
+    pages = tif.series[0].pages if hasattr(tif, 'series') else tif.pages
+    n_channels = len(pages)
+    height = pages[0].shape[0]
+    width = pages[0].shape[1]
 
-# Process the image
-tile_info = tile_image('${image}', '.', ${tile_size}, ${overlap}, ${pyramid_level})
+print(f"Image: {n_channels} channels, {height}x{width} pixels")
 
-# Create markers CSV
-if os.path.exists('${params.markers_csv}' if '${params.markers_csv}' != 'null' else ''):
-    import shutil
-    shutil.copy('${params.markers_csv}', 'markers_tiled.csv')
-else:
-    with open('markers_tiled.csv', 'w') as f:
-        f.write("marker_name\\n")
-        for i in range(tile_info[0]['channels'] if tile_info else 10):
-            f.write(f"Channel_{i+1}\\n")
+# Generate tile coordinates
+step = ${tile_size} - ${overlap}
+coords = []
+for y in range(0, height - ${overlap}, step):
+    for x in range(0, width - ${overlap}, step):
+        y_end = min(y + ${tile_size}, height)
+        x_end = min(x + ${tile_size}, width)
+        coords.append((y, x, y_end, x_end, '${image}', n_channels, ${params.dapi_channel}))
+
+print(f"Processing {len(coords)} tiles in batches (4 concurrent)...")
+sys.stdout.flush()
+
+# Process in batches with limited concurrency to avoid OOM
+tile_info = []
+batch_size = 20
+max_workers = 4
+
+for batch_start in range(0, len(coords), batch_size):
+    batch = coords[batch_start:batch_start + batch_size]
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(extract_tile, c): c for c in batch}
+        
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                tile_info.append(result)
+    
+    print(f"Progress: {len(tile_info)}/{len(coords)}", flush=True)
+    gc.collect()  # Force cleanup between batches
+
+print(f"\\nTILING SUMMARY: {len(coords)} total tiles, {len(tile_info)} with meaningful data")
 
 # Save outputs
 with open('tile_info.json', 'w') as f:
@@ -168,7 +168,57 @@ with open('tile_list.txt', 'w') as f:
     for info in tile_info:
         f.write(info['filename'] + "\\n")
 
-print("Tiling completed!")
+# Create markers CSV - same as old code
+markers_param = '${params.markers_csv}'
+if markers_param != 'null' and markers_param != '':
+    try:
+        import shutil
+        shutil.copy(markers_param, 'markers_tiled.csv')
+        print(f"Copied markers from {markers_param}")
+    except Exception as e:
+        print(f"Could not copy markers file: {e}, creating default")
+        with open('markers_tiled.csv', 'w') as f:
+            f.write("marker_name\\n")
+            for i in range(tile_info[0]['channels'] if tile_info else n_channels):
+                f.write(f"Channel_{i+1}\\n")
+else:
+    with open('markers_tiled.csv', 'w') as f:
+        f.write("marker_name\\n")
+        for i in range(tile_info[0]['channels'] if tile_info else n_channels):
+            f.write(f"Channel_{i+1}\\n")
+
+print(f"Tiling completed! Created {len(tile_info)} tiles")
+    """
+}
+
+process BACKGROUND_SUBTRACT {
+    publishDir "${params.outdir}/background_corrected", mode: 'copy'
+    
+    input:
+    path tile
+    
+    output:
+    path "*_corrected.tif", emit: corrected
+    
+    script:
+    """
+    python3 - <<'EOF'
+import tifffile
+import numpy as np
+
+img = tifffile.imread('${tile}')
+
+# Per-channel 2nd percentile subtraction (MCMICRO standard)
+for c in range(img.shape[0]):
+    channel = img[c]
+    positive = channel[channel > 0]
+    
+    if len(positive) > 0:
+        bg = np.percentile(positive, 2)
+        img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
+
+tifffile.imwrite('${tile.baseName}_corrected.tif', img)
+EOF
     """
 }
 
@@ -397,7 +447,7 @@ else:
 if buffer_px:
     buf = max(1, int(buffer_px))
 else:
-    buf = int(round(np.clip(0.3 * r_med, 2, 8)))
+    buf = int(round(np.clip(0.8 * r_med, 8, 25)))
 
 # Find original tile path from list
 tile_path = None
@@ -481,24 +531,35 @@ with open('channel_names.txt', 'w') as f:
         --channel_names channel_names.txt \\
         --output quantification_output/
         
-    # Process results
+# Process results with QC filtering
     python3 -c "
 import os, pandas as pd, glob, numpy as np
 csv_files = glob.glob('quantification_output/*.csv')
 if csv_files:
     df = pd.read_csv(csv_files[0])
+    print(f'=== ${tile_name}: {len(df)} CELLS BEFORE QC ===')
+    
+    # Apply QC filters
+    if 'Area' in df.columns:
+        df = df[(df['Area'] >= ${params.min_cell_area}) & (df['Area'] <= ${params.max_cell_area})]
+    if 'Eccentricity' in df.columns:
+        df = df[df['Eccentricity'] <= ${params.max_eccentricity}]
+    
+    # Remove cells with all markers below threshold
+    marker_cols = [col for col in df.columns if any(x in col for x in ['Channel_', 'intensity'])]
+    if marker_cols:
+        min_expr = df[marker_cols].max(axis=1)
+        df = df[min_expr >= ${params.min_marker_expression}]
+    
     os.rename(csv_files[0], '${tile_name}_cell.csv')
-    print(f'=== ${tile_name}: {len(df)} CELLS DETECTED ===')
+    df.to_csv('${tile_name}_cell.csv', index=False)
+    print(f'=== ${tile_name}: {len(df)} CELLS AFTER QC ===')
     
     # Summary analytics
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     const_cols = [col for col in numeric_cols if df[col].nunique(dropna=False) <= 1]
-    
     if const_cols:
-        const_list = ', '.join(const_cols)
-        print(f'Warning: Constant values in {len(const_cols)} channel(s): {const_list}')
-    else:
-        print('All numeric channels have >1 unique value')
+        print(f'Warning: Constant values in {len(const_cols)} channel(s)')
 else:
     with open('${tile_name}_cell.csv', 'w') as f:
         f.write('CellID,X_centroid,Y_centroid\\n')
@@ -510,6 +571,9 @@ else:
 process STITCH_RESULTS {
     tag "stitching"
     publishDir "${params.outdir}/final", mode: 'copy'
+    cpus 4
+    memory '16.GB'
+    time 2.h  // Much faster with tiled approach
 
     input:
     path tile_info
@@ -518,108 +582,162 @@ process STITCH_RESULTS {
     val sample_name
 
     output:
-    path "full_segmentation_mask.tif", emit: full_mask
     path "combined_quantification.csv", emit: combined_csv
     path "stitching_report.txt", emit: report
 
     script:
     """
 #!/usr/bin/env python3
-
-import json
-import tifffile
-import numpy as np
-import pandas as pd
+import json, pandas as pd, os
 from pathlib import Path
-import glob
-import os
-
-print("=== STARTING STITCHING PROCESS ===")
 
 with open('${tile_info}', 'r') as f:
     tile_info = json.load(f)
 
-print(f"Stitching {len(tile_info)} tiles...")
-
-max_y = max(info['y_end'] for info in tile_info)
-max_x = max(info['x_end'] for info in tile_info)
-print(f"Full image dimensions: {max_y} x {max_x}")
-
-full_mask = np.zeros((max_y, max_x), dtype=np.int32)
-current_label = 1
-stitched_tiles = 0
 all_quantifications = []
+current_label = 1
+stitched = 0
 
 for info in tile_info:
     tile_base = Path(info['filename']).stem
-    mask_file = f"masks/{tile_base}_cell.tif"
-    csv_file = f"csvs/{tile_base}_cell.csv"
+    csv_file = f"csvs/{tile_base}_corrected_cell.csv"
     
-    if os.path.exists(mask_file) and os.path.exists(csv_file):
-        tile_mask = tifffile.imread(mask_file)
-        unique_labels = np.unique(tile_mask[tile_mask > 0])
-        
-        updated_mask = tile_mask.copy()
-        label_mapping = {}
-        for old_label in unique_labels:
-            label_mapping[old_label] = current_label
-            updated_mask[tile_mask == old_label] = current_label
-            current_label += 1
-        
-        y_start, x_start = info['y_start'], info['x_start']
-        y_end = min(y_start + updated_mask.shape[0], max_y)
-        x_end = min(x_start + updated_mask.shape[1], max_x)
-        
-        mask_h = y_end - y_start
-        mask_w = x_end - x_start
-        
-        full_mask[y_start:y_end, x_start:x_end] = updated_mask[:mask_h, :mask_w]
-        
+    if not os.path.exists(csv_file):
+        csv_file = f"csvs/{tile_base}_cell.csv"
+    
+    if os.path.exists(csv_file):
         df = pd.read_csv(csv_file)
         if not df.empty:
+            # Remap IDs
+            if 'CellID' in df.columns:
+                df['CellID'] += current_label
+                current_label += df['CellID'].max()
+            
+            # Add global coords
             if 'X_centroid' in df.columns:
                 df['X_centroid'] += info['x_start']
             if 'Y_centroid' in df.columns:
                 df['Y_centroid'] += info['y_start']
             
-            if 'CellID' in df.columns:
-                for old_label, new_label in label_mapping.items():
-                    df.loc[df['CellID'] == old_label, 'CellID'] = new_label
-            
             df['tile_y'] = info['y_start']
             df['tile_x'] = info['x_start']
-            df['original_tile'] = info['filename']
-            
             all_quantifications.append(df)
-            stitched_tiles += 1
-            print(f"  Added {len(df)} cells from {tile_base}")
-
-print("Saving full segmentation mask...")
-tifffile.imwrite('full_segmentation_mask.tif', full_mask)
+            stitched += 1
 
 if all_quantifications:
-    combined_df = pd.concat(all_quantifications, ignore_index=True)
-    if 'CellID' in combined_df.columns:
-        combined_df['CellID'] = range(1, len(combined_df) + 1)
-    combined_df.to_csv('combined_quantification.csv', index=False)
-    total_cells = len(combined_df)
+    combined = pd.concat(all_quantifications, ignore_index=True)
+    combined['CellID'] = range(1, len(combined) + 1)
+    combined.to_csv('combined_quantification.csv', index=False)
+    total = len(combined)
 else:
     pd.DataFrame().to_csv('combined_quantification.csv', index=False)
-    total_cells = 0
+    total = 0
 
 with open('stitching_report.txt', 'w') as f:
-    f.write(f'''Stitching Report for ${sample_name}
-=====================================
-Total tiles expected: {len(tile_info)}
-Successfully stitched tiles: {stitched_tiles}
-Final image dimensions: {max_y} x {max_x}
-Total cells in quantification: {total_cells}
+    f.write(f'''Stitching Report
+=================
+Tiles processed: {stitched}/{len(tile_info)}
+Total cells: {total}
 ''')
 
-print("=== STITCHING COMPLETED ===")
-print(f"Processed {stitched_tiles}/{len(tile_info)} tiles")
-print(f"Total cells: {total_cells}")
+print(f"Complete: {total} cells from {stitched} tiles")
 """
+}
+
+process CYLINTER_QC {
+    tag "qc_${sample_name}"
+    publishDir "${params.outdir}/qc", mode: 'copy'
+    
+    input:
+    path combined_csv
+    path full_mask
+    path markers_csv
+    val sample_name
+    
+    output:
+    path "*_QC_pass.csv", emit: cleaned
+    path "qc_report.txt", emit: report
+    
+    script:
+    """
+    python3 - <<'EOF'
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+# Load data
+df = pd.read_csv('${combined_csv}')
+print(f"Starting QC with {len(df)} cells")
+
+# 1. Debris removal by area
+df = df[(df['Area'] >= ${params.min_cell_area}) & (df['Area'] <= ${params.max_cell_area})]
+print(f"After area filter: {len(df)} cells")
+
+# 2. Remove elongated debris
+if 'Eccentricity' in df.columns:
+    df = df[df['Eccentricity'] <= ${params.max_eccentricity}]
+    print(f"After eccentricity filter: {len(df)} cells")
+
+# 3. Remove cells with minimal expression
+marker_cols = [col for col in df.columns if 'Channel_' in col]
+if marker_cols:
+    max_intensity = df[marker_cols].max(axis=1)
+    df = df[max_intensity >= ${params.min_marker_expression}]
+    print(f"After expression filter: {len(df)} cells")
+
+# 4. Remove edge artifacts (cells at tile boundaries)
+if 'tile_x' in df.columns and 'tile_y' in df.columns:
+    edge_buffer = 10
+    tile_size = ${params.tile_size}
+    
+    x_in_tile = df['X_centroid'] % tile_size
+    y_in_tile = df['Y_centroid'] % tile_size
+    
+    edge_mask = ((x_in_tile > edge_buffer) & (x_in_tile < tile_size - edge_buffer) &
+                 (y_in_tile > edge_buffer) & (y_in_tile < tile_size - edge_buffer))
+    df = df[edge_mask]
+    print(f"After edge filter: {len(df)} cells")
+
+# 5. Detect folded tissue regions
+if 'Channel_1' in df.columns:  # Assuming Channel_1 is DAPI
+    from scipy.spatial import cKDTree
+    
+    dapi = df['Channel_1'].values
+    coords = df[['X_centroid', 'Y_centroid']].values
+    
+    tree = cKDTree(coords)
+    fold_flags = []
+    
+    for i in range(len(coords)):
+        neighbors = tree.query_ball_point(coords[i], ${params.fold_window})
+        if len(neighbors) > 5:
+            local_dapi = dapi[neighbors]
+            cv = local_dapi.std() / (local_dapi.mean() + 1)
+            fold_flags.append(cv > ${params.fold_cv_threshold})
+        else:
+            fold_flags.append(False)
+    
+    df = df[~np.array(fold_flags)]
+    print(f"After fold detection: {len(df)} cells")
+
+# Save
+df.to_csv('${sample_name}_QC_pass.csv', index=False)
+
+# Report
+with open('qc_report.txt', 'w') as f:
+    f.write(f"CyLinter-style QC Report\\n")
+    f.write(f"========================\\n")
+    f.write(f"Sample: ${sample_name}\\n")
+    f.write(f"Final cells: {len(df)}\\n")
+    f.write(f"\\nFilters applied:\\n")
+    f.write(f"- Area: ${params.min_cell_area}-${params.max_cell_area}\\n")
+    f.write(f"- Eccentricity: <${params.max_eccentricity}\\n")
+    f.write(f"- Min expression: >${params.min_marker_expression}\\n")
+    f.write(f"- Edge buffer: 10px\\n")
+
+print(f"QC complete: {len(df)} cells passed")
+EOF
+    """
 }
 
 process SPATIAL_ANALYSIS {
@@ -704,20 +822,26 @@ workflow {
         params.overlap,
         params.pyramid_level
     )
-    
+
     if (params.cellpose) {
         
-        // Step 2: Create nuclei batches and process
+        // Step 2: Background subtraction and flatten tiles
         tiles_flattened = TILE_LARGE_IMAGE.out.tiles.flatten()
         
+        if (params.background_subtract) {
+            tiles_corrected = BACKGROUND_SUBTRACT(tiles_flattened).corrected
+            tiles_to_use = tiles_corrected
+        } else {
+            tiles_to_use = tiles_flattened
+        }
+        
         // Group tiles into batches for nuclei processing
-        nuclei_batches = tiles_flattened
+        nuclei_batches = tiles_to_use
             .collate(params.nuclei_batch_size)
             .map { batch -> 
                 def batch_id = "nuclei_batch_" + Math.abs(batch.hashCode())
                 [batch_id, batch] 
             }
-        
         RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches)
         
         // Step 3: Prepare cyto batches
@@ -726,16 +850,16 @@ workflow {
         dapi_processed_flat = RUN_CELLPOSE_NUCLEI_BATCH.out.dapi_processed.flatten()
         
         // Create a simple join channel for cyto processing  
-        cyto_matched = tiles_flattened
-            .map { tile -> [tile.baseName, tile] }
+        cyto_matched = tiles_to_use
+            .map { tile -> [tile.baseName.replaceAll('_corrected$', ''), tile] }
             .join(
                 nuclei_masks_flat.map { mask -> 
-                    [mask.baseName.replaceAll('_nuclei_mask$', ''), mask] 
+                    [mask.baseName.replaceAll('_corrected_nuclei_mask$', ''), mask] 
                 }
             )
             .join(
                 dapi_processed_flat.map { dapi -> 
-                    [dapi.baseName.replaceAll('_dapi_bg_subtracted$', ''), dapi] 
+                    [dapi.baseName.replaceAll('_corrected_dapi_bg_subtracted$', ''), dapi] 
                 }
             )
             .map { key, tile, mask, dapi -> [tile, mask, dapi] }
@@ -756,9 +880,9 @@ workflow {
             // Step 4: Run MCQuant on individual tiles
             mcquant_input = RUN_CELLPOSE_CYTO_BATCH.out.cell_masks
                 .flatten()
-                .map { mask -> [mask.baseName.replaceAll('_cell$', ''), mask] }
+                .map { mask -> [mask.baseName.replaceAll('_corrected_cell$', ''), mask] }
                 .join(
-                    tiles_flattened.map { tile -> [tile.baseName, tile] }
+                    tiles_to_use.map { tile -> [tile.baseName.replaceAll('_corrected$', ''), tile] }
                 )
                 .combine(TILE_LARGE_IMAGE.out.markers_csv)
                 .map { key, mask, tile, markers -> [mask, tile, markers] }
@@ -773,12 +897,21 @@ workflow {
                 params.sample_name
             )
             
-            if (params.scimap) {
-                SPATIAL_ANALYSIS(
+            if (params.cylinter) {
+                CYLINTER_QC(
                     STITCH_RESULTS.out.combined_csv,
+                    //STITCH_RESULTS.out.full_mask,
                     TILE_LARGE_IMAGE.out.markers_csv,
                     params.sample_name
                 )
+                
+                if (params.scimap) {
+                    SPATIAL_ANALYSIS(
+                        CYLINTER_QC.out.cleaned,  // Use QC'd data
+                        TILE_LARGE_IMAGE.out.markers_csv,
+                        params.sample_name
+                    )
+                }
             }
         }
     }
