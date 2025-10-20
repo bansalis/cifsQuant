@@ -1,0 +1,69 @@
+# Phenotyping Configuration
+# Edit this file to customize channel names and phenotype definitions
+
+sample_settings:
+  pyramid_level: 1  # Use level 1 to reduce memory usage
+  use_raw_image: false  # Set to true if CyLinter needs the image file
+
+# Channel name mapping (edit these to match your actual markers)
+channel_mapping:
+  Channel_1: "DAPI"
+  Channel_2: "TOM" 
+  Channel_3: "CD45"
+  Channel_4: "AGFP"
+  Channel_5: "DAPI_R2"
+  Channel_6: "PERK"
+  Channel_7: "CD8B" 
+  Channel_8: "KI67"
+  Channel_9: "DAPI_R3"
+  Channel_10: "CD3"
+
+# Initial gate thresholds (will be refined through CyLinter)
+initial_gates:
+  DAPI: 500
+  TOM: 100
+  CD45: 200
+  AGFP: 150
+  DAPI_R2: 500
+  PERK: 180
+  CD8B: 250
+  KI67: 300
+  DAPI_R3: 500
+  CD3: 200
+
+# Phenotype definitions using + and - notation
+phenotype_definitions:
+  # T cell populations
+  "CD3+ T cells": ["CD3+"]
+  "CD8+ T cells": ["CD3+", "CD8B+"]
+  "CD4+ T cells": ["CD3+", "CD8B-"]
+  "Proliferating T cells": ["CD3+", "KI67+"]
+  "CD8+ KI67+ T cells": ["CD3+", "CD8B+", "KI67+"]
+  
+  # Immune populations  
+  "CD45+ Immune": ["CD45+"]
+  "CD45+ CD3- Non-T": ["CD45+", "CD3-"]
+  
+  # Tumor/stromal (assuming TOM marks tumor)
+  "TOM+ Tumor": ["TOM+"]
+  "TOM+ Proliferating": ["TOM+", "KI67+"]
+  "TOM+ PERK+": ["TOM+", "PERK+"]
+  
+  # Stress/ER markers
+  "PERK+ Cells": ["PERK+"]
+  "PERK+ Immune": ["PERK+", "CD45+"]
+  "PERK+ Non-Immune": ["PERK+", "CD45-"]
+  
+  # Proliferation
+  "KI67+ Proliferating": ["KI67+"]
+  "KI67+ CD45-": ["KI67+", "CD45-"]
+  
+  # Negative controls
+  "Other": []  # Cells that don't fit other categories
+
+# CyLinter settings
+cylinter_settings:
+  min_cells: 100
+  max_cells: 100000
+  sample_frac: 1.0  # Use all cells
+  random_state: 42
