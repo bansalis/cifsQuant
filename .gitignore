@@ -21,3 +21,7 @@ test.ipynb
 run_cellprofiler_analyst.sh
 run_complete_spatial_analysis.sh
 run_enhanced_spatial.sh
+archive_manual_gating_output/*
+cellpose_models/*
+manual_gating_output_v2/*
+manual_gating_output_v3/*

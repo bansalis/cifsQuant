@@ -3,7 +3,7 @@
 # Run MCMICRO Tiled Processor with Cellpose Segmentation
 # =====================================================
 
-echo "🔬 MCMICRO TILED PROCESSOR"
+echo "MCMICRO TILED PROCESSOR"
 echo "=========================="
 echo ""
 echo "Process large immunofluorescence images through tiling → CellPose → spatial analysis"
@@ -83,6 +83,7 @@ containers=(
     "labsyspharm/quantification:latest"
     "labsyspharm/scimap:0.17.7"
     "labsyspharm/basic-illumination:1.0.0"
+    "vanvalenlab/deepcell-applications:0.4.0"
 )
 
 for container in "${containers[@]}"; do
@@ -98,7 +99,55 @@ echo ""
 echo "✓ Container preparation complete"
 echo ""
 
+# Pre-download Cellpose models
+# Pre-download Cellpose models
+echo "Pre-downloading Cellpose models..."
+echo "This is a one-time download (~100MB)"
+
+CELLPOSE_MODELS_DIR="$(pwd)/cellpose_models"
+mkdir -p "$CELLPOSE_MODELS_DIR"
+
+# Check if models already exist
+if [[ -f "$CELLPOSE_MODELS_DIR/nucleitorch_0" ]] && [[ -f "$CELLPOSE_MODELS_DIR/cyto2torch_0" ]]; then
+    echo "✓ Cellpose models already downloaded"
+else
+    echo "  Downloading nuclei and cyto2 models..."
+    docker run --rm \
+        -v "$CELLPOSE_MODELS_DIR:/tmp/cellpose_models" \
+        biocontainers/cellpose:3.0.1_cv1 \
+        bash -c "
+export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
+python3 << 'EOF'
+import os
+os.environ['CELLPOSE_LOCAL_MODELS_PATH'] = '/tmp/cellpose_models'
+from cellpose import models
+print('Downloading nuclei model...')
+models.Cellpose(model_type='nuclei', gpu=False)
+print('Downloading cyto2 model...')
+models.Cellpose(model_type='cyto2', gpu=False)
+print('Models downloaded successfully')
+EOF
+"
+    
+    if [[ $? -eq 0 ]] && [[ -f "$CELLPOSE_MODELS_DIR/nucleitorch_0" ]]; then
+        echo "    ✓ Models downloaded to $CELLPOSE_MODELS_DIR"
+    else
+        echo "    ⚠ Model download might have failed - pipeline will try to download at runtime"
+    fi
+fi
+
+# List what we have
+echo "  Models in directory:"
+ls -lh "$CELLPOSE_MODELS_DIR/" 2>/dev/null | grep -E "torch|npy" || echo "    (none found)"
+
+echo ""
+
 set -euo pipefail
+
+# Save the original working directory
+SCRIPT_DIR=$(pwd)
+echo "✓ Working directory: $SCRIPT_DIR"
+
 shopt -s nullglob
 images=(rawdata/*.ome.tif)
 shopt -u nullglob
@@ -110,7 +159,14 @@ fi
 
 echo "Found ${#images[@]} image(s) in rawdata/:"
 for i in "${!images[@]}"; do
-    echo "  [$i] ${images[$i]}"
+    sample_name=$(basename "${images[$i]}" _aligned_stack.ome.tif)
+    final_csv="results/${sample_name}/final/combined_quantification.csv"
+    
+    if [[ -f "$final_csv" ]] && [[ -s "$final_csv" ]]; then
+        echo "  [$i] ${images[$i]} [COMPLETED ✓]"
+    else
+        echo "  [$i] ${images[$i]}"
+    fi
 done
 echo
 
@@ -151,8 +207,23 @@ if [[ $resume_choice =~ ^[Nn]$ ]]; then
 fi
 
 for img in "${selected[@]}"; do
+    # Reset to original directory at start of each iteration
+    cd "$SCRIPT_DIR"
+    
     sample_name=$(basename "$img" _aligned_stack.ome.tif)
     outdir="results/${sample_name}"
+    final_csv="$outdir/final/combined_quantification.csv"
+    
+    # Check if sample already completed
+    if [[ -f "$final_csv" ]] && [[ -s "$final_csv" ]]; then
+        echo ""
+        echo "=== Skipping $sample_name (already completed) ==="
+        echo "Final output exists: $final_csv"
+        echo "To rerun, delete: rm -rf $outdir"
+        echo "================================================="
+        continue
+    fi
+    
     mkdir -p "$outdir"
 
     echo ""
@@ -173,7 +244,7 @@ for img in "${selected[@]}"; do
         --cellpose true
         --mcquant true
         --scimap true
-        --dapi_channel 8
+        --dapi_channel 0
         --nuc_diameter 15
         --cyto_diameter 28
         --nuclei_batch_size 6
@@ -188,227 +259,28 @@ for img in "${selected[@]}"; do
     fi
 
     nextflow "${nf_args[@]}"
+    
+    pipeline_exit_code=$?
+
+    echo ""
+    echo "Pipeline Execution Complete for $sample_name!"
+    echo "=============================================="
+
+    if [[ $pipeline_exit_code -eq 0 ]]; then
+        echo "✓ SUCCESS: Cellpose pipeline completed successfully for $sample_name!"
+    else
+        echo "✗ FAILED: Cellpose pipeline encountered errors for $sample_name (exit code: $pipeline_exit_code)"
+        echo "Check $outdir logs for details"
+    fi
+    
+    echo ""
 done
+
+# Return to original directory
+cd "$SCRIPT_DIR"
 
 echo ""
 echo "All selected runs complete."
-
-        pipeline_exit_code=$?
-
-        echo ""
-        echo "Pipeline Execution Complete!"
-        echo "============================"
-
-        if [[ $pipeline_exit_code -eq 0 ]]; then
-            echo "✅ SUCCESS: Cellpose pipeline completed successfully!"
-            echo ""
-            echo "Results are available in:"
-            echo "- results/final/full_segmentation_mask.tif"
-            echo "- results/final/combined_quantification.csv"
-            echo "- results/spatial/ (spatial analysis)"
-            echo ""
-            echo "Intermediate outputs:"
-            echo "- results/nuclei_masks/ (nuclei segmentation)"
-            echo "- results/cell_masks/ (cytoplasm segmentation)"
-            echo "- results/quantification/ (per-tile measurements)"
-            echo ""
-            echo "Pipeline reports:"
-            echo "- results/nextflow_report.html"
-            echo "- results/nextflow_timeline.html"
-            echo "- results/nextflow_dag.html"
-            
-            # Show summary if results exist
-            if [[ -f "results/final/combined_quantification.csv" ]]; then
-                echo ""
-                echo "Quick Results Summary:"
-                echo "====================="
-                python3 -c "
-import pandas as pd
-try:
-    df = pd.read_csv('results/final/combined_quantification.csv')
-    print(f'Total cells detected: {len(df):,}')
-    
-    if 'X_centroid' in df.columns and 'Y_centroid' in df.columns:
-        extent_x = df['X_centroid'].max() - df['X_centroid'].min()
-        extent_y = df['Y_centroid'].max() - df['Y_centroid'].min()
-        print(f'Spatial extent: {extent_x:.0f} x {extent_y:.0f} pixels')
-    
-    # Check for area or size columns
-    area_cols = [col for col in df.columns if 'area' in col.lower()]
-    if area_cols:
-        area_col = area_cols[0]
-        print(f'Cell area range: {df[area_col].min():.0f} - {df[area_col].max():.0f} pixels²')
-    
-    print('')
-    print('Available columns:')
-    for i, col in enumerate(df.columns):
-        if i < 10:  # Show first 10 columns
-            print(f'  - {col}')
-        elif i == 10:
-            print(f'  ... and {len(df.columns)-10} more columns')
-            break
-            
-    print('')
-    print('✅ Cellpose segmentation data is ready for analysis!')
-    
-except Exception as e:
-    print(f'Could not read results: {e}')
-" 2>/dev/null || echo "Could not generate summary (missing pandas)"
-            fi
-            
-            echo ""
-            echo "Next steps:"
-            echo "==========="
-            echo "1. Examine results in results/ directory"
-            echo "2. Use combined_quantification.csv for spatial analysis"
-            echo "3. Check the HTML reports for pipeline details"
-            echo "4. Compare nuclei vs. cytoplasm masks for quality assessment"
-            echo ""
-            echo "For spatial analysis with SCIMAP:"
-            echo "import scimap as sm"
-            echo "adata = sm.pp.mcmicro_to_scimap('results/final/combined_quantification.csv')"
-            
-        else
-            echo "❌ FAILED: Cellpose pipeline encountered errors (exit code: $pipeline_exit_code)"
-            echo ""
-            echo "Troubleshooting suggestions:"
-            echo "1. Check that Docker is running properly"
-            echo "2. Ensure GPU drivers are installed for acceleration"
-            echo "3. Check .nextflow.log for detailed error messages"
-            echo "4. Try reducing tile_size if memory issues occur"
-            echo "5. Verify DAPI channel number (--dapi_channel 8)"
-            echo ""
-            echo "Common fixes:"
-            echo "- GPU memory issues: Reduce --cyto_batch_size to 4"
-            echo "- Wrong channel: Check your image channels and update --dapi_channel"
-            echo "- Size issues: Try --nuc_diameter 10 --cyto_diameter 20 for smaller cells"
-            
-        fi
-
-        echo ""
-        echo "🎉 MCMICRO Cellpose Processing Complete!"
-        ;;
-    [Yy])
-        echo "Resuming previous run..."
-        # Run the Cellpose Nextflow pipeline with resume
-        nextflow run mcmicro-tiled.nf \
-            --input_image rawdata/GUEST29_aligned_stack.ome.tif \
-            --markers_csv markers.csv \
-            --outdir results \
-            --sample_name GUEST29 \
-            --tile_size 8192 \
-            --overlap 1024 \
-            --pyramid_level 0 \
-            --cellpose true \
-            --mcquant true \
-            --scimap true \
-            --dapi_channel 8 \
-            --nuc_diameter 15 \
-            --cyto_diameter 28 \
-            --nuclei_batch_size 6 \
-            --cyto_batch_size_tiles 4 \
-            -resume \
-            -with-report results/nextflow_report.html \
-            -with-timeline results/nextflow_timeline.html \
-            -with-dag results/nextflow_dag.html
-
-        pipeline_exit_code=$?
-
-        echo ""
-        echo "Pipeline Execution Complete!"
-        echo "============================"
-
-        if [[ $pipeline_exit_code -eq 0 ]]; then
-            echo "✅ SUCCESS: Cellpose pipeline completed successfully!"
-            echo ""
-            echo "Results are available in:"
-            echo "- results/final/full_segmentation_mask.tif"
-            echo "- results/final/combined_quantification.csv"
-            echo "- results/spatial/ (spatial analysis)"
-            echo ""
-            echo "Intermediate outputs:"
-            echo "- results/nuclei_masks/ (nuclei segmentation)"
-            echo "- results/cell_masks/ (cytoplasm segmentation)"
-            echo "- results/quantification/ (per-tile measurements)"
-            echo ""
-            echo "Pipeline reports:"
-            echo "- results/nextflow_report.html"
-            echo "- results/nextflow_timeline.html"
-            echo "- results/nextflow_dag.html"
-            
-            # Show summary if results exist
-            if [[ -f "results/final/combined_quantification.csv" ]]; then
-                echo ""
-                echo "Quick Results Summary:"
-                echo "====================="
-                python3 -c "
-import pandas as pd
-try:
-    df = pd.read_csv('results/final/combined_quantification.csv')
-    print(f'Total cells detected: {len(df):,}')
-    
-    if 'X_centroid' in df.columns and 'Y_centroid' in df.columns:
-        extent_x = df['X_centroid'].max() - df['X_centroid'].min()
-        extent_y = df['Y_centroid'].max() - df['Y_centroid'].min()
-        print(f'Spatial extent: {extent_x:.0f} x {extent_y:.0f} pixels')
-    
-    # Check for area or size columns
-    area_cols = [col for col in df.columns if 'area' in col.lower()]
-    if area_cols:
-        area_col = area_cols[0]
-        print(f'Cell area range: {df[area_col].min():.0f} - {df[area_col].max():.0f} pixels²')
-    
-    print('')
-    print('Available columns:')
-    for i, col in enumerate(df.columns):
-        if i < 10:  # Show first 10 columns
-            print(f'  - {col}')
-        elif i == 10:
-            print(f'  ... and {len(df.columns)-10} more columns')
-            break
-            
-    print('')
-    print('✅ Cellpose segmentation data is ready for analysis!')
-    
-except Exception as e:
-    print(f'Could not read results: {e}')
-" 2>/dev/null || echo "Could not generate summary (missing pandas)"
-            fi
-            
-            echo ""
-            echo "Next steps:"
-            echo "==========="
-            echo "1. Examine results in results/ directory"
-            echo "2. Use combined_quantification.csv for spatial analysis"
-            echo "3. Check the HTML reports for pipeline details"
-            echo "4. Compare nuclei vs. cytoplasm masks for quality assessment"
-            echo ""
-            echo "For spatial analysis with SCIMAP:"
-            echo "import scimap as sm"
-            echo "adata = sm.pp.mcmicro_to_scimap('results/final/combined_quantification.csv')"
-            
-        else
-            echo "❌ FAILED: Cellpose pipeline encountered errors (exit code: $pipeline_exit_code)"
-            echo ""
-            echo "Troubleshooting suggestions:"
-            echo "1. Check that Docker is running properly"
-            echo "2. Ensure GPU drivers are installed for acceleration"
-            echo "3. Check .nextflow.log for detailed error messages"
-            echo "4. Try reducing tile_size if memory issues occur"
-            echo "5. Verify DAPI channel number (--dapi_channel 8)"
-            echo ""
-            echo "Common fixes:"
-            echo "- GPU memory issues: Reduce --cyto_batch_size to 4"
-            echo "- Wrong channel: Check your image channels and update --dapi_channel"
-            echo "- Size issues: Try --nuc_diameter 10 --cyto_diameter 20 for smaller cells"
-            
-        fi
-
-        echo ""
-        echo "🎉 MCMICRO Cellpose Processing Complete!"
-        ;;
-esac
-
 echo ""
-echo "🎯 Processing Complete!"
+echo "Processing Complete!"
 echo ""
