@@ -146,8 +146,8 @@ sys.stdout.flush()
 
 # Process in batches with limited concurrency to avoid OOM
 tile_info = []
-batch_size = 10
-max_workers = 3
+batch_size = 20
+max_workers = 4
 
 for batch_start in range(0, len(coords), batch_size):
     batch = coords[batch_start:batch_start + batch_size]
@@ -413,198 +413,156 @@ PYSCRIPT
     """
 }
 
-process RUN_CELLPOSE_CYTO_SEEDED {
-    tag "cyto_batch_${batch_id}"
-    container params.cellpose_container
+process RUN_CELLPOSE_CYTO_MULTIPASS {
+    tag "cyto_${batch_id}"
+    container 'biocontainers/cellpose:3.0.1_cv1'
     publishDir "${params.outdir}/cell_masks", mode: 'copy'
-    maxForks 2  // Limit concurrent batches for GPU memory
-
+    
     input:
-    tuple val(batch_id), path(tiles), path(nuclei_masks)
-
+    tuple val(batch_id), path(tiles), path(nuclei_masks), path(membrane_composites)
+    
     output:
     path "*_cell.tif", emit: cell_masks
-
-    when:
-    params.cellpose
-
-    script:
-    // Parse channel mappings from params
-    def tumor_channels = params.tumor_channels ?: '1'
-    def immune_channels = params.immune_channels ?: '2,9'
-    def tumor_weight = params.tumor_weight ?: 0.7
-    def immune_weight = params.immune_weight ?: 0.3
-    def custom_weights = params.custom_channel_weights ?: ''
     
+    script:
     """
-    set -euo pipefail
+    #!/bin/bash
+    set -e
     
     export HOME=/tmp
     export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
     mkdir -p /tmp/cellpose_models
     
-    echo "=== CYTO SEEDED BATCH ${batch_id}: ${tiles.size()} tiles ==="
-    echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
-    echo "Immune channels: ${immune_channels} (weight: ${immune_weight})"
+    echo "[\$(date +%H:%M:%S)] Batch ${batch_id}: Processing ${tiles.size()} tiles"
     
-    python3 - <<'PYSCRIPT'
-import numpy as np
-import tifffile
-from cellpose import models
-from pathlib import Path
-import os
-import sys
-
-def parse_channel_config():
-    config = {}
+    # IMPROVEMENT 1: Batch all Pass 1 together (GPU efficiency)
+    echo "Pass 1/2: Large cells (diameter=70) - BATCH MODE"
+    cellpose --dir . --img_filter "*_membrane.tif" \\
+        --pretrained_model cyto2 --chan 0 \\
+        --diameter 70 --flow_threshold 0.3 --cellprob_threshold 0.0 \\
+        --use_gpu --save_tif --no_npy \\
+        --verbose
     
-    # Custom per-channel weights (highest priority)
-    custom = os.environ.get('CUSTOM_WEIGHTS', '').strip()
-    if custom:
-        # Format: "1:0.5,2:0.3,9:0.2"
-        for pair in custom.split(','):
-            if ':' in pair:
-                ch, w = pair.split(':')
-                config[int(ch)] = float(w)
-        return config
-    
-    # Category-based weights
-    tumor_chs = [int(x) for x in os.environ.get('TUMOR_CHANNELS', '1').split(',')]
-    immune_chs = [int(x) for x in os.environ.get('IMMUNE_CHANNELS', '2,9').split(',')]
-    tumor_w = float(os.environ.get('TUMOR_WEIGHT', 0.7))
-    immune_w = float(os.environ.get('IMMUNE_WEIGHT', 0.3))
-    
-    # Distribute weights evenly within category
-    tumor_w_per = tumor_w / len(tumor_chs)
-    immune_w_per = immune_w / len(immune_chs)
-    
-    for ch in tumor_chs:
-        config[ch] = tumor_w_per
-    for ch in immune_chs:
-        config[ch] = immune_w_per
-    
-    return config
-
-def create_weighted_cytoplasm(img, channel_weights):
-    h, w = img.shape[1], img.shape[2]
-    cyto = np.zeros((h, w), dtype=np.float32)
-    
-    for ch, weight in channel_weights.items():
-        if ch >= img.shape[0]:
-            continue
-        
-        signal = img[ch].astype(np.float32)
-        
-        # Fast percentile normalization (avoid full sort)
-        p1, p99 = np.percentile(signal, [1, 99])
-        if p99 > p1:
-            signal = np.clip((signal - p1) / (p99 - p1), 0, 1)
-        else:
-            signal = np.zeros_like(signal)
-        
-        cyto += weight * signal
-    
-    # Final normalization
-    if cyto.max() > 0:
-        cyto = cyto / cyto.max()
-    
-    return (cyto * 65535).astype(np.uint16)
-
-# Parse config once
-channel_weights = parse_channel_config()
-print(f"Channel weights: {channel_weights}")
-sys.stdout.flush()
-
-# Load model once for batch
-model = models.Cellpose(model_type='${params.cyto_model}', gpu=True)
-
-# Process all tiles in batch
-tile_paths = sorted(Path('.').glob('tile_*.tif'))
-n_tiles = len(tile_paths)
-
-for idx, tile_path in enumerate(tile_paths):
-    base = tile_path.stem
-    nuc_mask_path = f'{base}_nuclei_mask.tif'
-    
-    if not Path(nuc_mask_path).exists():
-        print(f"[{idx+1}/{n_tiles}] Skip {base}: no nuclei", flush=True)
-        continue
-    
-    try:
-        # Load data (lazy load to save memory)
-        img = tifffile.imread(tile_path)
-        nuclei_mask = tifffile.imread(nuc_mask_path)
-        
-        n_nuclei = int(nuclei_mask.max())
-        if n_nuclei == 0:
-            print(f"[{idx+1}/{n_tiles}] {base}: 0 nuclei, skipping", flush=True)
-            tifffile.imwrite(f'{base}_cell.tif', nuclei_mask.astype(np.int32), compression='lzw')
-            continue
-        
-        # Create weighted cytoplasm
-        cyto = create_weighted_cytoplasm(img, channel_weights)
-        
-        # Free image memory immediately
-        del img
-        
-        # Run Cellpose with nuclei seeding
-        cells = model.eval(
-            cyto,
-            channels=[0, 0],
-            diameter=${params.cyto_diameter},
-            flow_threshold=${params.cyto_flow_threshold},
-            cellprob_threshold=${params.cyto_cellprob_threshold},
-            min_size=${params.min_cell_size},
-            nuc_mask=nuclei_mask,
-            do_3D=False,
-            batch_size=8  # GPU memory optimization
-        )[0]
-
-        nuc_area = np.sum(nuclei_mask > 0)
-        cell_area = np.sum(cells > 0)
-        expansion_ratio = cell_area / nuc_area if nuc_area > 0 else 0
-
-        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei}→{n_cells} ({recovery:.1%}), '
-            f'area expansion: {expansion_ratio:.2f}x', flush=True)
-        
-        # Free memory
-        del cyto, nuclei_mask
-        
-        n_cells = int(cells.max())
-        recovery = n_cells / n_nuclei if n_nuclei > 0 else 0
-        
-        tifffile.imwrite(f'{base}_cell.tif', cells.astype(np.int32), compression='lzw')
-        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei}→{n_cells} ({recovery:.1%})', flush=True)
-        
-        del cells
-        
-    except Exception as e:
-        print(f'[{idx+1}/{n_tiles}] ERROR {base}: {e}', flush=True)
-        # Fallback: use nuclei mask
-        try:
-            nuc = tifffile.imread(nuc_mask_path)
-            tifffile.imwrite(f'{base}_cell.tif', nuc.astype(np.int32), compression='lzw')
-            print(f'[{idx+1}/{n_tiles}] {base}: Fallback to nuclei', flush=True)
-        except:
-            pass
-
-print(f"\\nBatch complete: {n_tiles} tiles processed")
-PYSCRIPT
-    
-    # Ensure all tiles have output (empty masks for failures)
-    for tile in ${tiles.join(' ')}; do
-        tile_base=\$(basename "\$tile" .tif)
-        if [ ! -f "\${tile_base}_cell.tif" ]; then
-            python3 -c "
-import tifffile, numpy as np
-tifffile.imwrite('\${tile_base}_cell.tif', 
-                 np.zeros((${params.tile_size}, ${params.tile_size}), dtype=np.int32),
-                 compression='lzw')
-" 2>/dev/null || true
-        fi
+    # Rename Pass 1 outputs
+    for mask in *_membrane_cp_masks.tif; do
+        [ -f "\$mask" ] || continue
+        base=\$(echo "\$mask" | sed 's/_membrane_cp_masks.tif//')
+        mv "\$mask" "\${base}_large.tif"
     done
     
-    echo "=== BATCH ${batch_id} COMPLETE ==="
+    # IMPROVEMENT 2: Batch all Pass 2 together
+    echo "Pass 2/2: Small cells (diameter=25) - BATCH MODE"
+    cellpose --dir . --img_filter "*_membrane.tif" \\
+        --pretrained_model cyto2 --chan 0 \\
+        --diameter 25 --flow_threshold 0.4 --cellprob_threshold -1.5 \\
+        --use_gpu --save_tif --no_npy \\
+        --verbose
+    
+    # Rename Pass 2 outputs
+    for mask in *_membrane_cp_masks.tif; do
+        [ -f "\$mask" ] || continue
+        base=\$(echo "\$mask" | sed 's/_membrane_cp_masks.tif//')
+        mv "\$mask" "\${base}_small.tif"
+    done
+    
+    # IMPROVEMENT 3: Fast IoU-based merge with spatial indexing
+    python3 << 'MERGE'
+import tifffile
+import numpy as np
+from pathlib import Path
+from scipy.ndimage import find_objects
+
+def fast_iou_merge(large, small, iou_threshold=0.35, min_pixels=20):
+    merged = large.copy()
+    max_id = int(merged.max())
+    
+    if small.max() == 0:
+        return merged
+    
+    # Get small cell properties (bbox + area)
+    small_ids = np.unique(small[small > 0])
+    small_slices = find_objects(small)
+    
+    # Get large cell bboxes for fast intersection checks
+    large_ids = np.unique(large[large > 0])
+    large_slices = find_objects(large)
+    large_areas = {lid: np.sum(large == lid) for lid in large_ids}
+    
+    # Process each small cell
+    for s_id in small_ids:
+        s_slice = small_slices[s_id - 1]
+        if s_slice is None:
+            continue
+        
+        s_mask = (small == s_id)
+        s_area = np.sum(s_mask)
+        
+        if s_area < min_pixels:
+            continue
+        
+        # Extract small cell region
+        s_region = small[s_slice]
+        s_local_mask = (s_region == s_id)
+        
+        # Check overlap with large cells (only in bbox region)
+        large_region = large[s_slice]
+        
+        # Find which large cells overlap
+        overlapping_large = np.unique(large_region[s_local_mask])
+        overlapping_large = overlapping_large[overlapping_large > 0]
+        
+        # Compute IoU with overlapping large cells
+        max_iou = 0.0
+        for l_id in overlapping_large:
+            l_area = large_areas[l_id]
+            
+            # Intersection in local region
+            intersection = np.sum(s_local_mask & (large_region == l_id))
+            
+            # Union = area1 + area2 - intersection
+            union = s_area + l_area - intersection
+            iou = intersection / union if union > 0 else 0.0
+            
+            max_iou = max(max_iou, iou)
+            
+            if max_iou >= iou_threshold:
+                break  # This small cell overlaps significantly, skip it
+        
+        # Add small cell if no significant overlap
+        if max_iou < iou_threshold:
+            max_id += 1
+            merged[s_mask] = max_id
+    
+    return merged
+
+# Process all tiles
+for tile in sorted(Path('.').glob('tile_*_corrected.tif')):
+    base = tile.stem
+    large_file = f'{base}_large.tif'
+    small_file = f'{base}_small.tif'
+    
+    if not Path(large_file).exists() or not Path(small_file).exists():
+        print(f'Skipping {base}: missing masks')
+        continue
+    
+    large = tifffile.imread(large_file)
+    small = tifffile.imread(small_file)
+    
+    # FAST IoU-based merge (0.35 threshold = ~35% overlap)
+    merged = fast_iou_merge(large, small, iou_threshold=0.35, min_pixels=20)
+    
+    tifffile.imwrite(f'{base}_cell.tif', merged.astype(np.int32), compression='lzw')
+    
+    n_large = len(np.unique(large[large > 0]))
+    n_small = len(np.unique(small[small > 0]))
+    n_merged = len(np.unique(merged[merged > 0]))
+    
+    print(f'{base}: {n_large} large + {n_small} small → {n_merged} final cells')
+
+print("Merge complete")
+MERGE
+    
+    echo "[\$(date +%H:%M:%S)] Batch ${batch_id} complete"
     """
 }
 
@@ -943,6 +901,17 @@ workflow {
 
         tiles_for_nuclei = tiles_to_use
         tiles_for_mcquant = tiles_to_use
+        
+        // Create tile batches ONCE for all cyto operations
+        tile_batches = tiles_to_use
+            .collate(params.cyto_batch_size_tiles)
+            .map { batch ->
+                def batch_id = "batch_" + Math.abs(batch.hashCode())
+                [batch_id, batch]
+            }
+
+        // Create composites using same batches
+        composites = CREATE_MEMBRANE_COMPOSITES(tile_batches)
 
         // Create nuclei batches separately
         nuclei_batches = tiles_to_use
@@ -954,30 +923,32 @@ workflow {
 
         RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches)
 
-        // Create nuclei-seeded cyto batches
+        // Match nuclei masks to original tiles by basename
         nuclei_masks_flat = RUN_CELLPOSE_NUCLEI_BATCH.out.nuclei_masks.flatten()
 
-        // Match tiles to nuclei masks by basename, then batch
-        tiles_with_masks = tiles_to_use
-            .map { tile -> [tile.baseName, tile] }
-            .join(
+        // Join: batch_id -> [tiles, nuclei_masks, membranes]
+        cyto_input = tile_batches
+            .map { batch_id, tiles ->
+                [batch_id, tiles, tiles.collect { it.baseName }]
+            }
+            .combine(
                 nuclei_masks_flat.map { mask -> 
                     [mask.baseName.replaceAll('_nuclei_mask$', ''), mask] 
-                }
+                }.groupTuple()
             )
-            .map { basename, tile, mask -> [tile, mask] }
-
-        // Now batch the matched pairs
-        cyto_seeded_input = tiles_with_masks
-            .collate(params.cyto_batch_size_tiles)
-            .map { batch ->
-                def batch_id = "cyto_" + Math.abs(batch.hashCode())
-                def tiles = batch.collect { it[0] }
-                def masks = batch.collect { it[1] }
-                [batch_id, tiles, masks]
+            .map { batch_id, tiles, basenames, mask_names, masks ->
+                def matched_masks = basenames.collect { bn ->
+                    def idx = mask_names.findIndexOf { it == bn }
+                    idx >= 0 ? masks[idx] : null
+                }.findAll { it != null }
+                [batch_id, tiles, matched_masks]
+            }
+            .join(composites)
+            .map { batch_id, tiles, masks, nuclear, membrane ->
+                [batch_id, tiles, masks, membrane]
             }
 
-        RUN_CELLPOSE_CYTO_SEEDED(cyto_seeded_input)
+        RUN_CELLPOSE_CYTO_MULTIPASS(cyto_input)
 
         if (params.mcquant) {
             // Step 4: Run MCQuant on individual tiles - FIXED JOIN
@@ -985,7 +956,7 @@ workflow {
             // tiles_for_mcquant = tiles_to_use  // Create second reference BEFORE collate
 
             // Then use tiles_for_mcquant for MCQuant join:
-            mcquant_input = RUN_CELLPOSE_CYTO_SEEDED.out.cell_masks
+            mcquant_input = RUN_CELLPOSE_CYTO_MULTIPASS.out.cell_masks
                 .flatMap { it } //.flatten()
                 .map { mask -> [mask.baseName.replaceAll('_cell$', ''), mask] }
                 .join(
@@ -999,7 +970,7 @@ workflow {
             // Step 5: Stitch results
             STITCH_RESULTS(
                 TILE_LARGE_IMAGE.out.tile_info,
-                RUN_CELLPOSE_CYTO_SEEDED.out.cell_masks.collect(),
+                RUN_CELLPOSE_CYTO_MULTIPASS.out.cell_masks.collect(),
                 RUN_MCQUANT.out.cell_quantification.collect(),
                 params.sample_name
             )
