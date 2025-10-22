@@ -1,0 +1,225 @@
+# Configuration for Comprehensive Tumor Spatial Analysis
+# ===========================================================
+
+# Input/Output
+# -------------
+input_data: 'manual_gating_output/gated_data.h5ad'
+output_directory: 'tumor_spatial_analysis'
+
+# Marker Definitions
+# ------------------
+tumor_markers:
+  - TOM
+  - AGFP
+
+immune_markers:
+  - CD45
+  - CD3
+  - CD8B
+
+# Cell Population Definitions
+# ----------------------------
+# Define cell populations based on marker combinations
+# Each population has:
+#   - markers: dictionary of {marker: True/False} for required expression
+#   - parent: (optional) parent population name
+#   - color: hex color code for visualization
+
+populations:
+  # === TUMOR POPULATIONS ===
+  Tumor:
+    markers:
+      TOM: true
+    color: '#E41A1C'
+    description: 'All tumor cells (TOM+)'
+
+  Tumor_AGFP_positive:
+    markers:
+      TOM: true
+      AGFP: true
+    parent: Tumor
+    color: '#377EB8'
+    description: 'AGFP+ tumor cells'
+
+  Tumor_AGFP_negative:
+    markers:
+      TOM: true
+      AGFP: false
+    parent: Tumor
+    color: '#FDB462'
+    description: 'AGFP- tumor cells'
+
+  Tumor_PERK_positive:
+    markers:
+      TOM: true
+      PERK: true
+    parent: Tumor
+    color: '#4DAF4A'
+    description: 'PERK+ tumor cells (ER stress)'
+
+  Tumor_Ki67_positive:
+    markers:
+      TOM: true
+      KI67: true
+    parent: Tumor
+    color: '#FF7F00'
+    description: 'Ki67+ tumor cells (proliferating)'
+
+  # === IMMUNE POPULATIONS ===
+  CD45_positive:
+    markers:
+      CD45: true
+    color: '#984EA3'
+    description: 'All immune cells (CD45+)'
+
+  T_cells:
+    markers:
+      CD3: true
+    parent: CD45_positive
+    color: '#A65628'
+    description: 'All T cells (CD3+)'
+
+  CD8_T_cells:
+    markers:
+      CD3: true
+      CD8B: true
+    parent: T_cells
+    color: '#F781BF'
+    description: 'CD8+ T cells'
+
+  CD8_Ki67_positive:
+    markers:
+      CD3: true
+      CD8B: true
+      KI67: true
+    parent: CD8_T_cells
+    color: '#999999'
+    description: 'Proliferating CD8+ T cells'
+
+  CD8_PERK_positive:
+    markers:
+      CD3: true
+      CD8B: true
+      PERK: true
+    parent: CD8_T_cells
+    color: '#B3DE69'
+    description: 'PERK+ CD8+ T cells (stressed)'
+
+  # === NON-T IMMUNE CELLS ===
+  CD45_CD3_negative:
+    markers:
+      CD45: true
+      CD3: false
+    parent: CD45_positive
+    color: '#FCCDE5'
+    description: 'Non-T immune cells (CD45+CD3-)'
+
+
+# Tumor Structure Detection
+# --------------------------
+tumor_structure_detection:
+  tumor_population: 'Tumor'
+  min_cluster_size: 50          # Minimum cells to form a tumor structure
+  eps: 30                        # Maximum distance (μm) between cells in cluster
+  min_samples: 10                # Minimum samples for DBSCAN core point
+
+
+# Infiltration Boundary Analysis
+# -------------------------------
+infiltration_boundaries:
+  tumor_population: 'Tumor'
+  boundary_widths: [30, 100, 200]  # Distances in microns
+  # Creates regions: Tumor_Core, Tumor_Margin (0-30), Peri_Tumor (30-100),
+  #                  Distal (100-200), Far (>200)
+
+
+# Immune Infiltration Quantification
+# -----------------------------------
+immune_infiltration:
+  populations:
+    - T_cells
+    - CD8_T_cells
+    - CD8_Ki67_positive
+    - CD8_PERK_positive
+    - CD45_CD3_negative
+  by_sample: true
+  by_timepoint: true  # Set to true if temporal data available
+
+
+# Temporal Analysis
+# -----------------
+temporal_analysis:
+  enabled: true  # Set to false if no temporal data
+  timepoint_column: 'timepoint'
+  populations_to_track:
+    - Tumor
+    - Tumor_AGFP_positive
+    - T_cells
+    - CD8_T_cells
+    - CD8_Ki67_positive
+  marker_trends:
+    - AGFP
+    - PERK
+    - KI67
+    - CD3
+    - CD8B
+
+
+# Co-enrichment Analysis
+# ----------------------
+# Define pairs of populations to test for spatial co-localization
+coenrichment_analysis:
+  population_pairs:
+    - [CD8_T_cells, Tumor_AGFP_positive]
+    - [CD8_T_cells, Tumor_AGFP_negative]
+    - [CD8_Ki67_positive, Tumor_Ki67_positive]
+    - [CD8_PERK_positive, Tumor_PERK_positive]
+    - [T_cells, Tumor]
+  radius: 50  # Search radius in microns
+  n_permutations: 100  # Number of permutations for statistical testing
+
+
+# Spatial Heterogeneity Detection
+# --------------------------------
+spatial_heterogeneity:
+  tumor_population: 'Tumor'
+  heterogeneity_markers:
+    - AGFP
+    - PERK
+    - KI67
+  n_regions: 3  # Number of distinct regions to identify
+  min_region_size: 100  # Minimum cells per region
+
+
+# Region Infiltration Comparison
+# -------------------------------
+region_infiltration_comparison:
+  immune_populations:
+    - T_cells
+    - CD8_T_cells
+    - CD8_Ki67_positive
+  region_column: 'heterogeneity_region'
+
+
+# Visualization Settings
+# ----------------------
+visualizations:
+  spatial_overview: true
+  temporal_trends: true
+  infiltration_heatmap: true
+  coenrichment_plots: true
+  heterogeneity_maps: true
+
+  figure_settings:
+    dpi: 300
+    format: 'png'
+    style: 'seaborn-v0_8-paper'  # Use seaborn style for publication quality
+
+
+# Advanced Options
+# ----------------
+advanced:
+  random_seed: 42
+  parallel_processing: false  # Set to true for multi-core processing
+  verbose: true
+  save_intermediate: true  # Save intermediate analysis files
