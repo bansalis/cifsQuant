@@ -1269,53 +1269,139 @@ def density_based_gating(adata):
             continue
         
         # Step 3: Build smooth density
-        bins = np.logspace(np.log10(max(1, val_min)), 
+        bins = np.logspace(np.log10(max(1, val_min)),
                           np.log10(val_max), 300)
-        
+
         if not np.all(np.diff(bins) > 0):
             bins = np.linspace(val_min, val_max, 300)
-        
+
         hist, bin_edges = np.histogram(sampled_vals, bins=bins)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
+
         hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
         density = hist_smooth / (hist_smooth.sum() + 1e-10)
-        
-        # Step 4: Find negative peak (leftmost major peak)
-        #peaks, properties = find_peaks(density, prominence=0.01, distance=10)
-        peaks, properties = find_peaks(density, prominence=0.001, distance=5, height=0.0001)
-        
+
+        # Step 4: Find negative peak (ROBUST - not just leftmost)
+        # OLD: peaks, properties = find_peaks(density, prominence=0.001, distance=5, height=0.0001)
+        # NEW: More sensitive peak detection, then intelligent selection
+        peaks, properties = find_peaks(density, prominence=0.0005, distance=5, height=0.00005)
+
         if len(peaks) == 0:
             gate = float(np.percentile(sampled_vals, 90))
             print(f"    No peaks → p90 gate={gate:.3f}")
             gates[marker] = gate
             continue
-        
-        neg_peak_idx = peaks[0]
+
+        # ROBUSTNESS IMPROVEMENT: Identify true negative peak using multiple criteria
+        # Criterion 1: Negative peak should be in lower half of intensity distribution
+        median_intensity = np.median(sampled_vals)
+
+        # Criterion 2: Calculate cumulative fraction at each peak (population size)
+        cumulative_fractions = []
+        for peak_idx in peaks:
+            peak_val = bin_centers[peak_idx]
+            cum_frac = (sampled_vals <= peak_val).mean()
+            cumulative_fractions.append(cum_frac)
+
+        # Criterion 3: Peak prominence (how distinct is the peak)
+        prominences = properties['prominences']
+
+        # Score each peak as a candidate negative peak
+        peak_scores = []
+        for i, peak_idx in enumerate(peaks):
+            peak_val = bin_centers[peak_idx]
+            peak_height = density[peak_idx]
+
+            # Favor peaks in lower intensity range (negative = low signal)
+            # Score from 0 (at max) to 1 (at min)
+            position_score = 1.0 - (peak_val - val_min) / (val_max - val_min + 1e-10)
+
+            # Favor peaks with large populations before them (negative is usually majority)
+            # Score from 0 (few cells) to 1 (most cells)
+            population_score = cumulative_fractions[i]
+
+            # Favor prominent peaks
+            prominence_score = prominences[i] / (prominences.max() + 1e-10)
+
+            # Combined score (weighted average)
+            # Position is most important (0.5), then population (0.3), then prominence (0.2)
+            combined_score = (0.5 * position_score +
+                            0.3 * population_score +
+                            0.2 * prominence_score)
+
+            peak_scores.append(combined_score)
+
+        # Select peak with highest score as negative peak
+        best_neg_idx = np.argmax(peak_scores)
+        neg_peak_idx = peaks[best_neg_idx]
         neg_peak_val = bin_centers[neg_peak_idx]
         neg_peak_height = density[neg_peak_idx]
+
+        print(f"    Found {len(peaks)} peaks, selected peak #{best_neg_idx+1} as negative:")
+        print(f"    Negative peak: position={neg_peak_val:.3f}, height={neg_peak_height:.4f}, "
+              f"score={peak_scores[best_neg_idx]:.3f}")
+
+        # Validation: Check if there's a second peak (bimodality check)
+        if len(peaks) >= 2:
+            # Find the most prominent positive peak (should be right of negative)
+            pos_candidates = [i for i, p in enumerate(peaks) if bin_centers[p] > neg_peak_val * 1.2]
+            if pos_candidates:
+                pos_peak_idx = peaks[pos_candidates[0]]
+                pos_peak_val = bin_centers[pos_peak_idx]
+                print(f"    Positive peak detected at: position={pos_peak_val:.3f}, "
+                      f"separation={pos_peak_val/neg_peak_val:.2f}×")
         
-        print(f"    Negative peak: position={neg_peak_val:.3f}, height={neg_peak_height:.4f}")
-        
-        # Step 5: METHOD 1 - Valley detection (PRIMARY)
+        # Step 5: METHOD 1 - Valley detection (PRIMARY - IMPROVED)
         search_start = neg_peak_idx
         search_end = min(neg_peak_idx + 150, len(density))
         right_side = density[search_start:search_end]
-        
-        # Find first local minimum (valley)
+
+        # IMPROVEMENT: Find multiple local minima and score them
         local_mins = argrelextrema(right_side, np.less, order=5)[0]
-        
+
         if len(local_mins) > 0:
-            valley_idx_local = local_mins[0]
+            # Score each valley candidate
+            valley_scores = []
+            for valley_idx_local in local_mins:
+                valley_height = right_side[valley_idx_local]
+                valley_position = bin_centers[search_start + valley_idx_local]
+
+                # Criterion 1: Prefer lower valleys (deeper separation)
+                depth_score = 1.0 - (valley_height / (neg_peak_height + 1e-10))
+
+                # Criterion 2: Prefer valleys closer to negative peak (avoid going too far right)
+                # But not TOO close (need some separation)
+                distance_from_neg = valley_position - neg_peak_val
+                ideal_distance = neg_peak_val * 0.5  # Ideally ~0.5× the negative peak value away
+                distance_score = np.exp(-((distance_from_neg - ideal_distance)**2) / (ideal_distance**2 + 1e-10))
+
+                # Criterion 3: Check if valley is between two peaks (true valley vs tail)
+                # Look for a peak to the right of this valley
+                remaining_region = right_side[valley_idx_local:]
+                if len(remaining_region) > 10:
+                    has_peak_right = np.any(remaining_region > valley_height * 1.2)
+                    bimodal_score = 1.0 if has_peak_right else 0.3
+                else:
+                    bimodal_score = 0.5
+
+                # Combined score
+                combined_score = 0.5 * depth_score + 0.3 * distance_score + 0.2 * bimodal_score
+                valley_scores.append(combined_score)
+
+            # Select best valley
+            best_valley_idx = np.argmax(valley_scores)
+            valley_idx_local = local_mins[best_valley_idx]
             gate_valley = float(bin_centers[search_start + valley_idx_local])
             valley_height = right_side[valley_idx_local]
+
+            print(f"    Valley method: found {len(local_mins)} valleys, selected #{best_valley_idx+1}")
+            print(f"    Valley: gate={gate_valley:.3f}, height={valley_height:.4f}, score={valley_scores[best_valley_idx]:.3f}")
         else:
             # Fallback: global minimum in search region
             valley_idx_local = np.argmin(right_side)
             gate_valley = float(bin_centers[search_start + valley_idx_local])
             valley_height = right_side[valley_idx_local]
-        
-        print(f"    Valley method: gate={gate_valley:.3f}, height={valley_height:.4f}")
+            print(f"    Valley method (global min): gate={gate_valley:.3f}, height={valley_height:.4f}")
         
         # Step 6: METHOD 2 - GMM intersection (BACKUP)
         gate_gmm = gate_valley  # Default to valley
