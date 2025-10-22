@@ -146,8 +146,8 @@ sys.stdout.flush()
 
 # Process in batches with limited concurrency to avoid OOM
 tile_info = []
-batch_size = 10
-max_workers = 3
+batch_size = 8
+max_workers = 2
 
 for batch_start in range(0, len(coords), batch_size):
     batch = coords[batch_start:batch_start + batch_size]
@@ -276,92 +276,81 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
     export HOME=/tmp
     export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
     mkdir -p /tmp/cellpose_models
+    
     echo "=== CELLPOSE NUCLEI BATCH ${batch_id}: ${tiles.size()} tiles ==="
     
-    # Verify GPU access
-    python3 -c "
-import torch
-print('CUDA available:', torch.cuda.is_available())
-if torch.cuda.is_available():
-    print('GPU:', torch.cuda.get_device_name(0))
-    print('GPU memory:', torch.cuda.get_device_properties(0).total_memory // 1024**3, 'GB')
-"
-    
-    # Process each tile to extract and preprocess DAPI
-    for tile in ${tiles.join(' ')}; do
-        tile_base=\$(basename "\$tile" .tif)
-        echo "Preprocessing \$tile_base..."
-        
-        python3 - <<EOF
-import tifffile
+    python3 - <<'PYSCRIPT'
 import numpy as np
+import tifffile
+from cellpose import models
+from pathlib import Path
+import torch
 
-image = tifffile.imread("\$tile")
-if image.ndim != 3 or image.shape[0] <= ${params.dapi_channel}:
-    raise ValueError(f"DAPI channel ${params.dapi_channel} not available")
+# Verify GPU
+use_gpu = torch.cuda.is_available()
+print(f'CUDA available: {use_gpu}')
+if use_gpu:
+    print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'GPU memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB')
 
-dapi = image[${params.dapi_channel}]
-bg = np.percentile(dapi, 5)
-dapi_bg = np.clip(dapi.astype(np.float32) - bg, 0, None).astype(np.uint16)
-tifffile.imwrite("\${tile_base}_dapi_bg_subtracted.tif", dapi_bg)
-tile_name = "\${tile_base}"
-print(f"Preprocessed {tile_name}: range {dapi_bg.min()}-{dapi_bg.max()}")
-EOF
-    done
+# Load model ONCE for entire batch with GPU
+model = models.Cellpose(model_type='${params.nuc_model}', gpu=use_gpu)
+print(f'Model loaded on {"GPU" if use_gpu else "CPU"}')
+
+# Process all tiles in batch
+tile_paths = sorted(Path('.').glob('tile_*.tif'))
+n_tiles = len(tile_paths)
+
+for idx, tile_path in enumerate(tile_paths):
+    base = tile_path.stem
+    print(f'[{idx+1}/{n_tiles}] Processing {base}...', flush=True)
     
-    # Run Cellpose nuclei on all DAPI files in batch
-    echo "Running Cellpose nuclei segmentation on batch..."
-    export HOME=/tmp
-    export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
-    mkdir -p /tmp/cellpose_models
+    try:
+        # Load and extract DAPI
+        img = tifffile.imread(tile_path)
+        if img.ndim != 3 or img.shape[0] <= ${params.dapi_channel}:
+            print(f'  ERROR: DAPI channel ${params.dapi_channel} not available')
+            continue
+        
+        dapi = img[${params.dapi_channel}]
+        
+        # Background subtraction
+        bg = np.percentile(dapi, 5)
+        dapi_bg = np.clip(dapi.astype(np.float32) - bg, 0, None).astype(np.uint16)
+        
+        # Save preprocessed DAPI
+        tifffile.imwrite(f'{base}_dapi_bg_subtracted.tif', dapi_bg, compression='lzw')
+        
+        # Run Cellpose on GPU
+        masks = model.eval(
+            dapi_bg,
+            diameter=${params.nuc_diameter},
+            channels=[0, 0],
+            flow_threshold=${params.nuc_flow_threshold},
+            cellprob_threshold=${params.nuc_cellprob_threshold},
+            stitch_threshold=${params.stitch_threshold},
+            batch_size=8
+        )[0]
+        
+        n_cells = int(masks.max())
+        print(f'  {base}: {n_cells} nuclei detected', flush=True)
+        
+        # Save mask
+        tifffile.imwrite(f'{base}_nuclei_mask.tif', masks.astype(np.uint16), compression='lzw')
+        
+        # Free memory
+        del img, dapi, dapi_bg, masks
+        
+    except Exception as e:
+        print(f'  ERROR {base}: {e}', flush=True)
+        # Create empty mask
+        empty = np.zeros((${params.tile_size}, ${params.tile_size}), dtype=np.uint16)
+        tifffile.imwrite(f'{base}_nuclei_mask.tif', empty, compression='lzw')
+        tifffile.imwrite(f'{base}_dapi_bg_subtracted.tif', empty, compression='lzw')
 
-    for dapi_file in *_dapi_bg_subtracted.tif; do
-        echo "Processing \$dapi_file"
-        cellpose --image_path "\$dapi_file" \
-            --pretrained_model "${params.nuc_model}" \
-            --diameter ${params.nuc_diameter} \
-            --flow_threshold ${params.nuc_flow_threshold} \
-            --cellprob_threshold ${params.nuc_cellprob_threshold} \
-            --stitch_threshold ${params.stitch_threshold} \
-            --use_gpu \
-            --save_tif --no_npy \
-            --verbose
-    done
+print(f'\\nBatch complete: {n_tiles} tiles processed')
+PYSCRIPT
 
-    # Rename outputs to expected format
-    for mask in *_dapi_bg_subtracted_cp_masks.tif; do
-        if [ -f "\$mask" ]; then
-            base=\$(echo "\$mask" | sed 's/_dapi_bg_subtracted_cp_masks.tif//')
-            mv "\$mask" "\${base}_nuclei_mask.tif"
-            
-            # Print statistics
-            python3 -c "
-import tifffile, numpy as np
-try:
-    mask = tifffile.imread('\${base}_nuclei_mask.tif')
-    n_cells = len(np.unique(mask[mask > 0]))
-    tile_name = '\${base}'
-    print(f'  {tile_name}: {n_cells} nuclei detected')
-except Exception as e:
-    tile_name = '\${base}'
-    print(f'  {tile_name}: Error reading mask - {e}')
-"
-        fi
-    done
-    
-    # Create empty masks for any failed tiles
-    for tile in ${tiles.join(' ')}; do
-        tile_base=\$(basename "\$tile" .tif)
-        if [ ! -f "\${tile_base}_nuclei_mask.tif" ]; then
-            echo "Creating empty mask for \$tile_base"
-            python3 -c "
-import tifffile, numpy as np
-empty = np.zeros((${params.tile_size}, ${params.tile_size}), dtype=np.uint16)
-tifffile.imwrite('\${tile_base}_nuclei_mask.tif', empty)
-"
-        fi
-    done
-    
     echo "=== NUCLEI BATCH ${batch_id} completed ==="
     """
 }
@@ -417,7 +406,6 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     tag "cyto_batch_${batch_id}"
     container params.cellpose_container
     publishDir "${params.outdir}/cell_masks", mode: 'copy'
-    maxForks 2  // Limit concurrent batches for GPU memory
 
     input:
     tuple val(batch_id), path(tiles), path(nuclei_masks)
@@ -429,7 +417,6 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     params.cellpose
 
     script:
-    // Parse channel mappings from params
     def tumor_channels = params.tumor_channels ?: '1'
     def immune_channels = params.immune_channels ?: '2,9'
     def tumor_weight = params.tumor_weight ?: 0.7
@@ -454,6 +441,14 @@ from cellpose import models
 from pathlib import Path
 import os
 import sys
+import torch
+
+# Verify GPU and initialize model
+use_gpu = torch.cuda.is_available()
+print(f"GPU available: {use_gpu}")
+if use_gpu:
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB")
 
 def parse_channel_config():
     config = {}
@@ -461,7 +456,6 @@ def parse_channel_config():
     # Custom per-channel weights (highest priority)
     custom = os.environ.get('CUSTOM_WEIGHTS', '').strip()
     if custom:
-        # Format: "1:0.5,2:0.3,9:0.2"
         for pair in custom.split(','):
             if ':' in pair:
                 ch, w = pair.split(':')
@@ -474,7 +468,6 @@ def parse_channel_config():
     tumor_w = float(os.environ.get('TUMOR_WEIGHT', 0.7))
     immune_w = float(os.environ.get('IMMUNE_WEIGHT', 0.3))
     
-    # Distribute weights evenly within category
     tumor_w_per = tumor_w / len(tumor_chs)
     immune_w_per = immune_w / len(immune_chs)
     
@@ -494,8 +487,6 @@ def create_weighted_cytoplasm(img, channel_weights):
             continue
         
         signal = img[ch].astype(np.float32)
-        
-        # Fast percentile normalization (avoid full sort)
         p1, p99 = np.percentile(signal, [1, 99])
         if p99 > p1:
             signal = np.clip((signal - p1) / (p99 - p1), 0, 1)
@@ -504,19 +495,20 @@ def create_weighted_cytoplasm(img, channel_weights):
         
         cyto += weight * signal
     
-    # Final normalization
     if cyto.max() > 0:
         cyto = cyto / cyto.max()
     
     return (cyto * 65535).astype(np.uint16)
 
-# Parse config once
+# Parse config
 channel_weights = parse_channel_config()
 print(f"Channel weights: {channel_weights}")
 sys.stdout.flush()
 
-# Load model once for batch
-model = models.Cellpose(model_type='${params.cyto_model}', gpu=True)
+# Load model ONCE for entire batch with GPU
+print(f"Loading Cellpose model on {'GPU' if use_gpu else 'CPU'}...", flush=True)
+model = models.Cellpose(model_type='${params.cyto_model}', gpu=use_gpu)
+print("Model loaded successfully!", flush=True)
 
 # Process all tiles in batch
 tile_paths = sorted(Path('.').glob('tile_*.tif'))
@@ -527,11 +519,11 @@ for idx, tile_path in enumerate(tile_paths):
     nuc_mask_path = f'{base}_nuclei_mask.tif'
     
     if not Path(nuc_mask_path).exists():
-        print(f"[{idx+1}/{n_tiles}] Skip {base}: no nuclei", flush=True)
+        print(f"[{idx+1}/{n_tiles}] Skip {base}: no nuclei mask", flush=True)
         continue
     
     try:
-        # Load data (lazy load to save memory)
+        # Load data
         img = tifffile.imread(tile_path)
         nuclei_mask = tifffile.imread(nuc_mask_path)
         
@@ -543,9 +535,7 @@ for idx, tile_path in enumerate(tile_paths):
         
         # Create weighted cytoplasm
         cyto = create_weighted_cytoplasm(img, channel_weights)
-        
-        # Free image memory immediately
-        del img
+        del img  # Free memory
         
         # Run Cellpose with nuclei seeding
         cells = model.eval(
@@ -557,30 +547,28 @@ for idx, tile_path in enumerate(tile_paths):
             min_size=${params.min_cell_size},
             nuc_mask=nuclei_mask,
             do_3D=False,
-            batch_size=8  # GPU memory optimization
+            batch_size=8,
+            gpu=use_gpu
         )[0]
-
-        nuc_area = np.sum(nuclei_mask > 0)
-        cell_area = np.sum(cells > 0)
-        expansion_ratio = cell_area / nuc_area if nuc_area > 0 else 0
-
-        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei}→{n_cells} ({recovery:.1%}), '
-            f'area expansion: {expansion_ratio:.2f}x', flush=True)
-        
-        # Free memory
-        del cyto, nuclei_mask
         
         n_cells = int(cells.max())
         recovery = n_cells / n_nuclei if n_nuclei > 0 else 0
         
-        tifffile.imwrite(f'{base}_cell.tif', cells.astype(np.int32), compression='lzw')
-        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei}→{n_cells} ({recovery:.1%})', flush=True)
+        # Calculate expansion metrics
+        nuc_area = np.sum(nuclei_mask > 0)
+        cell_area = np.sum(cells > 0)
+        expansion_ratio = cell_area / nuc_area if nuc_area > 0 else 0
         
-        del cells
+        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei}→{n_cells} ({recovery:.1%}), '
+              f'expansion: {expansion_ratio:.2f}x', flush=True)
+        
+        # Save and free memory
+        tifffile.imwrite(f'{base}_cell.tif', cells.astype(np.int32), compression='lzw')
+        del cyto, nuclei_mask, cells
         
     except Exception as e:
         print(f'[{idx+1}/{n_tiles}] ERROR {base}: {e}', flush=True)
-        # Fallback: use nuclei mask
+        # Fallback to nuclei mask
         try:
             nuc = tifffile.imread(nuc_mask_path)
             tifffile.imwrite(f'{base}_cell.tif', nuc.astype(np.int32), compression='lzw')
@@ -591,7 +579,7 @@ for idx, tile_path in enumerate(tile_paths):
 print(f"\\nBatch complete: {n_tiles} tiles processed")
 PYSCRIPT
     
-    # Ensure all tiles have output (empty masks for failures)
+    # Ensure all tiles have output
     for tile in ${tiles.join(' ')}; do
         tile_base=\$(basename "\$tile" .tif)
         if [ ! -f "\${tile_base}_cell.tif" ]; then
