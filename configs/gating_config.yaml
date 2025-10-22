@@ -1,0 +1,213 @@
+# Per-Marker Gating Configuration
+# =====================================
+# This file allows you to customize gating parameters for each marker individually.
+# Any marker not specified here will use the default parameters.
+
+# Default parameters (applied to all markers unless overridden)
+defaults:
+  method: 'density'  # Options: 'density', 'gmm', 'percentile', 'manual'
+  peak_multiplier: 2.5  # Gate must be at least this many times the negative peak position
+  min_absolute_gate: 0.15  # Hard minimum gate value
+  min_percentile: 80  # Gate must be at least this percentile of positive cells
+  valley_max_height: 0.20  # Maximum valley height as fraction of negative peak
+  prominence: 0.0005  # Peak detection prominence threshold
+  distance: 5  # Minimum distance between peaks (in bins)
+  min_height: 0.00005  # Minimum peak height
+
+  # Negative peak selection weights
+  position_weight: 0.5  # Weight for position score (lower intensity favored)
+  population_weight: 0.3  # Weight for cumulative population score
+  prominence_weight: 0.2  # Weight for peak prominence score
+
+
+# Per-marker overrides
+# ---------------------
+# Specify custom parameters for individual markers
+# Any parameter not specified will use the default above
+
+markers:
+  # Example: Nuclear marker (usually very strong bimodal)
+  DAPI:
+    method: 'percentile'  # Use simple percentile for universal markers
+    percentile: 50  # 50th percentile (half cells positive)
+    comment: 'Nuclear marker - all cells should be positive'
+
+  # Example: Strong tumor marker
+  TOM:
+    method: 'density'
+    peak_multiplier: 2.0  # Less stringent for clear separation
+    min_percentile: 75
+    valley_max_height: 0.25
+    comment: 'tdTomato tumor marker - strong signal'
+
+  # Example: Weak/variable marker
+  AGFP:
+    method: 'density'
+    peak_multiplier: 3.0  # More stringent to avoid false positives
+    min_absolute_gate: 0.25
+    min_percentile: 85
+    valley_max_height: 0.15  # Require clearer valley
+    prominence: 0.001  # More prominent peaks required
+    comment: 'GFP marker - can be variable, use conservative gating'
+
+  # Example: Pan-immune marker (broad distribution)
+  CD45:
+    method: 'density'
+    peak_multiplier: 2.5
+    min_percentile: 80
+    valley_max_height: 0.20
+    comment: 'Pan-immune marker'
+
+  # Example: T cell marker
+  CD3:
+    method: 'density'
+    peak_multiplier: 2.8
+    min_absolute_gate: 0.20
+    min_percentile: 85
+    comment: 'T cell marker - subset of CD45, use conservative gate'
+
+  # Example: CD8 marker (subset marker, often weak)
+  CD8B:
+    method: 'density'
+    peak_multiplier: 3.0
+    min_absolute_gate: 0.25
+    min_percentile: 85
+    valley_max_height: 0.15
+    comment: 'CD8 marker - subset of T cells, conservative gating'
+
+  # Example: Proliferation marker (typically low frequency)
+  KI67:
+    method: 'density'
+    peak_multiplier: 3.5  # Very stringent for rare markers
+    min_absolute_gate: 0.30
+    min_percentile: 90
+    valley_max_height: 0.12
+    comment: 'Proliferation marker - low frequency, high stringency'
+
+  # Example: Stress marker
+  PERK:
+    method: 'density'
+    peak_multiplier: 3.0
+    min_absolute_gate: 0.25
+    min_percentile: 85
+    valley_max_height: 0.15
+    comment: 'ER stress marker'
+
+
+# Manual gate overrides
+# ----------------------
+# For markers where automatic gating fails, specify gates manually
+# Gates are in normalized intensity units (0-65535 scale after normalization)
+
+manual_gates:
+  # Example manual gates (uncomment and adjust as needed)
+  # CD3: 150.5
+  # KI67: 250.0
+  # AGFP: 200.0
+
+
+# Quality control thresholds
+# ---------------------------
+# Define per-marker QC criteria
+
+qc_thresholds:
+  # Minimum separation between positive and negative populations
+  min_separation:
+    default: 1.5
+    overrides:
+      KI67: 2.0  # Require higher separation for proliferation marker
+      CD8B: 1.8
+
+  # Expected positive percentage ranges (warning if outside)
+  expected_positive_pct:
+    TOM:
+      min: 20  # Expect at least 20% tumor cells
+      max: 80  # Expect at most 80% tumor cells
+
+    CD45:
+      min: 10  # Expect at least 10% immune
+      max: 60  # Expect at most 60% immune
+
+    CD3:
+      min: 5
+      max: 40
+
+    CD8B:
+      min: 2
+      max: 25
+
+    KI67:
+      min: 1
+      max: 30
+
+    PERK:
+      min: 2
+      max: 40
+
+
+# Advanced options
+# ----------------
+
+advanced:
+  # Sample-wise gating (compute separate gates per sample)
+  sample_wise_gating: false
+
+  # Interactive mode (pause for review after each marker)
+  interactive_review: false
+
+  # Generate detailed diagnostic plots for each marker
+  detailed_diagnostics: true
+
+  # Save per-marker gating statistics
+  save_gating_stats: true
+
+  # Fallback strategy when primary method fails
+  fallback_methods:
+    - 'gmm'
+    - 'percentile'
+    - 'manual'
+
+  # Automatic parameter tuning (experimental)
+  auto_tune: false
+  auto_tune_iterations: 5
+
+
+# Validation settings
+# -------------------
+
+validation:
+  # Create validation plots
+  create_plots: true
+
+  # Plot types
+  plot_types:
+    - 'histogram'  # Histogram with gate overlay
+    - 'density'  # Smooth density curve
+    - 'spatial'  # Spatial distribution of positive/negative
+    - 'scatter'  # 2D scatter plots for marker pairs
+
+  # Save detailed per-marker reports
+  detailed_reports: true
+
+  # Markers to show in validation
+  markers_to_validate: 'all'  # or list: ['TOM', 'CD45', 'CD3']
+
+
+# Output settings
+# ---------------
+
+output:
+  # Save gating configuration used
+  save_config: true
+
+  # Save gate values to separate file
+  save_gates_csv: true
+
+  # Save per-marker statistics
+  save_marker_stats: true
+
+  # Directory for gating outputs
+  output_dir: 'manual_gating_output'
+
+  # Directory for validation plots
+  validation_dir: 'manual_gating_output/gating_validation'
