@@ -335,19 +335,37 @@ class TumorSpatialAnalysis:
         all_coords = self.coords
 
         print(f"  Calculating distances to {len(self.tumor_structures)} tumor structures")
+        print(f"  Using KD-Tree for efficient nearest neighbor search...")
 
         # For each cell, find distance to nearest tumor cell
-        distances_to_tumor = np.full(len(all_coords), np.inf)
+        # Use KD-Tree for efficient nearest neighbor search
+        from scipy.spatial import cKDTree
 
-        # Compute in batches to avoid memory issues
-        batch_size = 10000
+        # Build KD-Tree from tumor cell coordinates
+        print(f"  Building KD-Tree from {len(tumor_coords):,} tumor cells...")
+        tree = cKDTree(tumor_coords)
+
+        # Query distances for all cells in batches (for progress reporting)
+        distances_to_tumor = np.zeros(len(all_coords))
+        batch_size = 100000  # Larger batches since KD-Tree is much faster
+
+        n_batches = (len(all_coords) + batch_size - 1) // batch_size
+        print(f"  Processing {len(all_coords):,} cells in {n_batches} batches...")
+
         for i in range(0, len(all_coords), batch_size):
             end_idx = min(i + batch_size, len(all_coords))
             batch_coords = all_coords[i:end_idx]
 
-            # Distance to all tumor cells
-            dists = cdist(batch_coords, tumor_coords, metric='euclidean')
-            distances_to_tumor[i:end_idx] = dists.min(axis=1)
+            # Query nearest tumor cell for each cell in batch
+            dists, _ = tree.query(batch_coords, k=1)
+            distances_to_tumor[i:end_idx] = dists
+
+            # Progress reporting
+            if (i // batch_size) % 10 == 0 or end_idx == len(all_coords):
+                progress = 100 * end_idx / len(all_coords)
+                print(f"    Progress: {progress:.1f}% ({end_idx:,}/{len(all_coords):,} cells)")
+
+        print(f"  Distance calculation complete!")
 
         # Assign boundary regions
         boundary_region = np.full(len(all_coords), 'Far', dtype=object)
