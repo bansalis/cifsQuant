@@ -1,0 +1,20 @@
+sample_id,timepoint,group,condition,replicate,notes
+sample_001,Day0,Control,Untreated,1,Baseline control
+sample_002,Day0,Control,Untreated,2,Baseline control
+sample_003,Day0,Treatment,DrugA,1,Baseline treatment
+sample_004,Day0,Treatment,DrugA,2,Baseline treatment
+sample_005,Day3,Control,Untreated,1,Day 3 control
+sample_006,Day3,Control,Untreated,2,Day 3 control
+sample_007,Day3,Treatment,DrugA,1,Day 3 treatment
+sample_008,Day3,Treatment,DrugA,2,Day 3 treatment
+sample_009,Day7,Control,Untreated,1,Day 7 control
+sample_010,Day7,Control,Untreated,2,Day 7 control
+sample_011,Day7,Treatment,DrugA,1,Day 7 treatment
+sample_012,Day7,Treatment,DrugA,2,Day 7 treatment
+sample_013,Day14,Control,Untreated,1,Day 14 control
+sample_014,Day14,Control,Untreated,2,Day 14 control
+sample_015,Day14,Treatment,DrugA,1,Day 14 treatment
+sample_016,Day14,Treatment,DrugA,2,Day 14 treatment
+sample_017,Day21,Control,Untreated,1,Day 21 control
+sample_018,Day21,Control,Untreated,2,Day 21 control
+sample_019,Day21,Treatment,DrugA,1,Day 21 treatment
