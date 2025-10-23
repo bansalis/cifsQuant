@@ -274,25 +274,59 @@ class TumorSpatialAnalysis:
 
 
     def _calculate_cluster_area(self, coords: np.ndarray) -> float:
-        """Calculate area of cell cluster using convex hull."""
+        """
+        Calculate area of cell cluster.
+
+        For small clusters (<10k cells), use ConvexHull for accuracy.
+        For large regions, use bounding box to avoid memory crashes.
+        """
         if len(coords) < 3:
             return 0.0
+
+        # For large regions, use bounding box instead of ConvexHull
+        # ConvexHull on millions of points causes WSL crashes
+        if len(coords) > 10000:
+            # Use bounding box area as approximation
+            x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
+            y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
+            return (x_max - x_min) * (y_max - y_min)
+
+        # For small clusters, ConvexHull is fine and more accurate
         try:
             hull = ConvexHull(coords)
             return hull.volume  # In 2D, volume is actually area
         except:
-            return 0.0
+            # Fallback to bounding box if ConvexHull fails
+            x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
+            y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
+            return (x_max - x_min) * (y_max - y_min)
 
 
     def _calculate_cluster_perimeter(self, coords: np.ndarray) -> float:
-        """Calculate perimeter of cell cluster using convex hull."""
+        """
+        Calculate perimeter of cell cluster.
+
+        For small clusters (<10k cells), use ConvexHull for accuracy.
+        For large regions, use bounding box to avoid memory crashes.
+        """
         if len(coords) < 3:
             return 0.0
+
+        # For large regions, use bounding box perimeter
+        if len(coords) > 10000:
+            x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
+            y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
+            return 2 * ((x_max - x_min) + (y_max - y_min))
+
+        # For small clusters, ConvexHull is fine
         try:
             hull = ConvexHull(coords)
             return hull.area  # In 2D, area is actually perimeter
         except:
-            return 0.0
+            # Fallback to bounding box
+            x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
+            y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
+            return 2 * ((x_max - x_min) + (y_max - y_min))
 
 
     # ==================== SECTION 3: INFILTRATION BOUNDARY DETECTION ====================
