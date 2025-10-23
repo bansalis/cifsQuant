@@ -1,0 +1,200 @@
+# Configuration for Memory-Efficient Tumor Spatial Analysis
+# ===========================================================
+# This configuration is optimized for large datasets (millions of cells)
+# with per-structure processing to minimize memory usage
+
+# Input/Output
+# -------------
+input_data: 'manual_gating_output/gated_data.h5ad'
+sample_metadata: 'sample_metadata.csv'  # CSV with sample_id, timepoint, group, condition columns
+output_directory: 'efficient_spatial_analysis'
+
+# Memory Management
+# -----------------
+buffer_distance: 500  # μm around each structure to load (increase for larger neighborhoods)
+checkpoint_batch_size: 50  # Save progress every N structures
+
+# Marker Definitions
+# ------------------
+tumor_markers:
+  - TOM
+  - AGFP
+  - PERK
+  - KI67
+
+immune_markers:
+  - CD45
+  - CD3
+  - CD8B
+
+# Cell Population Definitions
+# ----------------------------
+populations:
+  # === TUMOR POPULATIONS ===
+  Tumor:
+    markers:
+      TOM: true
+    color: '#E41A1C'
+    description: 'All tumor cells (TOM+)'
+
+  Tumor_AGFP_positive:
+    markers:
+      TOM: true
+      AGFP: true
+    parent: Tumor
+    color: '#377EB8'
+    description: 'AGFP+ tumor cells'
+
+  Tumor_AGFP_negative:
+    markers:
+      TOM: true
+      AGFP: false
+    parent: Tumor
+    color: '#FDB462'
+    description: 'AGFP- tumor cells'
+
+  Tumor_PERK_positive:
+    markers:
+      TOM: true
+      PERK: true
+    parent: Tumor
+    color: '#4DAF4A'
+    description: 'PERK+ tumor cells (ER stress)'
+
+  Tumor_Ki67_positive:
+    markers:
+      TOM: true
+      KI67: true
+    parent: Tumor
+    color: '#FF7F00'
+    description: 'Ki67+ tumor cells (proliferating)'
+
+  # === IMMUNE POPULATIONS ===
+  CD45_positive:
+    markers:
+      CD45: true
+    color: '#984EA3'
+    description: 'All immune cells (CD45+)'
+
+  T_cells:
+    markers:
+      CD3: true
+    parent: CD45_positive
+    color: '#A65628'
+    description: 'All T cells (CD3+)'
+
+  CD8_T_cells:
+    markers:
+      CD3: true
+      CD8B: true
+    parent: T_cells
+    color: '#F781BF'
+    description: 'CD8+ T cells'
+
+  CD8_Ki67_positive:
+    markers:
+      CD3: true
+      CD8B: true
+      KI67: true
+    parent: CD8_T_cells
+    color: '#999999'
+    description: 'Proliferating CD8+ T cells'
+
+  CD8_PERK_positive:
+    markers:
+      CD3: true
+      CD8B: true
+      PERK: true
+    parent: CD8_T_cells
+    color: '#B3DE69'
+    description: 'PERK+ CD8+ T cells (stressed)'
+
+  # === NON-T IMMUNE CELLS ===
+  CD45_CD3_negative:
+    markers:
+      CD45: true
+      CD3: false
+    parent: CD45_positive
+    color: '#FCCDE5'
+    description: 'Non-T immune cells (CD45+CD3-)'
+
+
+# Tumor Structure Detection
+# --------------------------
+tumor_structure_detection:
+  tumor_population: 'Tumor'
+  min_cluster_size: 50
+  eps: 30
+  min_samples: 10
+
+
+# Infiltration Boundary Analysis
+# -------------------------------
+infiltration_boundaries:
+  tumor_population: 'Tumor'
+  boundary_widths: [30, 100, 200]  # Margin, Peri-Tumor, Distal
+
+
+# Immune Infiltration Quantification
+# -----------------------------------
+immune_infiltration:
+  populations:
+    - CD45_positive
+    - T_cells
+    - CD8_T_cells
+    - CD8_Ki67_positive
+    - CD8_PERK_positive
+    - CD45_CD3_negative
+
+
+# Cellular Neighborhoods (RCN-based)
+# -----------------------------------
+# Following Schapiro et al. (2017) and Keren et al. (2018)
+cellular_neighborhoods:
+  enabled: true
+  populations:  # Populations to use for neighborhood profiling
+    - Tumor
+    - Tumor_AGFP_positive
+    - Tumor_PERK_positive
+    - Tumor_Ki67_positive
+    - CD45_positive
+    - T_cells
+    - CD8_T_cells
+    - CD45_CD3_negative
+  window_size: 100  # Neighborhood radius in μm
+  k_neighbors: 10  # Number of nearest neighbors
+  n_clusters: 10  # Number of neighborhood types to identify
+  subsample_size: 100000  # Subsample for clustering (reduces memory)
+
+
+# Statistical Analysis
+# --------------------
+statistical_analysis:
+  enabled: true
+  alpha: 0.05  # Significance threshold
+  # Tests performed:
+  #   - Temporal trends (Spearman correlation, linear models)
+  #   - Group comparisons (Mann-Whitney, Kruskal-Wallis)
+  #   - Size correlations (Spearman correlation)
+  #   - Region differences (Kruskal-Wallis)
+  #   - Multiple testing correction (FDR)
+
+
+# Visualization Settings
+# ----------------------
+visualizations:
+  enabled: true
+  # Publication-quality figures generated:
+  #   - Infiltration heatmaps
+  #   - Temporal trend plots
+  #   - Group comparison boxplots
+  #   - Neighborhood enrichment heatmaps
+  #   - Tumor size correlations
+  #   - Statistical summary tables
+
+
+# Advanced Options
+# ----------------
+advanced:
+  random_seed: 42
+  verbose: true
