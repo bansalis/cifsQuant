@@ -335,35 +335,58 @@ class TumorSpatialAnalysis:
         all_coords = self.coords
 
         print(f"  Calculating distances to {len(self.tumor_structures)} tumor structures")
-        print(f"  Using KD-Tree for efficient nearest neighbor search...")
+        print(f"  Using memory-efficient KD-Tree approach...")
 
         # For each cell, find distance to nearest tumor cell
-        # Use KD-Tree for efficient nearest neighbor search
+        # Use KD-Tree with memory-efficient batching
         from scipy.spatial import cKDTree
+        import gc
+
+        # Convert to float32 to reduce memory usage (saves ~50% memory)
+        tumor_coords_f32 = tumor_coords.astype(np.float32)
+        all_coords_f32 = all_coords.astype(np.float32)
 
         # Build KD-Tree from tumor cell coordinates
-        print(f"  Building KD-Tree from {len(tumor_coords):,} tumor cells...")
-        tree = cKDTree(tumor_coords)
+        print(f"  Building KD-Tree from {len(tumor_coords_f32):,} tumor cells...")
+        tree = cKDTree(tumor_coords_f32)
 
-        # Query distances for all cells in batches (for progress reporting)
-        distances_to_tumor = np.zeros(len(all_coords))
-        batch_size = 100000  # Larger batches since KD-Tree is much faster
+        # Free up original tumor coords to save memory
+        del tumor_coords_f32
+        gc.collect()
 
-        n_batches = (len(all_coords) + batch_size - 1) // batch_size
-        print(f"  Processing {len(all_coords):,} cells in {n_batches} batches...")
+        # Query distances for all cells in batches (smaller batches for memory efficiency)
+        distances_to_tumor = np.zeros(len(all_coords_f32), dtype=np.float32)
+        batch_size = 50000  # Smaller batches to reduce memory pressure
 
-        for i in range(0, len(all_coords), batch_size):
-            end_idx = min(i + batch_size, len(all_coords))
-            batch_coords = all_coords[i:end_idx]
+        n_batches = (len(all_coords_f32) + batch_size - 1) // batch_size
+        print(f"  Processing {len(all_coords_f32):,} cells in {n_batches} batches...")
+
+        for i in range(0, len(all_coords_f32), batch_size):
+            end_idx = min(i + batch_size, len(all_coords_f32))
+            batch_coords = all_coords_f32[i:end_idx]
 
             # Query nearest tumor cell for each cell in batch
-            dists, _ = tree.query(batch_coords, k=1)
+            dists, _ = tree.query(batch_coords, k=1, workers=1)  # workers=1 to control memory
             distances_to_tumor[i:end_idx] = dists
 
-            # Progress reporting
-            if (i // batch_size) % 10 == 0 or end_idx == len(all_coords):
-                progress = 100 * end_idx / len(all_coords)
-                print(f"    Progress: {progress:.1f}% ({end_idx:,}/{len(all_coords):,} cells)")
+            # Free batch memory
+            del batch_coords, dists
+
+            # Progress reporting every batch
+            batch_num = i // batch_size + 1
+            progress = 100 * end_idx / len(all_coords_f32)
+            print(f"    Batch {batch_num}/{n_batches} - Progress: {progress:.1f}% ({end_idx:,}/{len(all_coords_f32):,} cells)")
+
+            # Periodic garbage collection to free memory
+            if batch_num % 10 == 0:
+                gc.collect()
+
+        # Convert back to float64 for consistency
+        distances_to_tumor = distances_to_tumor.astype(np.float64)
+
+        # Cleanup
+        del all_coords_f32, tree
+        gc.collect()
 
         print(f"  Distance calculation complete!")
 
