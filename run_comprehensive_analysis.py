@@ -1,23 +1,47 @@
 #!/usr/bin/env python3
 """
-COMPREHENSIVE Spatial Analysis Runner
+COMPREHENSIVE Spatial Analysis Runner - FULLY INTEGRATED
 
-This script runs the complete spatial analysis with ALL visualizations and statistics
-that were missing from the basic implementation.
+This script runs the complete spatial analysis with ALL visualizations and statistics.
 
-Specifically addresses:
-1. Proper genotype parsing (cis, trans, KPT Het variants)
-2. Spatial maps by sample/timepoint/genotype
-3. Tumor size across time and genotype WITH statistics
-4. Marker expression (fractional percentages) across time
-5. Neighborhood dynamics across time and genotype
-6. Multiple visualization formats
-7. Comprehensive statistics
+Features implemented:
+1. ✅ Proper 2×2 factorial design parsing (KPT/KPNT × cis/trans)
+2. ✅ Multi-level analysis (KPT vs KPNT AND all 4 groups)
+3. ✅ Spatial maps by sample/timepoint/model/4-way groups
+4. ✅ Tumor size temporal analysis with comprehensive statistics
+5. ✅ Marker expression (fractional %) for ALL markers across time
+6. ✅ Immune infiltration temporal dynamics (multi-level)
+7. ✅ Neighborhood temporal dynamics and heatmaps
+8. ✅ Comprehensive heatmaps (infiltration, markers, tumor size)
+9. ✅ Multi-panel summary dashboard
+10. ✅ Multiple visualization formats (line, box, violin, heatmap)
+11. ✅ FDR-corrected statistics throughout
+
+Output structure:
+    comprehensive_spatial_analysis/
+    ├── data/
+    │   ├── tumor_size_by_sample.csv
+    │   ├── marker_expression_temporal.csv
+    │   ├── neighborhood_temporal.csv
+    │   └── infiltration_metrics.csv
+    ├── statistics/
+    │   ├── tumor_size_temporal_KPT_vs_KPNT.csv
+    │   ├── tumor_size_KPT_vs_KPNT_by_timepoint.csv
+    │   ├── tumor_size_temporal_4way.csv
+    │   └── tumor_size_4way_by_timepoint.csv
+    └── figures/
+        ├── spatial_maps/ (by sample, timepoint, model, 4-way groups)
+        ├── temporal/ (tumor size, marker expression, infiltration)
+        ├── neighborhoods/ (temporal dynamics, heatmaps)
+        ├── heatmaps/ (comprehensive summaries)
+        └── combined/ (summary dashboard)
 
 Usage:
-    python run_comprehensive_analysis.py --config configs/comprehensive_config.yaml
+    python run_comprehensive_analysis.py \\
+        --config configs/comprehensive_config.yaml \\
+        --metadata sample_metadata.csv
 
-Author: Complete rewrite for comprehensive analysis
+Author: Comprehensive analysis framework
 Date: 2025-10-24
 """
 
@@ -37,6 +61,14 @@ warnings.filterwarnings('ignore')
 
 # Import the efficient framework
 from tumor_spatial_analysis_efficient import EfficientTumorSpatialAnalysis
+
+# Import comprehensive additions
+from comprehensive_analysis_additions import (
+    analyze_and_plot_infiltration_comprehensive,
+    analyze_neighborhoods_temporal,
+    create_comprehensive_heatmaps,
+    create_summary_dashboard
+)
 
 
 def parse_metadata_properly(metadata_path: str) -> pd.DataFrame:
@@ -679,6 +711,26 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
     return marker_df
 
 
+def setup_output_directories(output_dir: str):
+    """Create all necessary output directories."""
+    dirs = [
+        f"{output_dir}/data",
+        f"{output_dir}/statistics",
+        f"{output_dir}/figures/spatial_maps/by_sample",
+        f"{output_dir}/figures/spatial_maps/by_timepoint",
+        f"{output_dir}/figures/spatial_maps/by_genotype",
+        f"{output_dir}/figures/temporal/tumor_size",
+        f"{output_dir}/figures/temporal/marker_expression",
+        f"{output_dir}/figures/temporal/infiltration",
+        f"{output_dir}/figures/neighborhoods/temporal",
+        f"{output_dir}/figures/heatmaps",
+        f"{output_dir}/figures/combined",
+    ]
+
+    for d in dirs:
+        Path(d).mkdir(parents=True, exist_ok=True)
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -709,6 +761,9 @@ def main():
 
     # Run efficient framework for structure detection and infiltration
     output_dir = config.get('output_directory', 'comprehensive_spatial_analysis')
+
+    # Setup all output directories
+    setup_output_directories(output_dir)
 
     etsa = EfficientTumorSpatialAnalysis(
         adata,
@@ -754,6 +809,9 @@ def main():
     all_markers = config['tumor_markers'] + config['immune_markers']
     marker_df = analyze_and_plot_marker_expression(adata, output_dir, all_markers)
 
+    # 3d. Infiltration comprehensive temporal analysis
+    analyze_and_plot_infiltration_comprehensive(metrics_df, output_dir)
+
     # Phase 4: Neighborhoods
     neighborhood_config = config.get('cellular_neighborhoods', {})
     if neighborhood_config.get('enabled', True):
@@ -762,6 +820,9 @@ def main():
             **{k: v for k, v in neighborhood_config.items() if k != 'enabled'}
         )
 
+        # 4a. Neighborhood temporal dynamics
+        analyze_neighborhoods_temporal(adata, output_dir)
+
     # Phase 5: Statistics
     if config.get('statistical_analysis', {}).get('enabled', True):
         etsa.statistical_analysis(metrics_df)
@@ -769,6 +830,14 @@ def main():
     # Phase 6: Remaining visualizations
     if config.get('visualizations', {}).get('enabled', True):
         etsa.create_publication_figures(metrics_df)
+
+    # Phase 7: Comprehensive heatmaps and summary dashboard
+    print("\n" + "="*80)
+    print("CREATING COMPREHENSIVE SUMMARY VISUALIZATIONS")
+    print("="*80)
+
+    create_comprehensive_heatmaps(metrics_df, marker_df, size_df, output_dir)
+    create_summary_dashboard(metrics_df, marker_df, size_df, output_dir)
 
     print("\n" + "="*80)
     print("COMPREHENSIVE ANALYSIS COMPLETE!")
