@@ -41,26 +41,32 @@ from tumor_spatial_analysis_efficient import EfficientTumorSpatialAnalysis
 
 def parse_metadata_properly(metadata_path: str) -> pd.DataFrame:
     """
-    Parse metadata with proper genotype extraction.
+    Parse metadata to extract main group (KPT vs KPNT), cis/trans, and full group.
 
-    Handles: "cis", "trans", "KPT Het cis", "KPT Het trans"
+    Handles: "KPNT cis", "KPNT trans", "KPT Het cis", "KPT Het trans"
+
+    Creates:
+    - main_group: KPT or KPNT (for 2-group comparisons)
+    - genotype: cis or trans (cis/trans status)
+    - genotype_full: Full group name (for 4-group comparisons)
     """
     metadata = pd.read_csv(metadata_path)
 
     # Standardize sample_id casing
     metadata['sample_id'] = metadata['sample_id'].str.upper()
 
-    # Parse genotype from group column
-    metadata['het_status'] = metadata['group'].apply(
-        lambda x: 'Het' if 'Het' in str(x) else 'WT'
+    # Extract main group: KPT or KPNT
+    metadata['main_group'] = metadata['group'].apply(
+        lambda x: 'KPT' if 'KPT' in str(x) else 'KPNT'
     )
 
+    # Extract cis/trans status
     metadata['genotype'] = metadata['group'].apply(
         lambda x: 'cis' if 'cis' in str(x).lower() else
                  ('trans' if 'trans' in str(x).lower() else 'Unknown')
     )
 
-    # Keep full group name for detailed analysis
+    # Full group name for detailed 4-group analysis
     metadata['genotype_full'] = metadata['group']
 
     # Convert timepoint to numeric
@@ -70,12 +76,12 @@ def parse_metadata_properly(metadata_path: str) -> pd.DataFrame:
     print("PARSED SAMPLE METADATA")
     print("="*80)
     print(f"Samples: {len(metadata)}")
-    print(f"Genotypes: {sorted(metadata['genotype'].unique())}")
-    print(f"Full groups: {sorted(metadata['genotype_full'].unique())}")
-    print(f"Het status: {sorted(metadata['het_status'].unique())}")
+    print(f"Main groups: {sorted(metadata['main_group'].unique())}")
+    print(f"Cis/Trans: {sorted(metadata['genotype'].unique())}")
+    print(f"Full groups (4 subgroups): {sorted(metadata['genotype_full'].unique())}")
     print(f"Timepoints: {sorted(metadata['timepoint'].unique())}")
     print("\nSample breakdown:")
-    print(metadata.groupby(['genotype', 'het_status', 'timepoint']).size())
+    print(metadata.groupby(['main_group', 'genotype', 'timepoint']).size().to_string())
     print("="*80 + "\n")
 
     return metadata
@@ -86,13 +92,14 @@ def merge_metadata_into_adata(adata, metadata: pd.DataFrame):
     # Standardize adata sample_id
     adata.obs['sample_id'] = adata.obs['sample_id'].str.upper()
 
-    # Merge all metadata columns
-    for col in ['genotype', 'genotype_full', 'het_status', 'timepoint', 'treatment']:
+    # Merge all metadata columns including main_group
+    for col in ['main_group', 'genotype', 'genotype_full', 'timepoint', 'treatment']:
         if col in metadata.columns:
             mapping = dict(zip(metadata['sample_id'], metadata[col]))
             adata.obs[col] = adata.obs['sample_id'].map(mapping)
 
     print(f"Merged metadata into adata.obs")
+    print(f"  Cells with main_group: {adata.obs['main_group'].notna().sum():,}")
     print(f"  Cells with genotype: {adata.obs['genotype'].notna().sum():,}")
     print(f"  Cells with timepoint: {adata.obs['timepoint'].notna().sum():,}\n")
 
@@ -229,8 +236,8 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     print("="*80)
 
     # Aggregate by sample
-    sample_agg = structure_index.groupby(['sample_id', 'timepoint', 'genotype',
-                                         'genotype_full', 'het_status']).agg({
+    sample_agg = structure_index.groupby(['sample_id', 'timepoint', 'main_group',
+                                         'genotype', 'genotype_full']).agg({
         'n_cells': ['sum', 'mean', 'count'],
         'area_um2': ['sum', 'mean']
     }).reset_index()
@@ -239,9 +246,9 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     sample_agg.rename(columns={
         'sample_id_': 'sample_id',
         'timepoint_': 'timepoint',
+        'main_group_': 'main_group',
         'genotype_': 'genotype',
         'genotype_full_': 'genotype_full',
-        'het_status_': 'het_status',
         'n_cells_sum': 'total_tumor_cells',
         'n_cells_mean': 'mean_structure_size',
         'n_cells_count': 'n_structures',
@@ -254,17 +261,46 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     # Statistical tests
     print("\n1. Statistical testing...")
 
-    # Test temporal trends per genotype
+    # Test temporal trends per main_group and genotype_full
     temporal_results = []
-    for geno in sample_agg['genotype'].unique():
-        geno_data = sample_agg[sample_agg['genotype'] == geno]
+
+    # Main group temporal trends (KPT vs KPNT)
+    for group in sample_agg['main_group'].unique():
+        group_data = sample_agg[sample_agg['main_group'] == group]
+
+        if len(group_data) >= 3:
+            rho_total, p_total = spearmanr(group_data['timepoint'], group_data['total_tumor_cells'])
+            rho_mean, p_mean = spearmanr(group_data['timepoint'], group_data['mean_structure_size'])
+
+            temporal_results.append({
+                'test_type': 'main_group',
+                'group': group,
+                'metric': 'total_tumor_cells',
+                'spearman_rho': rho_total,
+                'p_value': p_total,
+                'n_samples': len(group_data)
+            })
+
+            temporal_results.append({
+                'test_type': 'main_group',
+                'group': group,
+                'metric': 'mean_structure_size',
+                'spearman_rho': rho_mean,
+                'p_value': p_mean,
+                'n_samples': len(group_data)
+            })
+
+    # Full group temporal trends (4 subgroups)
+    for geno_full in sample_agg['genotype_full'].unique():
+        geno_data = sample_agg[sample_agg['genotype_full'] == geno_full]
 
         if len(geno_data) >= 3:
             rho_total, p_total = spearmanr(geno_data['timepoint'], geno_data['total_tumor_cells'])
             rho_mean, p_mean = spearmanr(geno_data['timepoint'], geno_data['mean_structure_size'])
 
             temporal_results.append({
-                'genotype': geno,
+                'test_type': 'subgroup',
+                'group': geno_full,
                 'metric': 'total_tumor_cells',
                 'spearman_rho': rho_total,
                 'p_value': p_total,
@@ -272,7 +308,8 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
             })
 
             temporal_results.append({
-                'genotype': geno,
+                'test_type': 'subgroup',
+                'group': geno_full,
                 'metric': 'mean_structure_size',
                 'spearman_rho': rho_mean,
                 'p_value': p_mean,
@@ -286,25 +323,59 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
         temporal_df['significant'] = temporal_df['p_adjusted'] < 0.05
         temporal_df.to_csv(f"{output_dir}/statistics/tumor_size_temporal.csv", index=False)
 
-    # Test genotype differences per timepoint
+    # Test group differences per timepoint
     genotype_results = []
-    genotypes = sample_agg['genotype'].unique()
 
+    # Main group comparisons (KPT vs KPNT) per timepoint
     for tp in sample_agg['timepoint'].unique():
         tp_data = sample_agg[sample_agg['timepoint'] == tp]
 
-        for i, g1 in enumerate(genotypes):
-            for g2 in genotypes[i+1:]:
-                d1 = tp_data[tp_data['genotype'] == g1]['total_tumor_cells'].values
-                d2 = tp_data[tp_data['genotype'] == g2]['total_tumor_cells'].values
+        main_groups = tp_data['main_group'].unique()
+        if len(main_groups) == 2:
+            g1, g2 = main_groups[0], main_groups[1]
+            d1 = tp_data[tp_data['main_group'] == g1]['total_tumor_cells'].values
+            d2 = tp_data[tp_data['main_group'] == g2]['total_tumor_cells'].values
 
+            if len(d1) >= 1 and len(d2) >= 1:
                 if len(d1) >= 2 and len(d2) >= 2:
                     stat, p = mannwhitneyu(d1, d2, alternative='two-sided')
+                else:
+                    stat, p = np.nan, np.nan
+
+                genotype_results.append({
+                    'test_type': 'main_group',
+                    'timepoint': tp,
+                    'group_1': g1,
+                    'group_2': g2,
+                    'metric': 'total_tumor_cells',
+                    'mean_1': d1.mean(),
+                    'mean_2': d2.mean(),
+                    'fold_change': d2.mean() / (d1.mean() + 1),
+                    'statistic': stat,
+                    'p_value': p
+                })
+
+    # 4-subgroup pairwise comparisons per timepoint
+    for tp in sample_agg['timepoint'].unique():
+        tp_data = sample_agg[sample_agg['timepoint'] == tp]
+        full_groups = tp_data['genotype_full'].unique()
+
+        for i, g1 in enumerate(full_groups):
+            for g2 in full_groups[i+1:]:
+                d1 = tp_data[tp_data['genotype_full'] == g1]['total_tumor_cells'].values
+                d2 = tp_data[tp_data['genotype_full'] == g2]['total_tumor_cells'].values
+
+                if len(d1) >= 1 and len(d2) >= 1:
+                    if len(d1) >= 2 and len(d2) >= 2:
+                        stat, p = mannwhitneyu(d1, d2, alternative='two-sided')
+                    else:
+                        stat, p = np.nan, np.nan
 
                     genotype_results.append({
+                        'test_type': 'subgroup',
                         'timepoint': tp,
-                        'genotype_1': g1,
-                        'genotype_2': g2,
+                        'group_1': g1,
+                        'group_2': g2,
                         'metric': 'total_tumor_cells',
                         'mean_1': d1.mean(),
                         'mean_2': d2.mean(),
@@ -326,49 +397,36 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     # 2. Visualizations
     print("\n2. Creating visualizations...")
 
-    # Plot 1: Total tumor cells over time by genotype (line plot)
+    # Plot 1: Total tumor cells over time - Main groups (KPT vs KPNT)
     fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=300)
 
-    # Plot 1a: Line plot with individual points
+    # Plot 1a: Main group line plot (KPT vs KPNT)
     ax = axes[0]
-    for geno in sample_agg['genotype'].unique():
-        geno_data = sample_agg[sample_agg['genotype'] == geno]
-        geno_mean = geno_data.groupby('timepoint')['total_tumor_cells'].agg(['mean', 'sem'])
+    for group in sample_agg['main_group'].unique():
+        group_data = sample_agg[sample_agg['main_group'] == group]
+        group_mean = group_data.groupby('timepoint')['total_tumor_cells'].agg(['mean', 'sem'])
 
-        ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
-                   marker='o', linewidth=2, markersize=8, capsize=5, label=geno)
-
-        # Add significance annotations
-        if len(temporal_df) > 0:
-            sig_row = temporal_df[(temporal_df['genotype'] == geno) &
-                                 (temporal_df['metric'] == 'total_tumor_cells') &
-                                 (temporal_df['significant'])]
-            if len(sig_row) > 0:
-                rho = sig_row.iloc[0]['spearman_rho']
-                p = sig_row.iloc[0]['p_adjusted']
-                ax.text(0.05, 0.95 - 0.1*list(sample_agg['genotype'].unique()).index(geno),
-                       f'{geno}: ρ={rho:.2f}, p={p:.3f}*',
-                       transform=ax.transAxes, fontsize=10,
-                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        ax.errorbar(group_mean.index, group_mean['mean'], yerr=group_mean['sem'],
+                   marker='o', linewidth=2, markersize=8, capsize=5, label=group)
 
     ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
     ax.set_ylabel('Total Tumor Cells', fontsize=12, fontweight='bold')
-    ax.set_title('Tumor Growth Over Time', fontsize=14, fontweight='bold')
+    ax.set_title('Tumor Growth: KPT vs KPNT', fontsize=14, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Plot 1b: Mean structure size
+    # Plot 1b: 4 subgroups
     ax = axes[1]
-    for geno in sample_agg['genotype'].unique():
-        geno_data = sample_agg[sample_agg['genotype'] == geno]
-        geno_mean = geno_data.groupby('timepoint')['mean_structure_size'].agg(['mean', 'sem'])
+    for geno_full in sample_agg['genotype_full'].unique():
+        geno_data = sample_agg[sample_agg['genotype_full'] == geno_full]
+        geno_mean = geno_data.groupby('timepoint')['total_tumor_cells'].agg(['mean', 'sem'])
 
         ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
-                   marker='s', linewidth=2, markersize=8, capsize=5, label=geno)
+                   marker='s', linewidth=2, markersize=8, capsize=5, label=geno_full)
 
     ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Mean Structure Size (cells)', fontsize=12, fontweight='bold')
-    ax.set_title('Tumor Structure Size Over Time', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Total Tumor Cells', fontsize=12, fontweight='bold')
+    ax.set_title('Tumor Growth: All 4 Subgroups', fontsize=14, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -377,36 +435,69 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
                dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Plot 2: Boxplots by timepoint and genotype
+    # Plot 2: Boxplots - Main groups (KPT vs KPNT)
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), dpi=300)
 
     ax = axes[0]
-    sns.boxplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='genotype',
+    sns.boxplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='main_group',
                ax=ax, palette='Set2')
-    ax.set_title('Total Tumor Cells by Timepoint and Genotype', fontsize=14, fontweight='bold')
+    ax.set_title('Total Tumor Cells: KPT vs KPNT', fontsize=14, fontweight='bold')
     ax.set_xlabel('Timepoint', fontsize=12)
     ax.set_ylabel('Total Tumor Cells', fontsize=12)
 
     ax = axes[1]
-    sns.boxplot(data=sample_agg, x='timepoint', y='mean_structure_size', hue='genotype',
+    sns.boxplot(data=sample_agg, x='timepoint', y='mean_structure_size', hue='main_group',
                ax=ax, palette='Set2')
-    ax.set_title('Mean Structure Size by Timepoint and Genotype', fontsize=14, fontweight='bold')
+    ax.set_title('Mean Structure Size: KPT vs KPNT', fontsize=14, fontweight='bold')
     ax.set_xlabel('Timepoint', fontsize=12)
     ax.set_ylabel('Mean Structure Size (cells)', fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_boxplots.png",
+    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_boxplots_maingroup.png",
                dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Plot 3: Violin plots
-    fig, ax = plt.subplots(figsize=(14, 8), dpi=300)
-    sns.violinplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='genotype',
-                  ax=ax, palette='Set3', split=False)
-    ax.set_title('Tumor Cell Distribution by Timepoint and Genotype',
+    # Plot 3: Boxplots - All 4 subgroups
+    fig, axes = plt.subplots(2, 1, figsize=(14, 10), dpi=300)
+
+    ax = axes[0]
+    sns.boxplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='genotype_full',
+               ax=ax, palette='Set3')
+    ax.set_title('Total Tumor Cells: All 4 Subgroups', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Timepoint', fontsize=12)
+    ax.set_ylabel('Total Tumor Cells', fontsize=12)
+
+    ax = axes[1]
+    sns.boxplot(data=sample_agg, x='timepoint', y='mean_structure_size', hue='genotype_full',
+               ax=ax, palette='Set3')
+    ax.set_title('Mean Structure Size: All 4 Subgroups', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Timepoint', fontsize=12)
+    ax.set_ylabel('Mean Structure Size (cells)', fontsize=12)
+
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_boxplots_subgroups.png",
+               dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Plot 4: Violin plots
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7), dpi=300)
+
+    ax = axes[0]
+    sns.violinplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='main_group',
+                  ax=ax, palette='Set2', split=False)
+    ax.set_title('KPT vs KPNT Distribution',
                 fontsize=14, fontweight='bold')
     ax.set_xlabel('Timepoint', fontsize=12)
     ax.set_ylabel('Total Tumor Cells', fontsize=12)
+
+    ax = axes[1]
+    sns.violinplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='genotype_full',
+                  ax=ax, palette='Set3', split=False)
+    ax.set_title('All 4 Subgroups Distribution',
+                fontsize=14, fontweight='bold')
+    ax.set_xlabel('Timepoint', fontsize=12)
+    ax.set_ylabel('Total Tumor Cells', fontsize=12)
+
     plt.tight_layout()
     plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_violin.png",
                dpi=300, bbox_inches='tight')
@@ -457,9 +548,9 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
                 'marker': marker,
                 'sample_id': sample,
                 'timepoint': sample_meta.get('timepoint'),
+                'main_group': sample_meta.get('main_group'),
                 'genotype': sample_meta.get('genotype'),
                 'genotype_full': sample_meta.get('genotype_full'),
-                'het_status': sample_meta.get('het_status'),
                 'n_cells': len(sample_pos),
                 'n_positive': sample_pos.sum(),
                 'pct_positive': 100 * sample_pos.sum() / len(sample_pos)
@@ -476,30 +567,52 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
     for marker in marker_df['marker'].unique():
         marker_data = marker_df[marker_df['marker'] == marker]
 
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=300)
+        # Create 2 plots: main_group and genotype_full
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=300)
 
-        # Line plot
-        ax = axes[0]
-        for geno in marker_data['genotype'].dropna().unique():
-            geno_data = marker_data[marker_data['genotype'] == geno]
-            geno_mean = geno_data.groupby('timepoint')['pct_positive'].agg(['mean', 'sem'])
+        # Row 1: Main group (KPT vs KPNT)
+        ax = axes[0, 0]
+        for group in marker_data['main_group'].dropna().unique():
+            group_data = marker_data[marker_data['main_group'] == group]
+            group_mean = group_data.groupby('timepoint')['pct_positive'].agg(['mean', 'sem'])
 
-            ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
-                       marker='o', linewidth=2, markersize=8, capsize=5, label=geno)
+            ax.errorbar(group_mean.index, group_mean['mean'], yerr=group_mean['sem'],
+                       marker='o', linewidth=2, markersize=8, capsize=5, label=group)
 
         ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
         ax.set_ylabel(f'% {marker}+ Cells', fontsize=12, fontweight='bold')
-        ax.set_title(f'{marker} Expression Over Time', fontsize=14, fontweight='bold')
+        ax.set_title(f'{marker}: KPT vs KPNT', fontsize=14, fontweight='bold')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-        # Boxplot
-        ax = axes[1]
-        sns.boxplot(data=marker_data, x='timepoint', y='pct_positive', hue='genotype',
+        ax = axes[0, 1]
+        sns.boxplot(data=marker_data, x='timepoint', y='pct_positive', hue='main_group',
                    ax=ax, palette='Set2')
         ax.set_xlabel('Timepoint', fontsize=12)
         ax.set_ylabel(f'% {marker}+ Cells', fontsize=12)
-        ax.set_title(f'{marker} Expression Distribution', fontsize=14, fontweight='bold')
+        ax.set_title(f'{marker}: KPT vs KPNT Distribution', fontsize=14, fontweight='bold')
+
+        # Row 2: All 4 subgroups
+        ax = axes[1, 0]
+        for geno_full in marker_data['genotype_full'].dropna().unique():
+            geno_data = marker_data[marker_data['genotype_full'] == geno_full]
+            geno_mean = geno_data.groupby('timepoint')['pct_positive'].agg(['mean', 'sem'])
+
+            ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
+                       marker='s', linewidth=2, markersize=8, capsize=5, label=geno_full)
+
+        ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
+        ax.set_ylabel(f'% {marker}+ Cells', fontsize=12, fontweight='bold')
+        ax.set_title(f'{marker}: All 4 Subgroups', fontsize=14, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[1, 1]
+        sns.boxplot(data=marker_data, x='timepoint', y='pct_positive', hue='genotype_full',
+                   ax=ax, palette='Set3')
+        ax.set_xlabel('Timepoint', fontsize=12)
+        ax.set_ylabel(f'% {marker}+ Cells', fontsize=12)
+        ax.set_title(f'{marker}: All 4 Subgroups Distribution', fontsize=14, fontweight='bold')
 
         plt.tight_layout()
         plt.savefig(f"{output_dir}/figures/temporal/marker_expression/{marker}_temporal.png",
