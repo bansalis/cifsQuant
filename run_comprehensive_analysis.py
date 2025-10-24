@@ -28,8 +28,13 @@ from pathlib import Path
 import scanpy as sc
 import pandas as pd
 import numpy as np
+
+# Set matplotlib backend to non-interactive (for headless environments)
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 from scipy.stats import spearmanr, mannwhitneyu, kruskal
 from statsmodels.stats.multitest import multipletests
 import warnings
@@ -114,6 +119,12 @@ def create_spatial_maps(adata, output_dir: str, populations: list,
     - Timepoints (combined)
     - Genotypes (combined)
     """
+    # Ensure directories exist
+    import os
+    os.makedirs(f"{output_dir}/figures/spatial_maps/by_sample", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/spatial_maps/by_timepoint", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/spatial_maps/by_genotype", exist_ok=True)
+
     print("\n" + "="*80)
     print("CREATING SPATIAL MAPS")
     print("="*80)
@@ -231,6 +242,12 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
 
     Creates multiple plot formats WITH statistical annotations.
     """
+    # Ensure directories exist
+    import os
+    os.makedirs(f"{output_dir}/data", exist_ok=True)
+    os.makedirs(f"{output_dir}/statistics", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/temporal/tumor_size", exist_ok=True)
+
     print("\n" + "="*80)
     print("TUMOR SIZE ANALYSIS")
     print("="*80)
@@ -515,6 +532,11 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
 
     Creates comprehensive temporal plots for ALL markers.
     """
+    # Ensure directories exist
+    import os
+    os.makedirs(f"{output_dir}/data", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/temporal/marker_expression", exist_ok=True)
+
     print("\n" + "="*80)
     print("MARKER EXPRESSION ANALYSIS")
     print("="*80)

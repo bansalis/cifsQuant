@@ -21,9 +21,14 @@ Date: 2025-10-24
 
 import numpy as np
 import pandas as pd
+
+# Set matplotlib backend to non-interactive (for headless environments)
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
+
 from scipy.spatial import cKDTree, distance_matrix
 from scipy.stats import (mannwhitneyu, kruskal, spearmanr, pearsonr,
                          ttest_ind, f_oneway, linregress)
