@@ -107,36 +107,45 @@ class ComprehensiveTumorSpatialAnalysis:
 
     def _parse_metadata(self, metadata: pd.DataFrame) -> pd.DataFrame:
         """
-        Parse metadata to extract genotype and Het status properly.
+        Parse metadata to extract main group (KPT vs KPNT), cis/trans, and full group.
 
-        Handles: "cis", "trans", "KPT Het cis", "KPT Het trans"
+        Handles: "KPNT cis", "KPNT trans", "KPT Het cis", "KPT Het trans"
+
+        Creates:
+        - main_group: KPT or KPNT (for 2-group comparisons)
+        - genotype: cis or trans (cis/trans status)
+        - genotype_full: Full group name (for 4-group comparisons)
         """
         metadata = metadata.copy()
 
         # Standardize sample_id casing
         metadata['sample_id'] = metadata['sample_id'].str.upper()
 
-        # Parse genotype from group column
-        metadata['het_status'] = metadata['group'].apply(
-            lambda x: 'Het' if 'Het' in str(x) else 'WT'
+        # Extract main group: KPT or KPNT
+        metadata['main_group'] = metadata['group'].apply(
+            lambda x: 'KPT' if 'KPT' in str(x) else 'KPNT'
         )
 
+        # Extract cis/trans status
         metadata['genotype'] = metadata['group'].apply(
             lambda x: 'cis' if 'cis' in str(x).lower() else
-                     ('trans' if 'trans' in str(x).lower() else str(x))
+                     ('trans' if 'trans' in str(x).lower() else 'Unknown')
         )
 
-        # Combined genotype for detailed analysis
+        # Full group name for detailed 4-group analysis
         metadata['genotype_full'] = metadata['group']
 
         # Convert timepoint to numeric
         metadata['timepoint'] = pd.to_numeric(metadata['timepoint'])
 
         print("Parsed metadata:")
-        print(f"  Genotypes: {metadata['genotype'].unique()}")
-        print(f"  Het status: {metadata['het_status'].unique()}")
+        print(f"  Main groups: {sorted(metadata['main_group'].unique())}")
+        print(f"  Cis/Trans: {sorted(metadata['genotype'].unique())}")
+        print(f"  Full groups (4 subgroups): {sorted(metadata['genotype_full'].unique())}")
         print(f"  Timepoints: {sorted(metadata['timepoint'].unique())}")
-        print(f"  Full groups: {metadata['genotype_full'].unique()}\n")
+        print("\nSample breakdown:")
+        print(metadata.groupby(['main_group', 'genotype', 'timepoint']).size().to_string())
+        print()
 
         return metadata
 
@@ -147,9 +156,9 @@ class ComprehensiveTumorSpatialAnalysis:
         if 'sample_id' in self.adata.obs:
             self.adata.obs['sample_id'] = self.adata.obs['sample_id'].str.upper()
 
-            # Merge metadata columns
+            # Merge metadata columns including main_group
             sample_to_meta = {}
-            for col in ['genotype', 'genotype_full', 'het_status', 'timepoint', 'treatment']:
+            for col in ['main_group', 'genotype', 'genotype_full', 'timepoint', 'treatment']:
                 if col in self.sample_metadata.columns:
                     sample_to_meta[col] = dict(zip(
                         self.sample_metadata['sample_id'],
@@ -338,9 +347,9 @@ class ComprehensiveTumorSpatialAnalysis:
                             'width_um': x_max - x_min,
                             'height_um': y_max - y_min,
                             'timepoint': sample_meta.get('timepoint'),
+                            'main_group': sample_meta.get('main_group'),
                             'genotype': sample_meta.get('genotype'),
                             'genotype_full': sample_meta.get('genotype_full'),
-                            'het_status': sample_meta.get('het_status'),
                             'treatment': sample_meta.get('treatment')
                         })
 
@@ -470,9 +479,9 @@ class ComprehensiveTumorSpatialAnalysis:
                         'structure_id': struct_id,
                         'sample_id': row['sample_id'],
                         'timepoint': row['timepoint'],
+                        'main_group': row['main_group'],
                         'genotype': row['genotype'],
                         'genotype_full': row['genotype_full'],
-                        'het_status': row['het_status'],
                         'region': region,
                         'population': pop_name,
                         'n_cells': n_pop,
@@ -545,9 +554,9 @@ class ComprehensiveTumorSpatialAnalysis:
                     'marker': marker,
                     'sample_id': sample_id,
                     'timepoint': meta['timepoint'],
+                    'main_group': meta['main_group'],
                     'genotype': meta['genotype'],
                     'genotype_full': meta['genotype_full'],
-                    'het_status': meta['het_status'],
                     'n_cells': len(sample_values),
                     'n_positive': sample_pos.sum(),
                     'pct_positive': 100 * sample_pos.sum() / len(sample_values),
@@ -583,8 +592,8 @@ class ComprehensiveTumorSpatialAnalysis:
         # Per-structure metrics already in structure_index
 
         # Aggregate per sample
-        sample_agg = self.structure_index.groupby(['sample_id', 'timepoint', 'genotype',
-                                                   'genotype_full', 'het_status']).agg({
+        sample_agg = self.structure_index.groupby(['sample_id', 'timepoint', 'main_group',
+                                                   'genotype', 'genotype_full']).agg({
             'n_cells': ['sum', 'mean', 'std', 'count'],
             'area_um2': ['sum', 'mean', 'std'],
             'width_um': 'mean',
@@ -595,9 +604,9 @@ class ComprehensiveTumorSpatialAnalysis:
         sample_agg.rename(columns={
             'sample_id_': 'sample_id',
             'timepoint_': 'timepoint',
+            'main_group_': 'main_group',
             'genotype_': 'genotype',
             'genotype_full_': 'genotype_full',
-            'het_status_': 'het_status',
             'n_cells_sum': 'total_tumor_cells',
             'n_cells_mean': 'mean_structure_size',
             'n_cells_std': 'std_structure_size',
@@ -851,61 +860,122 @@ class ComprehensiveTumorSpatialAnalysis:
     def _test_genotype_differences(self, df: pd.DataFrame,
                                   value_col: str = 'percentage',
                                   group_cols: List[str] = None) -> pd.DataFrame:
-        """Test genotype differences with multiple approaches."""
+        """
+        Test genotype differences at multiple levels:
+        1. Main group (KPT vs KPNT) - 2-group comparison
+        2. Cis/trans - 2-group comparison
+        3. Full groups - 4-group pairwise comparisons
+        """
 
         if group_cols is None:
             group_cols = ['population', 'region'] if 'region' in df.columns else ['marker']
 
         results = []
-
-        genotypes = df['genotype'].dropna().unique()
-
-        if len(genotypes) < 2:
-            return pd.DataFrame()
-
         grouping_values = df[group_cols].drop_duplicates().values
 
         for group_vals in grouping_values:
+            # Filter to this group
             mask = np.ones(len(df), dtype=bool)
             for i, col in enumerate(group_cols):
                 mask &= (df[col] == group_vals[i])
 
             subset = df[mask]
 
-            # Pairwise comparisons
-            for i, g1 in enumerate(genotypes):
-                for g2 in genotypes[i+1:]:
+            # 1. Main group comparison (KPT vs KPNT)
+            if 'main_group' in df.columns:
+                main_groups = subset['main_group'].dropna().unique()
+                if len(main_groups) == 2:
+                    g1, g2 = main_groups[0], main_groups[1]
+                    data1 = subset[subset['main_group'] == g1][value_col].values
+                    data2 = subset[subset['main_group'] == g2][value_col].values
+
+                    if len(data1) >= 2 and len(data2) >= 2:
+                        stat_mw, p_mw = mannwhitneyu(data1, data2, alternative='two-sided')
+                        stat_t, p_t = ttest_ind(data1, data2)
+
+                        result = {
+                            'test': 'main_group_comparison',
+                            'comparison_type': 'KPT_vs_KPNT',
+                            'group_1': g1,
+                            'group_2': g2,
+                            'n_1': len(data1),
+                            'n_2': len(data2),
+                            'mean_1': data1.mean(),
+                            'mean_2': data2.mean(),
+                            'fold_change': data2.mean() / (data1.mean() + 1e-10),
+                            'stat_mannwhitney': stat_mw,
+                            'p_mannwhitney': p_mw,
+                            'stat_ttest': stat_t,
+                            'p_ttest': p_t
+                        }
+                        for j, col in enumerate(group_cols):
+                            result[col] = group_vals[j]
+                        results.append(result)
+
+            # 2. Cis/trans comparison
+            if 'genotype' in df.columns:
+                genotypes = subset['genotype'].dropna().unique()
+                if len(genotypes) == 2:
+                    g1, g2 = genotypes[0], genotypes[1]
                     data1 = subset[subset['genotype'] == g1][value_col].values
                     data2 = subset[subset['genotype'] == g2][value_col].values
 
-                    if len(data1) < 2 or len(data2) < 2:
-                        continue
+                    if len(data1) >= 2 and len(data2) >= 2:
+                        stat_mw, p_mw = mannwhitneyu(data1, data2, alternative='two-sided')
+                        stat_t, p_t = ttest_ind(data1, data2)
 
-                    # Mann-Whitney U
-                    stat_mw, p_mw = mannwhitneyu(data1, data2, alternative='two-sided')
+                        result = {
+                            'test': 'cistrans_comparison',
+                            'comparison_type': 'cis_vs_trans',
+                            'group_1': g1,
+                            'group_2': g2,
+                            'n_1': len(data1),
+                            'n_2': len(data2),
+                            'mean_1': data1.mean(),
+                            'mean_2': data2.mean(),
+                            'fold_change': data2.mean() / (data1.mean() + 1e-10),
+                            'stat_mannwhitney': stat_mw,
+                            'p_mannwhitney': p_mw,
+                            'stat_ttest': stat_t,
+                            'p_ttest': p_t
+                        }
+                        for j, col in enumerate(group_cols):
+                            result[col] = group_vals[j]
+                        results.append(result)
 
-                    # T-test
-                    stat_t, p_t = ttest_ind(data1, data2)
+            # 3. Full group pairwise comparisons (all 4 subgroups)
+            if 'genotype_full' in df.columns:
+                full_groups = subset['genotype_full'].dropna().unique()
+                if len(full_groups) >= 2:
+                    for i, g1 in enumerate(full_groups):
+                        for g2 in full_groups[i+1:]:
+                            data1 = subset[subset['genotype_full'] == g1][value_col].values
+                            data2 = subset[subset['genotype_full'] == g2][value_col].values
 
-                    result = {
-                        'test': 'genotype_comparison',
-                        'genotype_1': g1,
-                        'genotype_2': g2,
-                        'n_1': len(data1),
-                        'n_2': len(data2),
-                        'mean_1': data1.mean(),
-                        'mean_2': data2.mean(),
-                        'fold_change': data2.mean() / (data1.mean() + 1e-10),
-                        'stat_mannwhitney': stat_mw,
-                        'p_mannwhitney': p_mw,
-                        'stat_ttest': stat_t,
-                        'p_ttest': p_t
-                    }
+                            if len(data1) < 2 or len(data2) < 2:
+                                continue
 
-                    for j, col in enumerate(group_cols):
-                        result[col] = group_vals[j]
+                            stat_mw, p_mw = mannwhitneyu(data1, data2, alternative='two-sided')
+                            stat_t, p_t = ttest_ind(data1, data2)
 
-                    results.append(result)
+                            result = {
+                                'test': 'subgroup_comparison',
+                                'comparison_type': 'pairwise_4groups',
+                                'group_1': g1,
+                                'group_2': g2,
+                                'n_1': len(data1),
+                                'n_2': len(data2),
+                                'mean_1': data1.mean(),
+                                'mean_2': data2.mean(),
+                                'fold_change': data2.mean() / (data1.mean() + 1e-10),
+                                'stat_mannwhitney': stat_mw,
+                                'p_mannwhitney': p_mw,
+                                'stat_ttest': stat_t,
+                                'p_ttest': p_t
+                            }
+                            for j, col in enumerate(group_cols):
+                                result[col] = group_vals[j]
+                            results.append(result)
 
         if len(results) == 0:
             return pd.DataFrame()
