@@ -731,7 +731,7 @@ def main():
     if neighborhood_config.get('enabled', True):
         etsa.detect_cellular_neighborhoods(
             populations=list(population_config.keys()),
-            **{k: v for k, v in neighborhood_config.items() if k != 'enabled'}
+            **{k: v for k, v in neighborhood_config.items() if k not in ['enabled', 'populations']}
         )
 
     # Phase 5: Statistics
