@@ -41,41 +41,59 @@ from tumor_spatial_analysis_efficient import EfficientTumorSpatialAnalysis
 
 def parse_metadata_properly(metadata_path: str) -> pd.DataFrame:
     """
-    Parse metadata with proper genotype extraction.
+    Parse metadata with proper experimental design extraction.
 
-    Handles: "cis", "trans", "KPT Het cis", "KPT Het trans"
+    Experimental design:
+    - Two main groups: KPT, KPNT
+    - Each with genotypes: cis, trans
+    - Total: 4 groups (KPT Het cis, KPT Het trans, KPNT cis, KPNT trans)
     """
     metadata = pd.read_csv(metadata_path)
 
     # Standardize sample_id casing
     metadata['sample_id'] = metadata['sample_id'].str.upper()
 
-    # Parse genotype from group column
-    metadata['het_status'] = metadata['group'].apply(
-        lambda x: 'Het' if 'Het' in str(x) else 'WT'
+    # Parse model (KPT vs KPNT)
+    metadata['model'] = metadata['group'].apply(
+        lambda x: 'KPT' if 'KPT' in str(x) else 'KPNT'
     )
 
+    # Parse genotype (cis vs trans)
     metadata['genotype'] = metadata['group'].apply(
         lambda x: 'cis' if 'cis' in str(x).lower() else
                  ('trans' if 'trans' in str(x).lower() else 'Unknown')
     )
 
-    # Keep full group name for detailed analysis
-    metadata['genotype_full'] = metadata['group']
+    # Combined group for 4-way analysis
+    metadata['group_full'] = metadata['group']
+
+    # Simplified combined for 2-way model comparison
+    metadata['model_genotype'] = metadata['model'] + '_' + metadata['genotype']
 
     # Convert timepoint to numeric
     metadata['timepoint'] = pd.to_numeric(metadata['timepoint'])
 
     print("="*80)
-    print("PARSED SAMPLE METADATA")
+    print("PARSED SAMPLE METADATA - EXPERIMENTAL DESIGN")
     print("="*80)
-    print(f"Samples: {len(metadata)}")
-    print(f"Genotypes: {sorted(metadata['genotype'].unique())}")
-    print(f"Full groups: {sorted(metadata['genotype_full'].unique())}")
-    print(f"Het status: {sorted(metadata['het_status'].unique())}")
-    print(f"Timepoints: {sorted(metadata['timepoint'].unique())}")
-    print("\nSample breakdown:")
-    print(metadata.groupby(['genotype', 'het_status', 'timepoint']).size())
+    print(f"Total samples: {len(metadata)}")
+    print(f"\nMain groups (model):")
+    print(f"  {metadata['model'].value_counts().to_dict()}")
+    print(f"\nGenotypes:")
+    print(f"  {metadata['genotype'].value_counts().to_dict()}")
+    print(f"\n4-way groups:")
+    print(f"  {metadata['model_genotype'].value_counts().to_dict()}")
+    print(f"\nTimepoints: {sorted(metadata['timepoint'].unique())}")
+
+    print("\nSample breakdown by model, genotype, and timepoint:")
+    breakdown = metadata.groupby(['model', 'genotype', 'timepoint']).size().unstack(fill_value=0)
+    print(breakdown)
+
+    print("\nFull group names:")
+    for grp in sorted(metadata['group_full'].unique()):
+        n = (metadata['group_full'] == grp).sum()
+        print(f"  {grp}: {n} samples")
+
     print("="*80 + "\n")
 
     return metadata
@@ -87,12 +105,13 @@ def merge_metadata_into_adata(adata, metadata: pd.DataFrame):
     adata.obs['sample_id'] = adata.obs['sample_id'].str.upper()
 
     # Merge all metadata columns
-    for col in ['genotype', 'genotype_full', 'het_status', 'timepoint', 'treatment']:
+    for col in ['model', 'genotype', 'group_full', 'model_genotype', 'timepoint', 'treatment']:
         if col in metadata.columns:
             mapping = dict(zip(metadata['sample_id'], metadata[col]))
             adata.obs[col] = adata.obs['sample_id'].map(mapping)
 
     print(f"Merged metadata into adata.obs")
+    print(f"  Cells with model: {adata.obs['model'].notna().sum():,}")
     print(f"  Cells with genotype: {adata.obs['genotype'].notna().sum():,}")
     print(f"  Cells with timepoint: {adata.obs['timepoint'].notna().sum():,}\n")
 
@@ -183,18 +202,18 @@ def create_spatial_maps(adata, output_dir: str, populations: list,
 
     print(f"   Created {len(timepoints)} per-timepoint spatial maps")
 
-    # 3. Per-genotype maps
-    print("\n3. Creating per-genotype spatial maps...")
-    genotypes = adata.obs['genotype'].dropna().unique()
+    # 3. Per-model maps (KPT vs KPNT)
+    print("\n3. Creating per-model spatial maps (KPT vs KPNT)...")
+    models = adata.obs['model'].dropna().unique()
 
-    for geno in genotypes:
-        geno_mask = adata.obs['genotype'] == geno
+    for model in models:
+        model_mask = adata.obs['model'] == model
 
         fig, ax = plt.subplots(figsize=(14, 12), dpi=150)
 
         for pop in populations:
             if f'is_{pop}' in adata.obs:
-                pop_mask = geno_mask & adata.obs[f'is_{pop}']
+                pop_mask = model_mask & adata.obs[f'is_{pop}']
                 if pop_mask.sum() > 0:
                     pop_coords = coords[pop_mask]
                     if len(pop_coords) > 50000:
@@ -203,34 +222,69 @@ def create_spatial_maps(adata, output_dir: str, populations: list,
                     ax.scatter(pop_coords[:, 0], pop_coords[:, 1],
                              c=[pop_colors[pop]], s=0.5, alpha=0.4, label=pop)
 
-        ax.set_title(f'{geno} - Spatial Distribution', fontsize=14, fontweight='bold')
+        ax.set_title(f'{model} - Spatial Distribution', fontsize=14, fontweight='bold')
         ax.set_xlabel('X (μm)', fontsize=12)
         ax.set_ylabel('Y (μm)', fontsize=12)
         ax.legend(markerscale=10, bbox_to_anchor=(1.05, 1), loc='upper left')
         ax.set_aspect('equal')
 
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/figures/spatial_maps/by_genotype/{geno}_spatial.png",
+        plt.savefig(f"{output_dir}/figures/spatial_maps/by_genotype/{model}_spatial.png",
                    dpi=150, bbox_inches='tight')
         plt.close()
 
-    print(f"   Created {len(genotypes)} per-genotype spatial maps")
+    print(f"   Created {len(models)} per-model spatial maps")
+
+    # 4. Per 4-way group maps
+    print("\n4. Creating per 4-way group spatial maps...")
+    groups_4way = adata.obs['model_genotype'].dropna().unique()
+
+    for grp in groups_4way:
+        grp_mask = adata.obs['model_genotype'] == grp
+
+        fig, ax = plt.subplots(figsize=(14, 12), dpi=150)
+
+        for pop in populations:
+            if f'is_{pop}' in adata.obs:
+                pop_mask = grp_mask & adata.obs[f'is_{pop}']
+                if pop_mask.sum() > 0:
+                    pop_coords = coords[pop_mask]
+                    if len(pop_coords) > 50000:
+                        idx = np.random.choice(len(pop_coords), 50000, replace=False)
+                        pop_coords = pop_coords[idx]
+                    ax.scatter(pop_coords[:, 0], pop_coords[:, 1],
+                             c=[pop_colors[pop]], s=0.5, alpha=0.4, label=pop)
+
+        ax.set_title(f'{grp} - Spatial Distribution', fontsize=14, fontweight='bold')
+        ax.set_xlabel('X (μm)', fontsize=12)
+        ax.set_ylabel('Y (μm)', fontsize=12)
+        ax.legend(markerscale=10, bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.set_aspect('equal')
+
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/figures/spatial_maps/by_genotype/{grp.replace(' ', '_')}_spatial.png",
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+
+    print(f"   Created {len(groups_4way)} per 4-way group spatial maps")
     print("\n✓ Spatial maps complete\n")
 
 
 def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     """
-    Comprehensive tumor size analysis across time and genotype.
+    Comprehensive tumor size analysis at BOTH levels:
+    1. KPT vs KPNT (2-way comparison)
+    2. All 4 groups (KPT cis, KPT trans, KPNT cis, KPNT trans)
 
     Creates multiple plot formats WITH statistical annotations.
     """
     print("\n" + "="*80)
-    print("TUMOR SIZE ANALYSIS")
+    print("TUMOR SIZE ANALYSIS - MULTI-LEVEL")
     print("="*80)
 
     # Aggregate by sample
-    sample_agg = structure_index.groupby(['sample_id', 'timepoint', 'genotype',
-                                         'genotype_full', 'het_status']).agg({
+    sample_agg = structure_index.groupby(['sample_id', 'timepoint', 'model',
+                                         'genotype', 'model_genotype', 'group_full']).agg({
         'n_cells': ['sum', 'mean', 'count'],
         'area_um2': ['sum', 'mean']
     }).reset_index()
@@ -239,9 +293,10 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     sample_agg.rename(columns={
         'sample_id_': 'sample_id',
         'timepoint_': 'timepoint',
+        'model_': 'model',
         'genotype_': 'genotype',
-        'genotype_full_': 'genotype_full',
-        'het_status_': 'het_status',
+        'model_genotype_': 'model_genotype',
+        'group_full_': 'group_full',
         'n_cells_sum': 'total_tumor_cells',
         'n_cells_mean': 'mean_structure_size',
         'n_cells_count': 'n_structures',
@@ -251,168 +306,245 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
 
     sample_agg.to_csv(f"{output_dir}/data/tumor_size_by_sample.csv", index=False)
 
-    # Statistical tests
+    # Statistical tests at BOTH levels
     print("\n1. Statistical testing...")
 
-    # Test temporal trends per genotype
-    temporal_results = []
-    for geno in sample_agg['genotype'].unique():
-        geno_data = sample_agg[sample_agg['genotype'] == geno]
+    # === LEVEL 1: KPT vs KPNT ===
+    print("  Level 1: KPT vs KPNT comparison...")
 
-        if len(geno_data) >= 3:
-            rho_total, p_total = spearmanr(geno_data['timepoint'], geno_data['total_tumor_cells'])
-            rho_mean, p_mean = spearmanr(geno_data['timepoint'], geno_data['mean_structure_size'])
+    # Temporal trends per model
+    temporal_model_results = []
+    for model in sample_agg['model'].unique():
+        model_data = sample_agg[sample_agg['model'] == model]
 
-            temporal_results.append({
-                'genotype': geno,
+        if len(model_data) >= 3:
+            rho_total, p_total = spearmanr(model_data['timepoint'], model_data['total_tumor_cells'])
+            rho_mean, p_mean = spearmanr(model_data['timepoint'], model_data['mean_structure_size'])
+
+            temporal_model_results.append({
+                'model': model,
                 'metric': 'total_tumor_cells',
                 'spearman_rho': rho_total,
                 'p_value': p_total,
-                'n_samples': len(geno_data)
+                'n_samples': len(model_data)
             })
 
-            temporal_results.append({
-                'genotype': geno,
+            temporal_model_results.append({
+                'model': model,
                 'metric': 'mean_structure_size',
                 'spearman_rho': rho_mean,
                 'p_value': p_mean,
-                'n_samples': len(geno_data)
+                'n_samples': len(model_data)
             })
 
-    temporal_df = pd.DataFrame(temporal_results)
-    if len(temporal_df) > 0:
-        _, p_adj, _, _ = multipletests(temporal_df['p_value'], method='fdr_bh')
-        temporal_df['p_adjusted'] = p_adj
-        temporal_df['significant'] = temporal_df['p_adjusted'] < 0.05
-        temporal_df.to_csv(f"{output_dir}/statistics/tumor_size_temporal.csv", index=False)
+    temporal_model_df = pd.DataFrame(temporal_model_results)
+    if len(temporal_model_df) > 0:
+        _, p_adj, _, _ = multipletests(temporal_model_df['p_value'], method='fdr_bh')
+        temporal_model_df['p_adjusted'] = p_adj
+        temporal_model_df['significant'] = temporal_model_df['p_adjusted'] < 0.05
+        temporal_model_df.to_csv(f"{output_dir}/statistics/tumor_size_temporal_KPT_vs_KPNT.csv", index=False)
 
-    # Test genotype differences per timepoint
-    genotype_results = []
-    genotypes = sample_agg['genotype'].unique()
+    # Model differences per timepoint (KPT vs KPNT)
+    model_comparison_results = []
+    for tp in sample_agg['timepoint'].unique():
+        tp_data = sample_agg[sample_agg['timepoint'] == tp]
+
+        kpt_data = tp_data[tp_data['model'] == 'KPT']['total_tumor_cells'].values
+        kpnt_data = tp_data[tp_data['model'] == 'KPNT']['total_tumor_cells'].values
+
+        if len(kpt_data) >= 1 and len(kpnt_data) >= 1:
+            if len(kpt_data) >= 2 and len(kpnt_data) >= 2:
+                stat, p = mannwhitneyu(kpt_data, kpnt_data, alternative='two-sided')
+            else:
+                stat, p = np.nan, np.nan
+
+            model_comparison_results.append({
+                'timepoint': tp,
+                'comparison': 'KPT_vs_KPNT',
+                'KPT_mean': kpt_data.mean(),
+                'KPNT_mean': kpnt_data.mean(),
+                'fold_change': kpnt_data.mean() / (kpt_data.mean() + 1),
+                'n_KPT': len(kpt_data),
+                'n_KPNT': len(kpnt_data),
+                'statistic': stat,
+                'p_value': p
+            })
+
+    model_comparison_df = pd.DataFrame(model_comparison_results)
+    if len(model_comparison_df) > 0:
+        valid_p = model_comparison_df['p_value'].notna()
+        if valid_p.sum() > 0:
+            _, p_adj, _, _ = multipletests(model_comparison_df.loc[valid_p, 'p_value'], method='fdr_bh')
+            model_comparison_df.loc[valid_p, 'p_adjusted'] = p_adj
+            model_comparison_df['significant'] = model_comparison_df['p_adjusted'] < 0.05
+        model_comparison_df.to_csv(f"{output_dir}/statistics/tumor_size_KPT_vs_KPNT_by_timepoint.csv", index=False)
+
+    # === LEVEL 2: All 4 groups ===
+    print("  Level 2: 4-way group comparison...")
+
+    # Temporal trends per 4-way group
+    temporal_4way_results = []
+    for grp in sample_agg['model_genotype'].unique():
+        grp_data = sample_agg[sample_agg['model_genotype'] == grp]
+
+        if len(grp_data) >= 3:
+            rho_total, p_total = spearmanr(grp_data['timepoint'], grp_data['total_tumor_cells'])
+            rho_mean, p_mean = spearmanr(grp_data['timepoint'], grp_data['mean_structure_size'])
+
+            temporal_4way_results.append({
+                'group': grp,
+                'metric': 'total_tumor_cells',
+                'spearman_rho': rho_total,
+                'p_value': p_total,
+                'n_samples': len(grp_data)
+            })
+
+            temporal_4way_results.append({
+                'group': grp,
+                'metric': 'mean_structure_size',
+                'spearman_rho': rho_mean,
+                'p_value': p_mean,
+                'n_samples': len(grp_data)
+            })
+
+    temporal_4way_df = pd.DataFrame(temporal_4way_results)
+    if len(temporal_4way_df) > 0:
+        _, p_adj, _, _ = multipletests(temporal_4way_df['p_value'], method='fdr_bh')
+        temporal_4way_df['p_adjusted'] = p_adj
+        temporal_4way_df['significant'] = temporal_4way_df['p_adjusted'] < 0.05
+        temporal_4way_df.to_csv(f"{output_dir}/statistics/tumor_size_temporal_4way.csv", index=False)
+
+    # 4-way group comparisons per timepoint
+    fourway_comparison_results = []
+    groups_4way = sample_agg['model_genotype'].unique()
 
     for tp in sample_agg['timepoint'].unique():
         tp_data = sample_agg[sample_agg['timepoint'] == tp]
 
-        for i, g1 in enumerate(genotypes):
-            for g2 in genotypes[i+1:]:
-                d1 = tp_data[tp_data['genotype'] == g1]['total_tumor_cells'].values
-                d2 = tp_data[tp_data['genotype'] == g2]['total_tumor_cells'].values
+        # Pairwise comparisons
+        for i, g1 in enumerate(groups_4way):
+            for g2 in groups_4way[i+1:]:
+                d1 = tp_data[tp_data['model_genotype'] == g1]['total_tumor_cells'].values
+                d2 = tp_data[tp_data['model_genotype'] == g2]['total_tumor_cells'].values
 
-                if len(d1) >= 2 and len(d2) >= 2:
-                    stat, p = mannwhitneyu(d1, d2, alternative='two-sided')
+                if len(d1) >= 1 and len(d2) >= 1:
+                    if len(d1) >= 2 and len(d2) >= 2:
+                        stat, p = mannwhitneyu(d1, d2, alternative='two-sided')
+                    else:
+                        stat, p = np.nan, np.nan
 
-                    genotype_results.append({
+                    fourway_comparison_results.append({
                         'timepoint': tp,
-                        'genotype_1': g1,
-                        'genotype_2': g2,
-                        'metric': 'total_tumor_cells',
+                        'group_1': g1,
+                        'group_2': g2,
                         'mean_1': d1.mean(),
                         'mean_2': d2.mean(),
                         'fold_change': d2.mean() / (d1.mean() + 1),
+                        'n_1': len(d1),
+                        'n_2': len(d2),
                         'statistic': stat,
                         'p_value': p
                     })
 
-    genotype_df = pd.DataFrame(genotype_results)
-    if len(genotype_df) > 0:
-        _, p_adj, _, _ = multipletests(genotype_df['p_value'], method='fdr_bh')
-        genotype_df['p_adjusted'] = p_adj
-        genotype_df['significant'] = genotype_df['p_adjusted'] < 0.05
-        genotype_df.to_csv(f"{output_dir}/statistics/tumor_size_genotype.csv", index=False)
+    fourway_comparison_df = pd.DataFrame(fourway_comparison_results)
+    if len(fourway_comparison_df) > 0:
+        valid_p = fourway_comparison_df['p_value'].notna()
+        if valid_p.sum() > 0:
+            _, p_adj, _, _ = multipletests(fourway_comparison_df.loc[valid_p, 'p_value'], method='fdr_bh')
+            fourway_comparison_df.loc[valid_p, 'p_adjusted'] = p_adj
+            fourway_comparison_df['significant'] = fourway_comparison_df['p_adjusted'] < 0.05
+        fourway_comparison_df.to_csv(f"{output_dir}/statistics/tumor_size_4way_by_timepoint.csv", index=False)
 
-    print(f"   Temporal tests: {len(temporal_df)} tests")
-    print(f"   Genotype tests: {len(genotype_df)} tests")
+    print(f"   KPT vs KPNT temporal: {len(temporal_model_df)} tests")
+    print(f"   KPT vs KPNT by timepoint: {len(model_comparison_df)} tests")
+    print(f"   4-way temporal: {len(temporal_4way_df)} tests")
+    print(f"   4-way pairwise: {len(fourway_comparison_df)} tests")
 
-    # 2. Visualizations
+    # 2. Visualizations at BOTH levels
     print("\n2. Creating visualizations...")
 
-    # Plot 1: Total tumor cells over time by genotype (line plot)
+    # === LEVEL 1 PLOTS: KPT vs KPNT ===
+    print("  Level 1: KPT vs KPNT plots...")
+
+    # KPT vs KPNT line plot
     fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=300)
 
-    # Plot 1a: Line plot with individual points
     ax = axes[0]
-    for geno in sample_agg['genotype'].unique():
-        geno_data = sample_agg[sample_agg['genotype'] == geno]
-        geno_mean = geno_data.groupby('timepoint')['total_tumor_cells'].agg(['mean', 'sem'])
-
-        ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
-                   marker='o', linewidth=2, markersize=8, capsize=5, label=geno)
-
-        # Add significance annotations
-        if len(temporal_df) > 0:
-            sig_row = temporal_df[(temporal_df['genotype'] == geno) &
-                                 (temporal_df['metric'] == 'total_tumor_cells') &
-                                 (temporal_df['significant'])]
-            if len(sig_row) > 0:
-                rho = sig_row.iloc[0]['spearman_rho']
-                p = sig_row.iloc[0]['p_adjusted']
-                ax.text(0.05, 0.95 - 0.1*list(sample_agg['genotype'].unique()).index(geno),
-                       f'{geno}: ρ={rho:.2f}, p={p:.3f}*',
-                       transform=ax.transAxes, fontsize=10,
-                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    for model in sample_agg['model'].unique():
+        model_data = sample_agg[sample_agg['model'] == model]
+        model_mean = model_data.groupby('timepoint')['total_tumor_cells'].agg(['mean', 'sem'])
+        ax.errorbar(model_mean.index, model_mean['mean'], yerr=model_mean['sem'],
+                   marker='o', linewidth=3, markersize=10, capsize=5, label=model)
 
     ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
     ax.set_ylabel('Total Tumor Cells', fontsize=12, fontweight='bold')
-    ax.set_title('Tumor Growth Over Time', fontsize=14, fontweight='bold')
-    ax.legend()
+    ax.set_title('KPT vs KPNT: Tumor Growth', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3)
 
-    # Plot 1b: Mean structure size
     ax = axes[1]
-    for geno in sample_agg['genotype'].unique():
-        geno_data = sample_agg[sample_agg['genotype'] == geno]
-        geno_mean = geno_data.groupby('timepoint')['mean_structure_size'].agg(['mean', 'sem'])
-
-        ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
-                   marker='s', linewidth=2, markersize=8, capsize=5, label=geno)
-
-    ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Mean Structure Size (cells)', fontsize=12, fontweight='bold')
-    ax.set_title('Tumor Structure Size Over Time', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_temporal_line.png",
-               dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Plot 2: Boxplots by timepoint and genotype
-    fig, axes = plt.subplots(2, 1, figsize=(14, 10), dpi=300)
-
-    ax = axes[0]
-    sns.boxplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='genotype',
-               ax=ax, palette='Set2')
-    ax.set_title('Total Tumor Cells by Timepoint and Genotype', fontsize=14, fontweight='bold')
+    sns.boxplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='model',
+               ax=ax, palette='Set1')
+    ax.set_title('KPT vs KPNT: Distribution', fontsize=14, fontweight='bold')
     ax.set_xlabel('Timepoint', fontsize=12)
     ax.set_ylabel('Total Tumor Cells', fontsize=12)
 
-    ax = axes[1]
-    sns.boxplot(data=sample_agg, x='timepoint', y='mean_structure_size', hue='genotype',
-               ax=ax, palette='Set2')
-    ax.set_title('Mean Structure Size by Timepoint and Genotype', fontsize=14, fontweight='bold')
-    ax.set_xlabel('Timepoint', fontsize=12)
-    ax.set_ylabel('Mean Structure Size (cells)', fontsize=12)
-
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_boxplots.png",
+    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/KPT_vs_KPNT_temporal.png",
                dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Plot 3: Violin plots
-    fig, ax = plt.subplots(figsize=(14, 8), dpi=300)
-    sns.violinplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='genotype',
-                  ax=ax, palette='Set3', split=False)
-    ax.set_title('Tumor Cell Distribution by Timepoint and Genotype',
+    # === LEVEL 2 PLOTS: All 4 groups ===
+    print("  Level 2: 4-way group plots...")
+
+    # 4-way line plot
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6), dpi=300)
+
+    ax = axes[0]
+    colors_4way = {'KPT_cis': '#E41A1C', 'KPT_trans': '#377EB8',
+                   'KPNT_cis': '#4DAF4A', 'KPNT_trans': '#984EA3'}
+
+    for grp in sample_agg['model_genotype'].unique():
+        grp_data = sample_agg[sample_agg['model_genotype'] == grp]
+        grp_mean = grp_data.groupby('timepoint')['total_tumor_cells'].agg(['mean', 'sem'])
+        color = colors_4way.get(grp, '#999999')
+        ax.errorbar(grp_mean.index, grp_mean['mean'], yerr=grp_mean['sem'],
+                   marker='o', linewidth=2, markersize=8, capsize=5, label=grp, color=color)
+
+    ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Total Tumor Cells', fontsize=12, fontweight='bold')
+    ax.set_title('All 4 Groups: Tumor Growth', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    sns.boxplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='model_genotype',
+               ax=ax, palette=colors_4way)
+    ax.set_title('All 4 Groups: Distribution', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Timepoint', fontsize=12)
+    ax.set_ylabel('Total Tumor Cells', fontsize=12)
+    ax.legend(title='Group', fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/4way_groups_temporal.png",
+               dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # Violin plots for 4-way comparison
+    fig, ax = plt.subplots(figsize=(16, 8), dpi=300)
+    sns.violinplot(data=sample_agg, x='timepoint', y='total_tumor_cells', hue='model_genotype',
+                  ax=ax, palette=colors_4way, split=False)
+    ax.set_title('All 4 Groups: Tumor Cell Distribution',
                 fontsize=14, fontweight='bold')
     ax.set_xlabel('Timepoint', fontsize=12)
     ax.set_ylabel('Total Tumor Cells', fontsize=12)
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/tumor_size_violin.png",
+    plt.savefig(f"{output_dir}/figures/temporal/tumor_size/4way_violin.png",
                dpi=300, bbox_inches='tight')
     plt.close()
 
-    print("   Created tumor size temporal plots")
+    print("   Created KPT vs KPNT plots")
+    print("   Created 4-way group plots")
     print("\n✓ Tumor size analysis complete\n")
 
     return sample_agg
@@ -420,12 +552,14 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
 
 def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
     """
-    Analyze marker expression (fractional percentages) across time and genotype.
+    Analyze marker expression (fractional percentages) at BOTH levels:
+    1. KPT vs KPNT
+    2. All 4 groups
 
     Creates comprehensive temporal plots for ALL markers.
     """
     print("\n" + "="*80)
-    print("MARKER EXPRESSION ANALYSIS")
+    print("MARKER EXPRESSION ANALYSIS - MULTI-LEVEL")
     print("="*80)
 
     results = []
@@ -457,9 +591,10 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
                 'marker': marker,
                 'sample_id': sample,
                 'timepoint': sample_meta.get('timepoint'),
+                'model': sample_meta.get('model'),
                 'genotype': sample_meta.get('genotype'),
-                'genotype_full': sample_meta.get('genotype_full'),
-                'het_status': sample_meta.get('het_status'),
+                'model_genotype': sample_meta.get('model_genotype'),
+                'group_full': sample_meta.get('group_full'),
                 'n_cells': len(sample_pos),
                 'n_positive': sample_pos.sum(),
                 'pct_positive': 100 * sample_pos.sum() / len(sample_pos)
@@ -470,43 +605,75 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
 
     print(f"Analyzed {len(markers)} markers across {len(marker_df['sample_id'].unique())} samples")
 
-    # Create plots for each marker
+    # Create plots for each marker at BOTH levels
     print("\nCreating marker expression plots...")
+
+    colors_4way = {'KPT_cis': '#E41A1C', 'KPT_trans': '#377EB8',
+                   'KPNT_cis': '#4DAF4A', 'KPNT_trans': '#984EA3'}
 
     for marker in marker_df['marker'].unique():
         marker_data = marker_df[marker_df['marker'] == marker]
 
+        # LEVEL 1: KPT vs KPNT
         fig, axes = plt.subplots(1, 2, figsize=(16, 6), dpi=300)
 
-        # Line plot
         ax = axes[0]
-        for geno in marker_data['genotype'].dropna().unique():
-            geno_data = marker_data[marker_data['genotype'] == geno]
-            geno_mean = geno_data.groupby('timepoint')['pct_positive'].agg(['mean', 'sem'])
-
-            ax.errorbar(geno_mean.index, geno_mean['mean'], yerr=geno_mean['sem'],
-                       marker='o', linewidth=2, markersize=8, capsize=5, label=geno)
+        for model in marker_data['model'].dropna().unique():
+            model_data = marker_data[marker_data['model'] == model]
+            model_mean = model_data.groupby('timepoint')['pct_positive'].agg(['mean', 'sem'])
+            ax.errorbar(model_mean.index, model_mean['mean'], yerr=model_mean['sem'],
+                       marker='o', linewidth=2, markersize=8, capsize=5, label=model)
 
         ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
         ax.set_ylabel(f'% {marker}+ Cells', fontsize=12, fontweight='bold')
-        ax.set_title(f'{marker} Expression Over Time', fontsize=14, fontweight='bold')
+        ax.set_title(f'{marker}: KPT vs KPNT', fontsize=14, fontweight='bold')
         ax.legend()
         ax.grid(True, alpha=0.3)
 
-        # Boxplot
         ax = axes[1]
-        sns.boxplot(data=marker_data, x='timepoint', y='pct_positive', hue='genotype',
-                   ax=ax, palette='Set2')
+        sns.boxplot(data=marker_data, x='timepoint', y='pct_positive', hue='model',
+                   ax=ax, palette='Set1')
         ax.set_xlabel('Timepoint', fontsize=12)
         ax.set_ylabel(f'% {marker}+ Cells', fontsize=12)
-        ax.set_title(f'{marker} Expression Distribution', fontsize=14, fontweight='bold')
+        ax.set_title(f'{marker}: Distribution by Model', fontsize=14, fontweight='bold')
 
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/figures/temporal/marker_expression/{marker}_temporal.png",
+        plt.savefig(f"{output_dir}/figures/temporal/marker_expression/{marker}_KPT_vs_KPNT.png",
                    dpi=300, bbox_inches='tight')
         plt.close()
 
-    print(f"   Created plots for {len(marker_df['marker'].unique())} markers")
+        # LEVEL 2: All 4 groups
+        fig, axes = plt.subplots(1, 2, figsize=(18, 6), dpi=300)
+
+        ax = axes[0]
+        for grp in marker_data['model_genotype'].dropna().unique():
+            grp_data = marker_data[marker_data['model_genotype'] == grp]
+            grp_mean = grp_data.groupby('timepoint')['pct_positive'].agg(['mean', 'sem'])
+            color = colors_4way.get(grp, '#999999')
+            ax.errorbar(grp_mean.index, grp_mean['mean'], yerr=grp_mean['sem'],
+                       marker='o', linewidth=2, markersize=8, capsize=5, label=grp, color=color)
+
+        ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
+        ax.set_ylabel(f'% {marker}+ Cells', fontsize=12, fontweight='bold')
+        ax.set_title(f'{marker}: All 4 Groups', fontsize=14, fontweight='bold')
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[1]
+        sns.boxplot(data=marker_data, x='timepoint', y='pct_positive', hue='model_genotype',
+                   ax=ax, palette=colors_4way)
+        ax.set_xlabel('Timepoint', fontsize=12)
+        ax.set_ylabel(f'% {marker}+ Cells', fontsize=12)
+        ax.set_title(f'{marker}: 4-way Distribution', fontsize=14, fontweight='bold')
+        ax.legend(title='Group', fontsize=8)
+
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/figures/temporal/marker_expression/{marker}_4way.png",
+                   dpi=300, bbox_inches='tight')
+        plt.close()
+
+    print(f"   Created 2 plot types for {len(marker_df['marker'].unique())} markers")
+    print(f"   Total plots: {2 * len(marker_df['marker'].unique())}")
     print("\n✓ Marker expression analysis complete\n")
 
     return marker_df
