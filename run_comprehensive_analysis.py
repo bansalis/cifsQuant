@@ -28,6 +28,10 @@ from pathlib import Path
 import scanpy as sc
 import pandas as pd
 import numpy as np
+
+# Set matplotlib to use non-interactive backend for headless environments
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import spearmanr, mannwhitneyu, kruskal
@@ -117,6 +121,12 @@ def create_spatial_maps(adata, output_dir: str, populations: list,
     print("\n" + "="*80)
     print("CREATING SPATIAL MAPS")
     print("="*80)
+
+    # Create all required directories
+    import os
+    os.makedirs(f"{output_dir}/figures/spatial_maps/by_sample", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/spatial_maps/by_timepoint", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/spatial_maps/by_genotype", exist_ok=True)
 
     coords = adata.obsm['spatial']
 
@@ -234,6 +244,12 @@ def analyze_and_plot_tumor_size(structure_index: pd.DataFrame, output_dir: str):
     print("\n" + "="*80)
     print("TUMOR SIZE ANALYSIS")
     print("="*80)
+
+    # Create all required directories
+    import os
+    os.makedirs(f"{output_dir}/data", exist_ok=True)
+    os.makedirs(f"{output_dir}/statistics", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/temporal/tumor_size", exist_ok=True)
 
     # Aggregate by sample
     sample_agg = structure_index.groupby(['sample_id', 'timepoint', 'main_group',
@@ -519,6 +535,11 @@ def analyze_and_plot_marker_expression(adata, output_dir: str, markers: list):
     print("MARKER EXPRESSION ANALYSIS")
     print("="*80)
 
+    # Create all required directories
+    import os
+    os.makedirs(f"{output_dir}/data", exist_ok=True)
+    os.makedirs(f"{output_dir}/figures/temporal/marker_expression", exist_ok=True)
+
     results = []
 
     for marker in markers:
@@ -655,6 +676,11 @@ def main():
 
     # Run efficient framework for structure detection and infiltration
     output_dir = config.get('output_directory', 'comprehensive_spatial_analysis')
+
+    # Create base directories
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(f"{output_dir}/structures", exist_ok=True)
 
     etsa = EfficientTumorSpatialAnalysis(
         adata,
