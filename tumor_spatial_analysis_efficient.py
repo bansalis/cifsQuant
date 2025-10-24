@@ -218,6 +218,9 @@ class EfficientTumorSpatialAnalysis:
                         'y_max': y_max,
                         'area_um2': bbox_area,
                         'timepoint': sample_meta.get('timepoint', None),
+                        'main_group': sample_meta.get('main_group', None),
+                        'genotype': sample_meta.get('genotype', None),
+                        'genotype_full': sample_meta.get('genotype_full', None),
                         'group': sample_meta.get('group', None),
                         'condition': sample_meta.get('condition', None)
                     })
