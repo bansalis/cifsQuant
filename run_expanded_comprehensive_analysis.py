@@ -23,8 +23,19 @@ This script runs the complete spatial analysis with ALL the requested expansions
 
 6. Extensive marker expression temporal tracking
 
+Checkpoint System:
+    The script now includes a checkpoint system to save progress after each phase.
+    This allows you to resume long-running analyses without regenerating everything.
+
 Usage:
+    # Run fresh analysis (clears all previous checkpoints)
+    python run_expanded_comprehensive_analysis.py --config configs/comprehensive_config.yaml --reset
+
+    # Resume from last checkpoint (default behavior)
     python run_expanded_comprehensive_analysis.py --config configs/comprehensive_config.yaml
+
+    # Or explicitly specify resume mode
+    python run_expanded_comprehensive_analysis.py --config configs/comprehensive_config.yaml --resume
 
 Author: Expanded comprehensive analysis runner
 Date: 2025-10-25
@@ -65,6 +76,30 @@ from run_comprehensive_analysis import (
 )
 
 
+def is_phase_complete(output_dir: str, phase_name: str) -> bool:
+    """Check if a phase has been completed."""
+    checkpoint_file = f"{output_dir}/.checkpoints/{phase_name}.done"
+    return Path(checkpoint_file).exists()
+
+
+def mark_phase_complete(output_dir: str, phase_name: str):
+    """Mark a phase as completed."""
+    checkpoint_dir = f"{output_dir}/.checkpoints"
+    Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    checkpoint_file = f"{checkpoint_dir}/{phase_name}.done"
+    Path(checkpoint_file).touch()
+    print(f"  ✓ Checkpoint saved: {phase_name}")
+
+
+def reset_checkpoints(output_dir: str):
+    """Clear all checkpoints and optionally delete output data."""
+    import shutil
+    checkpoint_dir = f"{output_dir}/.checkpoints"
+    if Path(checkpoint_dir).exists():
+        shutil.rmtree(checkpoint_dir)
+    print(f"  ✓ Cleared all checkpoints")
+
+
 def main():
     """Main entry point for expanded comprehensive analysis."""
 
@@ -76,6 +111,10 @@ def main():
                        help='Configuration file')
     parser.add_argument('--metadata', '-m', type=str, default='sample_metadata.csv',
                        help='Sample metadata CSV')
+    parser.add_argument('--reset', action='store_true',
+                       help='Reset all checkpoints and start fresh')
+    parser.add_argument('--resume', action='store_true', default=True,
+                       help='Resume from last checkpoint (default: True)')
 
     args = parser.parse_args()
 
@@ -93,6 +132,21 @@ def main():
     print("EXPANDED COMPREHENSIVE SPATIAL ANALYSIS")
     print("="*80)
     print(f"\nOutput directory: {output_dir}/\n")
+
+    # Handle reset
+    if args.reset:
+        print("="*80)
+        print("RESETTING ANALYSIS")
+        print("="*80)
+        reset_checkpoints(output_dir)
+        print()
+
+    # Checkpoint status
+    if args.resume and not args.reset:
+        print("="*80)
+        print("CHECKPOINT STATUS (Resume mode enabled)")
+        print("="*80)
+        print("Completed phases will be skipped. Use --reset to start from scratch.\n")
 
     # Load and parse metadata
     print("="*80)
@@ -127,217 +181,304 @@ def main():
     # ========================================================================
     # PHASE 2: TUMOR STRUCTURE DETECTION
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 2: TUMOR STRUCTURE DETECTION")
-    print("="*80)
+    phase_name = "phase2_tumor_structures"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 2: TUMOR STRUCTURE DETECTION [SKIPPED - Already complete]")
+        print("="*80)
+    else:
+        print("\n" + "="*80)
+        print("PHASE 2: TUMOR STRUCTURE DETECTION")
+        print("="*80)
 
-    struct_config = config.get('tumor_structure_detection', {})
-    etsa.detect_all_tumor_structures(
-        population_config=population_config,
-        **struct_config
-    )
+        struct_config = config.get('tumor_structure_detection', {})
+        etsa.detect_all_tumor_structures(
+            population_config=population_config,
+            **struct_config
+        )
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 3: STANDARD INFILTRATION ANALYSIS
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 3: STANDARD INFILTRATION ANALYSIS")
-    print("="*80)
+    phase_name = "phase3_infiltration"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 3: STANDARD INFILTRATION ANALYSIS [SKIPPED - Already complete]")
+        print("="*80)
+        metrics_df = pd.read_csv(f"{output_dir}/data/infiltration_metrics.csv")
+    else:
+        print("\n" + "="*80)
+        print("PHASE 3: STANDARD INFILTRATION ANALYSIS")
+        print("="*80)
 
-    infil_config = config.get('immune_infiltration', {})
-    boundary_config = config.get('infiltration_boundaries', {})
+        infil_config = config.get('immune_infiltration', {})
+        boundary_config = config.get('infiltration_boundaries', {})
 
-    metrics_df = etsa.analyze_structures_individually(
-        immune_populations=infil_config.get('populations', []),
-        boundary_widths=boundary_config.get('boundary_widths', [30, 100, 200]),
-        buffer_distance=config.get('buffer_distance', 500)
-    )
+        metrics_df = etsa.analyze_structures_individually(
+            immune_populations=infil_config.get('populations', []),
+            boundary_widths=boundary_config.get('boundary_widths', [30, 100, 200]),
+            buffer_distance=config.get('buffer_distance', 500)
+        )
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 4: SPATIAL MAPS (Basic and with Analysis Ranges)
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 4: SPATIAL MAPS")
-    print("="*80)
+    phase_name = "phase4_spatial_maps"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 4: SPATIAL MAPS [SKIPPED - Already complete]")
+        print("="*80)
+    else:
+        print("\n" + "="*80)
+        print("PHASE 4: SPATIAL MAPS")
+        print("="*80)
 
-    # 4a. Basic spatial maps
-    create_spatial_maps(adata, output_dir, list(population_config.keys()))
+        # 4a. Basic spatial maps
+        create_spatial_maps(adata, output_dir, list(population_config.keys()))
 
-    # 4b. Spatial maps with tumor definitions and analysis ranges
-    # Plot ALL samples, not just a subset
-    create_spatial_maps_with_analysis_ranges(
-        adata,
-        etsa.structure_index,
-        output_dir,
-        samples_to_plot=adata.obs['sample_id'].unique(),  # Plot ALL samples
-        boundary_widths=boundary_config.get('boundary_widths', [30, 100, 200])
-    )
+        # 4b. Spatial maps with tumor definitions and analysis ranges
+        # Plot ALL samples, not just a subset
+        boundary_config = config.get('infiltration_boundaries', {})
+        create_spatial_maps_with_analysis_ranges(
+            adata,
+            etsa.structure_index,
+            output_dir,
+            samples_to_plot=adata.obs['sample_id'].unique(),  # Plot ALL samples
+            boundary_widths=boundary_config.get('boundary_widths', [30, 100, 200])
+        )
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 5: TUMOR SIZE ANALYSIS
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 5: TUMOR SIZE ANALYSIS")
-    print("="*80)
+    phase_name = "phase5_tumor_size"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 5: TUMOR SIZE ANALYSIS [SKIPPED - Already complete]")
+        print("="*80)
+        size_df = pd.read_csv(f"{output_dir}/data/tumor_size_temporal.csv")
+    else:
+        print("\n" + "="*80)
+        print("PHASE 5: TUMOR SIZE ANALYSIS")
+        print("="*80)
 
-    size_df = analyze_and_plot_tumor_size(etsa.structure_index, output_dir)
+        size_df = analyze_and_plot_tumor_size(etsa.structure_index, output_dir)
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 6: MARKER EXPRESSION TEMPORAL ANALYSIS
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 6: MARKER EXPRESSION TEMPORAL ANALYSIS")
-    print("="*80)
+    phase_name = "phase6_marker_expression"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 6: MARKER EXPRESSION TEMPORAL ANALYSIS [SKIPPED - Already complete]")
+        print("="*80)
+        marker_df = pd.read_csv(f"{output_dir}/data/marker_expression_temporal.csv")
+    else:
+        print("\n" + "="*80)
+        print("PHASE 6: MARKER EXPRESSION TEMPORAL ANALYSIS")
+        print("="*80)
 
-    # Include ALL markers
-    all_markers = config['tumor_markers'] + config['immune_markers']
+        # Include ALL markers
+        all_markers = config['tumor_markers'] + config['immune_markers']
 
-    # Add specific markers of interest if not already included
-    # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
-    # CD8B is the actual marker name for CD8, CD4 is not available in this dataset
-    markers_of_interest = ['AGFP', 'PERK', 'CD3', 'CD8B']
-    for marker in markers_of_interest:
-        if marker not in all_markers and marker in adata.var_names:
-            all_markers.append(marker)
+        # Add specific markers of interest if not already included
+        # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
+        # CD8B is the actual marker name for CD8, CD4 is not available in this dataset
+        markers_of_interest = ['AGFP', 'PERK', 'CD3', 'CD8B']
+        for marker in markers_of_interest:
+            if marker not in all_markers and marker in adata.var_names:
+                all_markers.append(marker)
 
-    marker_df = analyze_and_plot_marker_expression(adata, output_dir, all_markers)
+        marker_df = analyze_and_plot_marker_expression(adata, output_dir, all_markers)
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 7: EXPANDED IMMUNE INFILTRATION ANALYSIS
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 7: EXPANDED IMMUNE INFILTRATION ANALYSIS")
-    print("="*80)
+    phase_name = "phase7_immune_infiltration"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 7: EXPANDED IMMUNE INFILTRATION ANALYSIS [SKIPPED - Already complete]")
+        print("="*80)
+        structure_distances = pd.read_csv(f"{output_dir}/data/distances/tcell_tumor_distances_structure_level.csv")
+        sample_distances = pd.read_csv(f"{output_dir}/data/distances/tcell_tumor_distances_sample_level.csv")
+        heterogeneity_df = pd.read_csv(f"{output_dir}/data/heterogeneity/tumor_heterogeneity.csv")
+        ninja_df = pd.read_csv(f"{output_dir}/data/ninja_tumor_comparison.csv")
+    else:
+        print("\n" + "="*80)
+        print("PHASE 7: EXPANDED IMMUNE INFILTRATION ANALYSIS")
+        print("="*80)
 
-    # Initialize immune infiltration analyzer
-    immune_analyzer = ImmuneInfiltrationAnalysis(
-        adata,
-        etsa.structure_index,
-        output_dir
-    )
+        # Initialize immune infiltration analyzer
+        immune_analyzer = ImmuneInfiltrationAnalysis(
+            adata,
+            etsa.structure_index,
+            output_dir
+        )
 
-    # Define T cell populations
-    # Note: CD4 marker is not available in this dataset, using CD3 and CD8 (CD8B)
-    tcell_populations = ['CD3', 'CD8']
+        # Define T cell populations
+        # Note: CD4 marker is not available in this dataset, using CD3 and CD8 (CD8B)
+        tcell_populations = ['CD3', 'CD8']
 
-    # Define tumor subtypes
-    # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
-    tumor_subtypes = {
-        'Tumor_all': {'is_Tumor': True},
-        'pERK_positive': {'PERK': True, 'is_Tumor': True},
-        'pERK_negative': {'PERK': False, 'is_Tumor': True},
-        'NINJA_positive': {'AGFP': True, 'is_Tumor': True},
-        'NINJA_negative': {'AGFP': False, 'is_Tumor': True}
-    }
+        # Define tumor subtypes
+        # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
+        tumor_subtypes = {
+            'Tumor_all': {'is_Tumor': True},
+            'pERK_positive': {'PERK': True, 'is_Tumor': True},
+            'pERK_negative': {'PERK': False, 'is_Tumor': True},
+            'NINJA_positive': {'AGFP': True, 'is_Tumor': True},
+            'NINJA_negative': {'AGFP': False, 'is_Tumor': True}
+        }
 
-    # 7a. T cell-tumor distance analysis (dual-level: structure and sample)
-    print("\n7a. T cell-tumor distance analysis...")
-    structure_distances, sample_distances = immune_analyzer.analyze_tcell_tumor_distances_comprehensive(
-        tcell_populations=tcell_populations,
-        tumor_subtypes=tumor_subtypes,
-        max_distance=500
-    )
+        # 7a. T cell-tumor distance analysis (dual-level: structure and sample)
+        print("\n7a. T cell-tumor distance analysis...")
+        structure_distances, sample_distances = immune_analyzer.analyze_tcell_tumor_distances_comprehensive(
+            tcell_populations=tcell_populations,
+            tumor_subtypes=tumor_subtypes,
+            max_distance=500
+        )
 
-    # 7b. Tumor heterogeneity analysis
-    print("\n7b. Tumor heterogeneity analysis...")
-    heterogeneity_df = immune_analyzer.analyze_tumor_heterogeneity(
-        markers_of_interest=['AGFP', 'PERK'],
-        window_size=100
-    )
+        # 7b. Tumor heterogeneity analysis
+        print("\n7b. Tumor heterogeneity analysis...")
+        heterogeneity_df = immune_analyzer.analyze_tumor_heterogeneity(
+            markers_of_interest=['AGFP', 'PERK'],
+            window_size=100
+        )
 
-    # 7c. NINJA+/- tumor comparison
-    print("\n7c. NINJA+/- tumor comparison...")
-    ninja_df = immune_analyzer.compare_ninja_positive_negative_tumors()
+        # 7c. NINJA+/- tumor comparison
+        print("\n7c. NINJA+/- tumor comparison...")
+        ninja_df = immune_analyzer.compare_ninja_positive_negative_tumors()
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 8: CELLULAR NEIGHBORHOODS
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 8: CELLULAR NEIGHBORHOODS")
-    print("="*80)
-
+    phase_name = "phase8_neighborhoods"
     neighborhood_config = config.get('cellular_neighborhoods', {})
 
     if neighborhood_config.get('enabled', True):
-        # Detect neighborhoods
-        etsa.detect_cellular_neighborhoods(
-            populations=list(population_config.keys()),
-            **{k: v for k, v in neighborhood_config.items() if k not in ['enabled', 'populations']}
-        )
+        if args.resume and is_phase_complete(output_dir, phase_name):
+            print("\n" + "="*80)
+            print("PHASE 8: CELLULAR NEIGHBORHOODS [SKIPPED - Already complete]")
+            print("="*80)
+            cell_neighborhoods = pd.read_csv(f"{output_dir}/data/cell_neighborhoods.csv")
+            neighborhood_profiles = pd.read_csv(f"{output_dir}/data/neighborhood_profiles.csv")
+            neighborhood_composition = pd.read_csv(f"{output_dir}/data/neighborhood_composition_temporal.csv")
+        else:
+            print("\n" + "="*80)
+            print("PHASE 8: CELLULAR NEIGHBORHOODS")
+            print("="*80)
 
-        # Load neighborhood results
-        cell_neighborhoods = pd.read_csv(f"{output_dir}/data/cell_neighborhoods.csv")
-        neighborhood_profiles = pd.read_csv(f"{output_dir}/data/neighborhood_profiles.csv")
+            # Detect neighborhoods
+            etsa.detect_cellular_neighborhoods(
+                populations=list(population_config.keys()),
+                **{k: v for k, v in neighborhood_config.items() if k not in ['enabled', 'populations']}
+            )
 
-        # Temporal neighborhood analysis
-        neighborhood_analyzer = NeighborhoodTemporalAnalysis(
-            adata,
-            cell_neighborhoods,
-            neighborhood_profiles,
-            output_dir
-        )
+            # Load neighborhood results
+            cell_neighborhoods = pd.read_csv(f"{output_dir}/data/cell_neighborhoods.csv")
+            neighborhood_profiles = pd.read_csv(f"{output_dir}/data/neighborhood_profiles.csv")
 
-        neighborhood_composition = neighborhood_analyzer.analyze_neighborhood_composition_temporal()
+            # Temporal neighborhood analysis
+            neighborhood_analyzer = NeighborhoodTemporalAnalysis(
+                adata,
+                cell_neighborhoods,
+                neighborhood_profiles,
+                output_dir
+            )
+
+            neighborhood_composition = neighborhood_analyzer.analyze_neighborhood_composition_temporal()
+            mark_phase_complete(output_dir, phase_name)
     else:
+        print("\n" + "="*80)
+        print("PHASE 8: CELLULAR NEIGHBORHOODS [DISABLED]")
+        print("="*80)
         neighborhood_composition = pd.DataFrame()
 
     # ========================================================================
     # PHASE 9: COMPREHENSIVE VISUALIZATIONS AND STATISTICS
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 9: COMPREHENSIVE VISUALIZATIONS AND STATISTICS")
-    print("="*80)
+    phase_name = "phase9_visualizations"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 9: COMPREHENSIVE VISUALIZATIONS AND STATISTICS [SKIPPED - Already complete]")
+        print("="*80)
+    else:
+        print("\n" + "="*80)
+        print("PHASE 9: COMPREHENSIVE VISUALIZATIONS AND STATISTICS")
+        print("="*80)
 
-    # Initialize visualization generator
-    viz_gen = ComprehensiveVisualizationsStats(output_dir)
+        # Initialize visualization generator
+        viz_gen = ComprehensiveVisualizationsStats(output_dir)
 
-    # 9a. T cell-tumor distance plots
-    print("\n9a. T cell-tumor distance visualizations...")
-    viz_gen.plot_tcell_tumor_distances_comprehensive(
-        structure_distances,
-        sample_distances
-    )
+        # 9a. T cell-tumor distance plots
+        print("\n9a. T cell-tumor distance visualizations...")
+        viz_gen.plot_tcell_tumor_distances_comprehensive(
+            structure_distances,
+            sample_distances
+        )
 
-    # 9b. Tumor heterogeneity plots
-    print("\n9b. Tumor heterogeneity visualizations...")
-    viz_gen.plot_tumor_heterogeneity(
-        heterogeneity_df,
-        markers=['AGFP', 'PERK']
-    )
+        # 9b. Tumor heterogeneity plots
+        print("\n9b. Tumor heterogeneity visualizations...")
+        viz_gen.plot_tumor_heterogeneity(
+            heterogeneity_df,
+            markers=['AGFP', 'PERK']
+        )
 
-    # 9c. Neighborhood composition temporal plots
-    if len(neighborhood_composition) > 0:
-        print("\n9c. Neighborhood composition temporal visualizations...")
-        viz_gen.plot_neighborhood_composition_temporal(neighborhood_composition)
+        # 9c. Neighborhood composition temporal plots
+        if len(neighborhood_composition) > 0:
+            print("\n9c. Neighborhood composition temporal visualizations...")
+            viz_gen.plot_neighborhood_composition_temporal(neighborhood_composition)
+
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 10: ADDITIONAL STATISTICAL ANALYSES
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 10: ADDITIONAL STATISTICAL ANALYSES")
-    print("="*80)
+    phase_name = "phase10_statistics"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 10: ADDITIONAL STATISTICAL ANALYSES [SKIPPED - Already complete]")
+        print("="*80)
+    else:
+        print("\n" + "="*80)
+        print("PHASE 10: ADDITIONAL STATISTICAL ANALYSES")
+        print("="*80)
 
-    # Standard statistical analysis from efficient framework
-    if config.get('statistical_analysis', {}).get('enabled', True):
-        etsa.statistical_analysis(metrics_df)
+        # Standard statistical analysis from efficient framework
+        if config.get('statistical_analysis', {}).get('enabled', True):
+            etsa.statistical_analysis(metrics_df)
 
-    # Additional heterogeneity statistics
-    print("\nComputing heterogeneity statistics...")
-    _compute_heterogeneity_statistics(heterogeneity_df, output_dir)
+        # Additional heterogeneity statistics
+        print("\nComputing heterogeneity statistics...")
+        _compute_heterogeneity_statistics(heterogeneity_df, output_dir)
 
-    # NINJA+/- comparison statistics
-    print("\nComputing NINJA+/- comparison statistics...")
-    _compute_ninja_statistics(ninja_df, output_dir)
+        # NINJA+/- comparison statistics
+        print("\nComputing NINJA+/- comparison statistics...")
+        _compute_ninja_statistics(ninja_df, output_dir)
+
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # PHASE 11: PUBLICATION FIGURES
     # ========================================================================
-    print("\n" + "="*80)
-    print("PHASE 11: PUBLICATION FIGURES")
-    print("="*80)
+    phase_name = "phase11_publication_figures"
+    if args.resume and is_phase_complete(output_dir, phase_name):
+        print("\n" + "="*80)
+        print("PHASE 11: PUBLICATION FIGURES [SKIPPED - Already complete]")
+        print("="*80)
+    else:
+        print("\n" + "="*80)
+        print("PHASE 11: PUBLICATION FIGURES")
+        print("="*80)
 
-    if config.get('visualizations', {}).get('enabled', True):
-        etsa.create_publication_figures(metrics_df)
+        if config.get('visualizations', {}).get('enabled', True):
+            etsa.create_publication_figures(metrics_df)
+
+        mark_phase_complete(output_dir, phase_name)
 
     # ========================================================================
     # COMPLETE
