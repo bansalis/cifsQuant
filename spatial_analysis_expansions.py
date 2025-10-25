@@ -59,6 +59,16 @@ class ImmuneInfiltrationAnalysis:
         self.structure_index = structure_index
         self.output_dir = output_dir
 
+        # Validate required columns in structure_index
+        required_cols = ['structure_id', 'sample_id', 'timepoint', 'main_group',
+                        'genotype', 'genotype_full', 'centroid_x', 'centroid_y',
+                        'n_cells', 'area_um2']
+        missing_cols = [col for col in required_cols if col not in structure_index.columns]
+        if missing_cols:
+            print(f"\nWarning: Missing columns in structure_index: {missing_cols}")
+            print(f"Available columns: {list(structure_index.columns)}")
+            raise ValueError(f"structure_index is missing required columns: {missing_cols}")
+
         # Get coordinates
         if 'spatial' in adata.obsm:
             self.coords = adata.obsm['spatial']
@@ -310,11 +320,39 @@ class ImmuneInfiltrationAnalysis:
                         'tumor_area': struct_row['area_um2']
                     })
 
+        # Create DataFrame with explicit columns if results is empty
+        if len(results) == 0:
+            print("\nWarning: No distance results found. This could be because:")
+            print("  - No T cells were found near tumor structures")
+            print("  - No tumor subtypes matched the criteria")
+            print("  - No T cells were within max_distance of tumor cells")
+            return pd.DataFrame(columns=[
+                'structure_id', 'sample_id', 'timepoint', 'main_group', 'genotype', 'genotype_full',
+                'tcell_population', 'tumor_subtype', 'n_tcells', 'n_tumor_subtype',
+                'n_tcells_within_max_dist', 'pct_tcells_within_max_dist',
+                'mean_distance', 'median_distance', 'min_distance', 'max_distance',
+                'std_distance', 'q25_distance', 'q75_distance', 'tumor_size', 'tumor_area'
+            ])
+
         return pd.DataFrame(results)
 
 
     def _aggregate_distances_to_sample(self, structure_df: pd.DataFrame) -> pd.DataFrame:
         """Aggregate structure-level distances to sample level."""
+
+        # Validate that structure_df has the required columns
+        if len(structure_df) == 0:
+            print("Warning: structure_df is empty. Returning empty DataFrame.")
+            return pd.DataFrame()
+
+        # Check for required columns
+        required_cols = ['sample_id', 'timepoint', 'main_group', 'genotype', 'genotype_full',
+                        'tcell_population', 'tumor_subtype']
+        missing_cols = [col for col in required_cols if col not in structure_df.columns]
+        if missing_cols:
+            print(f"\nError: structure_df is missing required columns: {missing_cols}")
+            print(f"Available columns: {list(structure_df.columns)}")
+            raise ValueError(f"structure_df is missing required columns: {missing_cols}")
 
         # Group by sample, tcell_population, tumor_subtype
         group_cols = ['sample_id', 'timepoint', 'main_group', 'genotype', 'genotype_full',
