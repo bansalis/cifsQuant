@@ -164,11 +164,12 @@ def main():
     create_spatial_maps(adata, output_dir, list(population_config.keys()))
 
     # 4b. Spatial maps with tumor definitions and analysis ranges
+    # Plot ALL samples, not just a subset
     create_spatial_maps_with_analysis_ranges(
         adata,
         etsa.structure_index,
         output_dir,
-        samples_to_plot=adata.obs['sample_id'].unique()[:5],  # Limit to 5 for speed
+        samples_to_plot=adata.obs['sample_id'].unique(),  # Plot ALL samples
         boundary_widths=boundary_config.get('boundary_widths', [30, 100, 200])
     )
 
@@ -192,7 +193,8 @@ def main():
     all_markers = config['tumor_markers'] + config['immune_markers']
 
     # Add specific markers of interest if not already included
-    markers_of_interest = ['aGFP', 'pERK', 'CD3', 'CD8', 'CD4']
+    # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
+    markers_of_interest = ['AGFP', 'PERK', 'CD3', 'CD8', 'CD4']
     for marker in markers_of_interest:
         if marker not in all_markers and marker in adata.var_names:
             all_markers.append(marker)
@@ -217,12 +219,13 @@ def main():
     tcell_populations = ['CD3', 'CD8', 'CD4']
 
     # Define tumor subtypes
+    # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
     tumor_subtypes = {
         'Tumor_all': {'is_Tumor': True},
-        'pERK_positive': {'pERK': True, 'is_Tumor': True},
-        'pERK_negative': {'pERK': False, 'is_Tumor': True},
-        'NINJA_positive': {'aGFP': True, 'is_Tumor': True},
-        'NINJA_negative': {'aGFP': False, 'is_Tumor': True}
+        'pERK_positive': {'PERK': True, 'is_Tumor': True},
+        'pERK_negative': {'PERK': False, 'is_Tumor': True},
+        'NINJA_positive': {'AGFP': True, 'is_Tumor': True},
+        'NINJA_negative': {'AGFP': False, 'is_Tumor': True}
     }
 
     # 7a. T cell-tumor distance analysis (dual-level: structure and sample)
@@ -236,7 +239,7 @@ def main():
     # 7b. Tumor heterogeneity analysis
     print("\n7b. Tumor heterogeneity analysis...")
     heterogeneity_df = immune_analyzer.analyze_tumor_heterogeneity(
-        markers_of_interest=['aGFP', 'pERK'],
+        markers_of_interest=['AGFP', 'PERK'],
         window_size=100
     )
 
@@ -297,7 +300,7 @@ def main():
     print("\n9b. Tumor heterogeneity visualizations...")
     viz_gen.plot_tumor_heterogeneity(
         heterogeneity_df,
-        markers=['aGFP', 'pERK']
+        markers=['AGFP', 'PERK']
     )
 
     # 9c. Neighborhood composition temporal plots
@@ -366,7 +369,8 @@ def _compute_heterogeneity_statistics(heterogeneity_df: pd.DataFrame, output_dir
 
     results = []
 
-    for marker in ['aGFP', 'pERK']:
+    # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
+    for marker in ['AGFP', 'PERK']:
         het_col = f'{marker}_heterogeneity'
         clust_col = f'{marker}_clustering_index'
 
