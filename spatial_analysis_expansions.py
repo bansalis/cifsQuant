@@ -618,10 +618,21 @@ class NeighborhoodTemporalAnalysis:
         print("NEIGHBORHOOD COMPOSITION TEMPORAL ANALYSIS")
         print("="*80)
 
-        # Aggregate by sample, timepoint, group, neighborhood_type
-        composition = self.cell_neighborhoods.groupby([
-            'sample_id', 'timepoint', 'genotype', 'genotype_full', 'neighborhood_type'
-        ]).size().reset_index(name='n_cells')
+        # Build groupby columns based on what's available
+        groupby_cols = ['sample_id', 'neighborhood_type']
+
+        # Add timepoint if available
+        if 'timepoint' in self.cell_neighborhoods.columns:
+            groupby_cols.insert(1, 'timepoint')
+
+        # Add genotype columns if available
+        if 'genotype' in self.cell_neighborhoods.columns:
+            groupby_cols.insert(-1, 'genotype')
+        if 'genotype_full' in self.cell_neighborhoods.columns:
+            groupby_cols.insert(-1, 'genotype_full')
+
+        # Aggregate by available columns
+        composition = self.cell_neighborhoods.groupby(groupby_cols).size().reset_index(name='n_cells')
 
         # Calculate percentages per sample
         sample_totals = composition.groupby(['sample_id'])['n_cells'].transform('sum')

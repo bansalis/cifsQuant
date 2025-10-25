@@ -573,7 +573,7 @@ class EfficientTumorSpatialAnalysis:
         })
 
         # Add metadata if available
-        for col in ['timepoint', 'group', 'main_group', 'condition']:
+        for col in ['timepoint', 'group', 'main_group', 'condition', 'genotype', 'genotype_full']:
             if col in self.adata.obs.columns:
                 cell_neighborhoods[col] = self.adata.obs[col].values
 
