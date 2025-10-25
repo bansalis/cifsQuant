@@ -95,10 +95,14 @@ populations:
 
 # Tumor Structure Detection
 # --------------------------
+# Adjusted parameters to detect more structures and allow larger structures
+# - Increased eps from 30 to 50 μm to allow more spread-out tumor cells
+# - Decreased min_cluster_size from 50 to 30 to capture smaller tumors
+# - Kept min_samples at 10 for core point detection
 tumor_structure_detection:
   tumor_population: 'Tumor'
-  min_cluster_size: 50
-  eps: 30
+  min_cluster_size: 30
+  eps: 50
   min_samples: 10
 
 # Infiltration Boundaries
