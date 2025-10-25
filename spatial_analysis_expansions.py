@@ -138,11 +138,13 @@ class ImmuneInfiltrationAnalysis:
 
         if tumor_subtypes is None:
             # Default tumor subtypes
+            # NOTE: Marker names must match the actual data: AGFP, PERK (uppercase)
             tumor_subtypes = {
                 'Tumor_all': {'is_Tumor': True},
-                'pERK_positive': {'pERK': True},
-                'NINJA_positive': {'aGFP': True},
-                'NINJA_negative': {'aGFP': False, 'is_Tumor': True}
+                'pERK_positive': {'PERK': True, 'is_Tumor': True},
+                'pERK_negative': {'PERK': False, 'is_Tumor': True},
+                'NINJA_positive': {'AGFP': True, 'is_Tumor': True},
+                'NINJA_negative': {'AGFP': False, 'is_Tumor': True}
             }
 
         # Define tumor subtypes
@@ -490,11 +492,11 @@ class ImmuneInfiltrationAnalysis:
                 f"{self.output_dir}/structures/structure_{struct_id:04d}_cells.npy"
             )
 
-            # Check if aGFP is available
-            if 'aGFP' not in self.adata.var_names:
+            # Check if AGFP is available (NOTE: actual marker name is AGFP, not aGFP)
+            if 'AGFP' not in self.adata.var_names:
                 continue
 
-            agfp_idx = self.adata.var_names.get_loc('aGFP')
+            agfp_idx = self.adata.var_names.get_loc('AGFP')
 
             if 'gated' in self.adata.layers:
                 agfp_values = self.adata.layers['gated'][tumor_cell_indices, agfp_idx]
@@ -629,7 +631,7 @@ def create_spatial_maps_with_analysis_ranges(
     coords = adata.obsm['spatial']
 
     if samples_to_plot is None:
-        samples_to_plot = structure_index['sample_id'].unique()[:5]  # Limit to 5
+        samples_to_plot = structure_index['sample_id'].unique()  # Plot all samples
 
     for sample_id in samples_to_plot:
         print(f"\nCreating map for {sample_id}...")
