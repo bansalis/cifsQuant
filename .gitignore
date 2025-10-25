@@ -32,3 +32,6 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+tumor_spatial_analysis/*
+comprehensive_spatial_analysis/*
+efficient_spatial_analysis/*
