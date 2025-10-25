@@ -11,6 +11,8 @@ output_directory: 'tumor_spatial_analysis'
 tumor_markers:
   - TOM
   - AGFP
+  - PERK
+  - KI67
 
 immune_markers:
   - CD45
@@ -172,6 +174,12 @@ coenrichment_analysis:
   population_pairs:
     - [CD8_T_cells, Tumor_AGFP_positive]
     - [CD8_T_cells, Tumor_AGFP_negative]
+    - [CD8_T_cells, Tumor_PERK_positive]
+    - [CD8_T_cells, Tumor_Ki67_positive]
+    - [T_cells, Tumor_AGFP_positive]
+    - [T_cells, Tumor_AGFP_negative]
+    - [T_cells, Tumor_PERK_positive]
+    - [T_cells, Tumor_Ki67_positive]
     - [CD8_Ki67_positive, Tumor_Ki67_positive]
     - [CD8_PERK_positive, Tumor_PERK_positive]
     - [T_cells, Tumor]

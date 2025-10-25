@@ -94,105 +94,147 @@ def load_and_combine(results_dir):
 
 def correct_illumination(adata):
     """
-    BaSiC illumination correction for cyclic IF.
+    GPU-accelerated BaSiC illumination correction for cyclic IF.
     Must be done BEFORE outlier removal.
     Based on: Peng et al., Nat Commun 2017 (MCMICRO uses this)
     """
-    from scipy.ndimage import gaussian_filter
+    try:
+        import cupy as cp
+        from cupyx.scipy.ndimage import gaussian_filter
+        from cupyx.scipy.interpolate import RegularGridInterpolator
+        use_gpu = True
+        print("✓ Using GPU acceleration (CuPy)")
+    except ImportError:
+        import numpy as cp
+        from scipy.ndimage import gaussian_filter
+        from scipy.interpolate import RectBivariateSpline
+        use_gpu = False
+        print("⚠ GPU not available, using CPU")
     
     print("\nCorrecting illumination bias...")
     
     for marker_idx, marker in enumerate(adata.var_names):
         for sample in adata.obs['sample_id'].unique():
             mask = adata.obs['sample_id'] == sample
-            vals = adata.X[mask, marker_idx]
-            coords = adata.obsm['spatial'][mask]
+            vals = cp.asarray(adata.X[mask, marker_idx]) if use_gpu else adata.X[mask, marker_idx]
+            coords = cp.asarray(adata.obsm['spatial'][mask]) if use_gpu else adata.obsm['spatial'][mask]
             
-            # Create 2D intensity map by binning spatial coordinates
-            x_bins = 50
-            y_bins = 50
+            # Binning parameters
+            x_bins, y_bins = 50, 50
+            x_edges = cp.linspace(coords[:, 0].min(), coords[:, 0].max(), x_bins)
+            y_edges = cp.linspace(coords[:, 1].min(), coords[:, 1].max(), y_bins)
             
-            x_edges = np.linspace(coords[:, 0].min(), coords[:, 0].max(), x_bins)
-            y_edges = np.linspace(coords[:, 1].min(), coords[:, 1].max(), y_bins)
+            # Vectorized 2D histogram for background map
+            x_idx = cp.searchsorted(x_edges[:-1], coords[:, 0], side='right') - 1
+            y_idx = cp.searchsorted(y_edges[:-1], coords[:, 1], side='right') - 1
+            x_idx = cp.clip(x_idx, 0, x_bins - 2)
+            y_idx = cp.clip(y_idx, 0, y_bins - 2)
             
-            # Calculate median intensity per spatial bin
-            background_map = np.zeros((y_bins-1, x_bins-1))
+            background_map = cp.zeros((y_bins-1, x_bins-1))
             
-            for i in range(len(x_edges)-1):
-                for j in range(len(y_edges)-1):
-                    bin_mask = ((coords[:, 0] >= x_edges[i]) & 
-                               (coords[:, 0] < x_edges[i+1]) &
-                               (coords[:, 1] >= y_edges[j]) & 
-                               (coords[:, 1] < y_edges[j+1]))
-                    
-                    if bin_mask.sum() > 10:
-                        # Use 25th percentile (robust to bright cells)
-                        background_map[j, i] = np.percentile(vals[bin_mask], 25)
+            # Compute 25th percentile per bin (vectorized)
+            for i in range(x_bins-1):
+                for j in range(y_bins-1):
+                    bin_mask = (x_idx == i) & (y_idx == j)
+                    if cp.sum(bin_mask) > 10:
+                        background_map[j, i] = cp.percentile(vals[bin_mask], 25)
             
-            # Smooth background map (large-scale illumination pattern)
+            # Smooth background map
             background_smooth = gaussian_filter(background_map, sigma=3)
             
-            # Interpolate back to cell coordinates
-            from scipy.interpolate import RectBivariateSpline
-            
+            # Fast bilinear interpolation
             x_centers = (x_edges[:-1] + x_edges[1:]) / 2
             y_centers = (y_edges[:-1] + y_edges[1:]) / 2
             
-            interp = RectBivariateSpline(y_centers, x_centers, background_smooth)
-            background_at_cells = interp(coords[:, 1], coords[:, 0], grid=False)
+            if use_gpu:
+                interp = RegularGridInterpolator(
+                    (y_centers, x_centers), 
+                    background_smooth, 
+                    method='linear',
+                    bounds_error=False,
+                    fill_value=cp.median(background_smooth)
+                )
+                background_at_cells = interp(cp.stack([coords[:, 1], coords[:, 0]], axis=1))
+            else:
+                interp = RectBivariateSpline(y_centers, x_centers, background_smooth)
+                background_at_cells = interp(coords[:, 1], coords[:, 0], grid=False)
             
-            # Subtract background (additive correction)
-            corrected = vals - background_at_cells + np.median(background_at_cells)
-            corrected = np.maximum(corrected, 0)  # No negative values
+            # Subtract background
+            corrected = vals - background_at_cells + cp.median(background_at_cells)
+            corrected = cp.maximum(corrected, 0)
             
-            adata.X[mask, marker_idx] = corrected
+            if use_gpu:
+                adata.X[mask, marker_idx] = cp.asnumpy(corrected)
+                bg_min, bg_max = float(cp.asnumpy(background_at_cells.min())), float(cp.asnumpy(background_at_cells.max()))
+            else:
+                adata.X[mask, marker_idx] = corrected
+                bg_min, bg_max = background_at_cells.min(), background_at_cells.max()
             
-            print(f"  {sample} {marker}: background range {background_at_cells.min():.0f}-{background_at_cells.max():.0f}")
+            print(f"  {sample} {marker}: background range {bg_min:.0f}-{bg_max:.0f}")
     
     return adata
 
-def normalize_tiles_by_background(adata):
+def normalize_tiles_by_background(adata, n_jobs=16):
     """
-    Normalize each tile to have comparable background levels.
-    Uses tile_y and tile_x from your segmentation output.
+    Parallelized tile-based background normalization.
     """
-    print("\nTile-based background normalization...")
+    from joblib import Parallel, delayed
+    import time
+    
+    print(f"\nTile-based background normalization (using {n_jobs} cores)...")
+    start = time.time()
     
     # Create unique tile identifier
     adata.obs['tile_id'] = adata.obs['tile_y'].astype(str) + '_' + adata.obs['tile_x'].astype(str)
-    
     print(f"Found {adata.obs['tile_id'].nunique()} unique tiles")
     
     adata.layers['raw_prenorm'] = adata.X.copy()
     
-    for marker_idx, marker in enumerate(adata.var_names):
-        print(f"\n{marker}:")
-        
-        # Identify background cells (low total intensity)
-        total_intensity = adata.X.sum(axis=1)
-        background_threshold = np.percentile(total_intensity, 20)
-        is_background = total_intensity < background_threshold
+    # Identify background cells once (low total intensity)
+    total_intensity = adata.X.sum(axis=1)
+    background_threshold = np.percentile(total_intensity, 20)
+    is_background = total_intensity < background_threshold
+    
+    def process_marker(marker_idx, marker_name, X_data, obs_data, is_bg):
+        """Process one marker across all tiles"""
+        X_marker = X_data[:, marker_idx].copy()
         
         # Global background reference
-        global_background = np.median(adata.X[is_background, marker_idx])
-        print(f"  Global background: {global_background:.1f}")
+        global_background = np.median(X_marker[is_bg])
         
-        # Per-tile correction
-        for tile_id in adata.obs['tile_id'].unique():
-            tile_mask = adata.obs['tile_id'] == tile_id
-            tile_bg_mask = tile_mask & is_background
+        # Calculate corrections for all tiles
+        tile_corrections = {}
+        for tile_id in obs_data['tile_id'].unique():
+            tile_mask = obs_data['tile_id'] == tile_id
+            tile_bg_mask = tile_mask & is_bg
             
-            if tile_bg_mask.sum() < 10:
-                continue
-            
-            tile_background = np.median(adata.X[tile_bg_mask, marker_idx])
-            correction = global_background - tile_background
-            
-            adata.X[tile_mask, marker_idx] += correction
-            adata.X[tile_mask, marker_idx] = np.maximum(adata.X[tile_mask, marker_idx], 0)
-            
-            n_cells = tile_mask.sum()
-            print(f"  Tile {tile_id}: {n_cells:5,} cells, bg={tile_background:.1f} → {correction:+.1f}")
+            if tile_bg_mask.sum() >= 10:
+                tile_background = np.median(X_marker[tile_bg_mask])
+                tile_corrections[tile_id] = global_background - tile_background
+        
+        # Apply corrections vectorized
+        for tile_id, correction in tile_corrections.items():
+            tile_mask = obs_data['tile_id'] == tile_id
+            X_marker[tile_mask] += correction
+        
+        X_marker = np.maximum(X_marker, 0)
+        
+        return marker_name, X_marker, global_background, len(tile_corrections)
+    
+    # Parallel processing across markers
+    results = Parallel(n_jobs=n_jobs, verbose=10)(
+        delayed(process_marker)(i, marker, adata.X, adata.obs, is_background)
+        for i, marker in enumerate(adata.var_names)
+    )
+    
+    # Update adata with results
+    for marker_name, X_corrected, global_bg, n_tiles in results:
+        marker_idx = list(adata.var_names).index(marker_name)
+        adata.X[:, marker_idx] = X_corrected
+        print(f"  {marker_name}: global_bg={global_bg:.1f}, corrected {n_tiles} tiles")
+    
+    elapsed = time.time() - start
+    print(f"✓ Completed in {elapsed:.1f}s ({elapsed/len(adata.var_names):.1f}s per marker)")
     
     return adata
 
@@ -989,15 +1031,25 @@ def visualize_tile_artifacts(adata, output_dir):
             ax_row[1].set_aspect('equal')
             plt.colorbar(sc2, ax=ax_row[1], fraction=0.046)
             
-            # Histogram comparison
-            ax_row[2].hist(np.log10(raw_vals + 1), bins=100, alpha=0.5, 
-                          label='Raw', density=True)
-            ax_row[2].hist(np.log10(corrected_vals + 1), bins=100, alpha=0.5,
-                          label='Corrected', density=True)
-            ax_row[2].set_xlabel('Log10(Intensity + 1)')
-            ax_row[2].set_ylabel('Density')
-            ax_row[2].legend()
-            ax_row[2].set_title('Distribution Comparison')
+            # Histogram comparison (filter out NaN/inf values)
+            raw_log = np.log10(raw_vals + 1)
+            corrected_log = np.log10(corrected_vals + 1)
+            
+            # Remove NaN and inf values
+            raw_log = raw_log[np.isfinite(raw_log)]
+            corrected_log = corrected_log[np.isfinite(corrected_log)]
+            
+            if len(raw_log) > 0 and len(corrected_log) > 0:
+                ax_row[2].hist(raw_log, bins=100, alpha=0.5, 
+                              label='Raw', density=True)
+                ax_row[2].hist(corrected_log, bins=100, alpha=0.5,
+                              label='Corrected', density=True)
+                ax_row[2].set_xlabel('Log10(Intensity + 1)')
+                ax_row[2].set_ylabel('Density')
+                ax_row[2].legend()
+                ax_row[2].set_title('Distribution Comparison')
+            else:
+                ax_row[2].text(0.5, 0.5, 'No valid data', ha='center', va='center')
         
         plt.tight_layout()
         plt.savefig(plots_dir / f'{sample}_tile_artifacts.png', 
@@ -1213,9 +1265,9 @@ def density_based_gating(adata):
     print("DENSITY-BASED GATING (valley detection)")
     print("="*70)
 
-    PEAK_MULTIPLIER = 2.5      # Was 1.5 - increase to 2.0, 2.5, 3.0
+    PEAK_MULTIPLIER = 2.0      # Was 1.5 - increase to 2.0, 2.5, 3.0
     MIN_ABSOLUTE_GATE = 0.15   # NEW - hard minimum (prevents gates below this)
-    MIN_PERCENTILE = 80        # NEW - gate must be at least p80 of positive cells
+    MIN_PERCENTILE = 85        # NEW - gate must be at least p85 of positive cells
     VALLEY_MAX_HEIGHT = 0.20   # Was 0.30 - decrease to 0.20, 0.15 for stricter
 
     print(f"Gating parameters: peak_mult={PEAK_MULTIPLIER}, "
@@ -2164,7 +2216,7 @@ def assign_tiles_fast(adata, tile_size):
 
 def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                                       config_file='tile_config.json',
-                                      skip_within_tile=False):
+                                      skip_within_tile=False, skip_cross_sample=False):
     """
     Hierarchical UniFORM with optimized parallelization.
     
@@ -2177,6 +2229,14 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
     from joblib import Parallel, delayed, parallel_backend
     import time
     
+    # Manual skip list for Level 2 normalization
+    SKIP_LEVEL2 = {
+        'TOM': ['GUEST43', 'GUEST45', 'GUEST46', 'GUEST47'],  # Late-stage samples
+        # Add more as needed:
+        # 'CD45': ['Guest47'],
+        # 'PERK': [],
+    }
+
     print("\n=== HIERARCHICAL UNIFORM NORMALIZATION ===")
     print(f"Using {n_jobs} parallel jobs (multiprocessing backend)")
     
@@ -2211,37 +2271,59 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         print('='*70)
         
         # ====================================================================
-        # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLEL with multiprocessing)
+        # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)
         # ====================================================================
-        # Level 1: Background anchoring (preserves spatial architecture)
         print("  Level 1: Background-anchored tile correction...")
-
-        for sample in adata.obs['sample_id'].unique():
-            sample_mask = adata.obs['sample_id'] == sample
-            tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
+        start_time = time.time()
+        
+        def process_sample_tiles(sample, sample_mask, marker_idx, X_data, obs_data):
+            """Process all tiles for one sample"""
+            tiles = obs_data.loc[sample_mask, 'tile_id'].unique()
             
             # Global reference = 5th percentile across all tiles
-            sample_vals = adata.X[sample_mask, marker_idx]
+            sample_vals = X_data[sample_mask, marker_idx]
             pos_sample_vals = sample_vals[sample_vals > 0]
             if len(pos_sample_vals) < 100:
-                print(f"    {sample}: insufficient data, skipping")
-                continue
+                return None
             global_bg = np.percentile(pos_sample_vals, 5)
             
+            corrections = {}
             for tile_id in tiles:
-                tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
-                vals = adata.X[tile_mask, marker_idx]
+                tile_mask = sample_mask & (obs_data['tile_id'] == tile_id)
+                vals = X_data[tile_mask, marker_idx]
                 
-                # Tile background
                 pos_vals_tile = vals[vals > 0]
-                if len(pos_vals_tile) < 10:  # Skip empty/sparse tiles
+                if len(pos_vals_tile) < 10:
                     continue
                 tile_bg = np.percentile(pos_vals_tile, 5)
                 
-                # MULTIPLICATIVE correction only (preserves ratios)
                 if tile_bg > 0:
-                    correction_factor = global_bg / tile_bg
-                    adata.X[tile_mask, marker_idx] *= correction_factor
+                    corrections[tile_id] = global_bg / tile_bg
+            
+            return sample, corrections
+        if not skip_within_tile:
+            # Parallel processing across samples
+            sample_masks = {sample: adata.obs['sample_id'] == sample 
+                        for sample in adata.obs['sample_id'].unique()}
+            
+            results = Parallel(n_jobs=n_jobs, backend='threading')(
+                delayed(process_sample_tiles)(sample, mask, marker_idx, adata.X, adata.obs)
+                for sample, mask in sample_masks.items()
+            )
+            
+            # Apply corrections
+            for result in results:
+                if result is None:
+                    continue
+                sample, corrections = result
+                sample_mask = sample_masks[sample]
+                
+                for tile_id, factor in corrections.items():
+                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    adata.X[tile_mask, marker_idx] *= factor
+        
+        elapsed = time.time() - start_time
+        print(f"    ✓ Level 1 complete in {elapsed:.1f}s")
         
         # ====================================================================
         # LEVEL 2: ACROSS TILES WITHIN SAMPLE (fast, serial is fine)
@@ -2249,9 +2331,19 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         print("\n  Level 2: Across tiles within sample...")
         start_time = time.time()
         
+        # Check manual skip list
+        skip_samples = SKIP_LEVEL2.get(marker, [])
+        if skip_samples:
+            print(f"    Manual skip enabled for: {skip_samples}")
+        
         sample_references = {}
         
         for sample in adata.obs['sample_id'].unique():
+            # Skip if in manual list
+            if sample in skip_samples:
+                print(f"    {sample}: SKIPPED (manual override)")
+                continue
+            
             sample_mask = adata.obs['sample_id'] == sample
             vals = adata.X[sample_mask, marker_idx]
             pos_vals = vals[vals > 0]
@@ -2513,6 +2605,8 @@ def main():
     parser.add_argument('--force_normalization', action='store_true')
     parser.add_argument('--skip_within_tile', action='store_true',
                        help='Skip within-tile normalization (faster, less accurate)')
+    parser.add_argument('--skip_cross_sample', action='store_true',
+                   help='Skip cross-sample normalization (preserve biological differences)')
     args = parser.parse_args()
     
     output_dir = Path(args.output_dir)
@@ -2562,7 +2656,8 @@ def main():
             autodetect_tiles=True,
             n_jobs=args.n_jobs,
             config_file=args.tile_config,
-            skip_within_tile=args.skip_within_tile
+            skip_within_tile=args.skip_within_tile,
+            skip_cross_sample=args.skip_cross_sample
         )
         
         # Save checkpoint
