@@ -691,6 +691,10 @@ def create_spatial_maps_with_analysis_ranges(
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', markerscale=3)
 
         plt.tight_layout()
+
+        # Create output directory if it doesn't exist
+        os.makedirs(f"{output_dir}/figures/spatial_maps/analysis_ranges", exist_ok=True)
+
         plt.savefig(
             f"{output_dir}/figures/spatial_maps/analysis_ranges/{sample_id}_analysis_ranges.png",
             dpi=150, bbox_inches='tight'
