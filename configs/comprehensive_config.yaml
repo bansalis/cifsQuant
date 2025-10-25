@@ -93,6 +93,16 @@ populations:
       CD3: false
     color: '#FCCDE5'
 
+  CD3:
+    markers:
+      CD3: true
+    color: '#A65628'
+
+  CD8:
+    markers:
+      CD8B: true
+    color: '#F781BF'
+
 # Tumor Structure Detection
 # --------------------------
 # Adjusted parameters to detect more structures and allow larger structures

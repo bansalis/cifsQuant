@@ -194,7 +194,8 @@ def main():
 
     # Add specific markers of interest if not already included
     # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
-    markers_of_interest = ['AGFP', 'PERK', 'CD3', 'CD8', 'CD4']
+    # CD8B is the actual marker name for CD8, CD4 is not available in this dataset
+    markers_of_interest = ['AGFP', 'PERK', 'CD3', 'CD8B']
     for marker in markers_of_interest:
         if marker not in all_markers and marker in adata.var_names:
             all_markers.append(marker)
@@ -216,7 +217,8 @@ def main():
     )
 
     # Define T cell populations
-    tcell_populations = ['CD3', 'CD8', 'CD4']
+    # Note: CD4 marker is not available in this dataset, using CD3 and CD8 (CD8B)
+    tcell_populations = ['CD3', 'CD8']
 
     # Define tumor subtypes
     # NOTE: Use actual marker names from data (AGFP, PERK - uppercase)
