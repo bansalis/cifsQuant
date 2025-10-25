@@ -27,9 +27,5 @@ manual_gating_output_v2/*
 manual_gating_output_v3/*
 tumor_spatial_analysis/*
 __pycache__/*
-<<<<<<< HEAD
 efficient_spatial_analysis/*
 comprehensive_spatial_analysis/*
-=======
-efficient_spatial_analysis/*
->>>>>>> 31da332 (updatedsample)
