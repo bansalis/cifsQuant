@@ -565,8 +565,25 @@ class EfficientTumorSpatialAnalysis:
             f"{self.output_dir}/data/neighborhood_profiles.csv", index=False
         )
 
+        # Save per-cell neighborhood assignments
+        cell_neighborhoods = pd.DataFrame({
+            'cell_id': self.adata.obs.index,
+            'sample_id': self.adata.obs['sample_id'].values,
+            'neighborhood_type': neighborhood_labels
+        })
+
+        # Add metadata if available
+        for col in ['timepoint', 'group', 'main_group', 'condition']:
+            if col in self.adata.obs.columns:
+                cell_neighborhoods[col] = self.adata.obs[col].values
+
+        cell_neighborhoods.to_csv(
+            f"{self.output_dir}/data/cell_neighborhoods.csv", index=False
+        )
+
         print(f"\n✓ Detected {n_clusters} cellular neighborhood types")
         print(f"  Saved: {self.output_dir}/data/neighborhood_profiles.csv")
+        print(f"  Saved: {self.output_dir}/data/cell_neighborhoods.csv")
         print("="*70)
 
         # Cleanup
