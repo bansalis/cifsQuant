@@ -25,3 +25,10 @@ archive_manual_gating_output/*
 cellpose_models/*
 manual_gating_output_v2/*
 manual_gating_output_v3/*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
