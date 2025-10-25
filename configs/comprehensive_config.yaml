@@ -111,8 +111,8 @@ populations:
 # - Kept min_samples at 10 for core point detection
 tumor_structure_detection:
   tumor_population: 'Tumor'
-  min_cluster_size: 30
-  eps: 50
+  min_cluster_size: 500
+  eps: 100
   min_samples: 10
 
 # Infiltration Boundaries
