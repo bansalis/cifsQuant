@@ -2,6 +2,10 @@
 # ========================================
 # Extends comprehensive_config.yaml with advanced multi-level spatial analysis
 # For use with ComprehensiveTumorSpatialAnalysis class
+#
+# IMPORTANT: This pipeline uses EXISTING phenotypes from manual gating.
+#           It does NOT re-threshold or re-gate cells.
+#           Phases 11-18 work with populations already defined in the h5ad file.
 
 # Input/Output
 # ------------
