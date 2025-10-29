@@ -161,7 +161,7 @@ def main():
             neighborhood_cfg = config.get('cellular_neighborhoods', {})
             neighborhood_df = analysis.detect_cellular_neighborhoods_comprehensive(
                 populations=neighborhood_cfg.get('populations', list(config['populations'].keys())),
-                k_neighbors=neighborhood_cfg.get('k_neighbors', 10),
+                window_size=neighborhood_cfg.get('window_size', 100),
                 n_clusters=neighborhood_cfg.get('n_clusters', 10),
                 subsample_size=neighborhood_cfg.get('subsample_size', 100000)
             )
