@@ -124,11 +124,75 @@ def main():
         print("RUNNING COMPREHENSIVE ANALYSIS (PHASES 1-10)")
         print("=" * 80 + "\n")
 
-        analysis.run_complete_analysis(
+        # Extract configuration sections
+        tumor_detection_cfg = config.get('tumor_structure_detection', {})
+        infiltration_cfg = config.get('infiltration_boundaries', {})
+        immune_pops = config['immune_infiltration']['populations']
+
+        # Phase 1: Tumor Structure Detection
+        print("\n### PHASE 1: TUMOR STRUCTURE DETECTION ###\n")
+        analysis.detect_all_tumor_structures(
             population_config=config['populations'],
-            immune_populations=config['immune_infiltration']['populations'],
-            **config.get('tumor_structure_detection', {})
+            min_cluster_size=tumor_detection_cfg.get('min_cluster_size', 50),
+            eps=tumor_detection_cfg.get('eps', 30),
+            min_samples=tumor_detection_cfg.get('min_samples', 10),
+            tumor_population=tumor_detection_cfg.get('tumor_population', 'Tumor')
         )
+
+        # Phase 2: Infiltration Quantification
+        print("\n### PHASE 2: INFILTRATION QUANTIFICATION ###\n")
+        metrics_df = analysis.analyze_structures_individually(
+            immune_populations=immune_pops,
+            boundary_widths=infiltration_cfg.get('boundary_widths', [30, 100, 200]),
+            buffer_distance=config.get('buffer_distance', 500)
+        )
+
+        # Phase 3: Marker Expression Analysis
+        print("\n### PHASE 3: MARKER EXPRESSION ANALYSIS ###\n")
+        marker_df = analysis.analyze_marker_expression_temporal()
+
+        # Phase 4: Tumor Size Analysis
+        print("\n### PHASE 4: TUMOR SIZE ANALYSIS ###\n")
+        size_df = analysis.analyze_tumor_size_temporal()
+
+        # Phase 5: Cellular Neighborhoods
+        print("\n### PHASE 5: CELLULAR NEIGHBORHOOD ANALYSIS ###\n")
+        if config.get('cellular_neighborhoods', {}).get('enabled', True):
+            neighborhood_cfg = config.get('cellular_neighborhoods', {})
+            neighborhood_df = analysis.detect_cellular_neighborhoods_comprehensive(
+                populations=neighborhood_cfg.get('populations', list(config['populations'].keys())),
+                k_neighbors=neighborhood_cfg.get('k_neighbors', 10),
+                n_clusters=neighborhood_cfg.get('n_clusters', 10),
+                subsample_size=neighborhood_cfg.get('subsample_size', 100000)
+            )
+        else:
+            print("Cellular neighborhood analysis disabled in config, skipping...")
+            neighborhood_df = pd.DataFrame()
+
+        # Phase 6: Spatial Distance Analysis
+        print("\n### PHASE 6: SPATIAL DISTANCE ANALYSIS ###\n")
+        distance_df = analysis.analyze_spatial_distances(immune_pops)
+
+        # Phase 7: Co-localization
+        print("\n### PHASE 7: CO-LOCALIZATION ANALYSIS ###\n")
+        coloc_df = analysis.analyze_colocalization(immune_pops)
+
+        # Phase 8: Statistical Testing
+        print("\n### PHASE 8: COMPREHENSIVE STATISTICAL ANALYSIS ###\n")
+        stats_results = analysis.comprehensive_statistical_analysis(
+            metrics_df, marker_df, size_df, neighborhood_df
+        )
+
+        # Phase 9: Visualizations
+        print("\n### PHASE 9: GENERATING ALL VISUALIZATIONS ###\n")
+        analysis.generate_all_visualizations(
+            metrics_df, marker_df, size_df, neighborhood_df,
+            distance_df, coloc_df, stats_results
+        )
+
+        # Phase 10: Summary Report
+        print("\n### PHASE 10: GENERATING COMPREHENSIVE REPORT ###\n")
+        analysis.generate_comprehensive_report()
 
         print("\n✓ Comprehensive analysis (Phases 1-10) complete")
 
