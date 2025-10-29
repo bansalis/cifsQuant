@@ -198,28 +198,28 @@ print(f"Tiling completed! Created {len(tile_info)} tiles")
 
 process BACKGROUND_SUBTRACT {
     publishDir "${params.outdir}/background_corrected", mode: 'copy'
-    
+
     input:
     path tile
-    
+
     output:
     path "*_corrected.tif", emit: corrected
-    
+
     script:
     """
     export MPLCONFIGDIR=/tmp/matplotlib-\$\$
-    
+
     python3 - <<'EOF'
 import tifffile
 import numpy as np
 
-img = tifffile.imread('${tile}')
+img = tifffile.imread('${tile.name}')
 
 # Per-channel 5th percentile subtraction (MCMICRO standard)
 for c in range(img.shape[0]):
     channel = img[c]
     positive = channel[channel > 0]
-    
+
     if len(positive) > 0:
         bg = np.percentile(positive, 5)
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
@@ -232,10 +232,10 @@ EOF
 process GLOBAL_BACKGROUND_SUBTRACT {
     input:
     path image
-    
+
     output:
     path "*_bg_corrected.ome.tif"
-    
+
     script:
     """
     python3 - <<'EOF'
@@ -243,14 +243,14 @@ import tifffile
 import numpy as np
 from skimage.morphology import white_tophat, disk
 
-img = tifffile.imread('${image}')
+img = tifffile.imread('${image.name}')
 corrected = np.zeros_like(img)
 
 for c in range(img.shape[0]):
     # Rolling ball background subtraction
     corrected[c] = white_tophat(img[c], disk(${params.bg_radius}))
 
-tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected, 
+tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected,
                  photometric='minisblack', compression='lzw')
 EOF
     """
