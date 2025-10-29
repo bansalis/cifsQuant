@@ -247,8 +247,8 @@ for img in "${selected[@]}"; do
         --dapi_channel 0
         --nuc_diameter 15
         --cyto_diameter 28
-        --nuclei_batch_size 6
-        --cyto_batch_size_tiles 4
+        --nuclei_batch_size 4
+        --cyto_batch_size_tiles 3
         -with-report "$outdir/nextflow_report.html"
         -with-timeline "$outdir/nextflow_timeline.html"
         -with-dag "$outdir/nextflow_dag.html"

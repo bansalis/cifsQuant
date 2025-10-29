@@ -20,17 +20,17 @@ Install with: pip install tifffile numpy scikit-image opencv-python
 
 # CONFIGURATION PARAMETERS - MODIFY THESE INSTEAD OF USING COMMAND LINE ARGUMENTS
 CONFIG = {
-    'input_dir': r'E:\CellDive_Imaging\batch22_timecourse\raw_images',  # Directory containing .ome.tif files
-    'output_dir': r'E:\CellDive_Imaging\batch22_timecourse\rawdata',    # Directory to save output files
-    'individuals': ['GUEST44'],  # List of individual IDs to process, or ['*'] for all
-    'reference_round': "2.0.4",#None,            # Round to use as reference (e.g., "1.0.4"), None for auto
+    'input_dir': r'/mnt/j/CellDive_Imaging/batch25_10wk/JL219_Final/',  # Directory containing .ome.tif files
+    'output_dir': r'/mnt/e/IB/batch25quant/rawdata',    # Directory to save output files
+    'individuals': ['*'],  # List of individual IDs to process, or ['*'] for all
+    'reference_round': "1.0.4",#None,            # Round to use as reference (e.g., "1.0.4"), None for auto
     'downsample_factor': 8,             # Downsample factor for registration
     'file_pattern': '*.ome.tif',        # File pattern to match
-    'export_individual_channels': True, # Export shifted individual channel images
-    'create_pyramidal_tiff': True,      # Create pyramidal TIFF output
-    'create_uncompressed_stack': False,  # Create uncompressed full-resolution stack
-    'dry_run': False,                   # Parse files and show organization without processing
-    'use_gpu': True,                    # Enable GPU acceleration with CuPy
+    'export_individual_channels': False, # Export shifted individual channel images
+    'create_pyramidal_tiff': False,      # Create pyramidal TIFF output
+    'create_uncompressed_stack': True,  # Create uncompressed full-resolution stack
+    'dry_run': True,                   # Parse files and show organization without processing
+    'use_gpu': False,                    # Enable GPU acceleration with CuPy
     'gpu_memory_fraction': 0.8          # Fraction of GPU memory to use (0.1-0.9)
 }
 
