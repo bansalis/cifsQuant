@@ -21,14 +21,16 @@ Located in `tumor_spatial_analysis_comprehensive.py`:
 
 ### Advanced Extensions (Phases 11-18)
 Located in `advanced_spatial_extensions.py`:
-11. Enhanced Phenotyping (auto-thresholding)
-12. pERK Spatial Architecture (clustering, growth, infiltration)
-13. NINJA Escape Mechanism Analysis
-14. Heterogeneity Emergence & Evolution
-15. Enhanced RCN Temporal Dynamics
-16. Multi-Level Distance Analysis
-17. Infiltration-Tumor Associations
-18. Pseudo-Temporal Trajectory Analysis
+11. **Validate Phenotypes** (validates existing manual gating, NO re-thresholding)
+12. **pERK Spatial Architecture** (clustering, growth, infiltration)
+13. **NINJA Escape Mechanism Analysis**
+14. **Heterogeneity Emergence & Evolution**
+15. **Enhanced RCN Temporal Dynamics**
+16. **Multi-Level Distance Analysis**
+17. **Infiltration-Tumor Associations**
+18. **Pseudo-Temporal Trajectory Analysis**
+
+**IMPORTANT**: Advanced phases use existing phenotypes from manual gating. They do NOT re-threshold or re-gate cells.
 
 ## Usage
 
@@ -159,15 +161,19 @@ comprehensive_spatial_analysis_advanced/
 
 ## Implementation Status
 
-### ✅ Fully Implemented (Phase 12)
-- pERK spatial clustering (Moran's I)
-- pERK growth dynamics tracking
-- pERK infiltration differential analysis
+### ✅ Fully Implemented
+- **Phase 11**: Phenotype validation (uses existing manual gating)
+- **Phase 12**: pERK spatial clustering (Moran's I), growth dynamics, infiltration differential
 
-### 📋 Placeholder (Phases 11, 13-18)
+### 📋 Placeholder (Phases 13-18)
 - Framework in place for full implementation
 - Integration points defined
 - Can be expanded with complete algorithms
+
+### ⚠️ Important Notes
+- **NO re-thresholding**: All phases use existing phenotypes from `manual_gating_output/gated_data.h5ad`
+- **NO re-gating**: Respects manual gating decisions
+- **Population-based**: Works with existing `is_Tumor`, `is_CD8_T_cells`, etc. columns
 
 ## Files Modified/Added
 
