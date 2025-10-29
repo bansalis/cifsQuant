@@ -1,5 +1,20 @@
 sample_id,group,treatment,timepoint
-JL216,KPT trans,none,10
-JL217,KPT cis,none,10
-JL218,KPNT trans,none,10
-JL219,KPNT cis,none,10
+GUEST29,KPNT cis,none,8
+GUEST30,KPNT trans,none,8
+Guest31,KPNT cis,none,10
+Guest32,KPNT trans,none,10
+Guest33,KPT Het trans,none,10
+Guest34,KPNT cis,none,12
+Guest35,KPNT trans,none,12
+Guest36,KPT Het cis,none,12
+Guest37,KPT Het trans,none,12
+Guest38,KPNT cis,none,14
+Guest39,KPNT trans,none,14
+Guest40,KPT Het cis,none,14
+Guest41,KPNT cis,none,16
+Guest42,KPNT trans,none,16
+Guest43,KPNT cis,none,18
+Guest44,KPNT trans,none,18
+Guest45,KPNT cis,none,20
+Guest46,KPNT trans,none,20
+Guest47,KPT Het cis,none,20

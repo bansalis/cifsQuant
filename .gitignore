@@ -30,3 +30,4 @@ __pycache__/*
 efficient_spatial_analysis/*
 comprehensive_spatial_analysis/*
 markers.csv
+sample_metadata.csv
