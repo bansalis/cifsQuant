@@ -600,18 +600,19 @@ process RUN_MCQUANT {
     tag "${cell_mask.baseName.replaceAll('_cell\$', '')}"
     container params.mcquant_container
     publishDir "${params.outdir}/quantification", mode: 'copy'
-    
+
     input:
-    tuple path(cell_mask), path(original_tile), path(markers_csv)
-    
+    tuple path(cell_mask), path(original_tile)
+    each path(markers_csv)
+
     output:
     path "*_cell.csv", emit: cell_quantification
-    
+
     script:
     def tile_name = cell_mask.baseName.replaceAll('_cell$', '')
     """
     echo "=== MCQUANT: ${tile_name} ==="
-    
+
     python3 -c "
 import pandas as pd
 df = pd.read_csv('${markers_csv}')
@@ -979,10 +980,9 @@ workflow {
                 .join(
                     tiles_for_mcquant.map { tile -> [tile.baseName, tile] }
                 )
-                .combine(TILE_LARGE_IMAGE.out.markers_csv)
-                .map { key, mask, tile, markers -> [mask, tile, markers] }
-            
-            RUN_MCQUANT(mcquant_input)
+                .map { key, mask, tile -> [mask, tile] }
+
+            RUN_MCQUANT(mcquant_input, TILE_LARGE_IMAGE.out.markers_csv)
 
             // Step 5: Stitch results
             STITCH_RESULTS(
