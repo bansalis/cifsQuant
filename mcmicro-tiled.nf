@@ -49,14 +49,15 @@ process TILE_LARGE_IMAGE {
     publishDir "${params.outdir}/tiles", mode: 'copy'
     cpus 4
     memory '32.GB'
-    
+
     input:
     path image
+    path markers_input
     val sample_name
     val tile_size
     val overlap
     val pyramid_level
-    
+
     output:
     path "tile_*.tif", emit: tiles
     path "tile_info.json", emit: tile_info
@@ -173,20 +174,17 @@ with open('tile_list.txt', 'w') as f:
     for info in tile_info:
         f.write(info['filename'] + "\\n")
 
-# Create markers CSV - same as old code
-markers_param = '${params.markers_csv}'
-if markers_param != 'null' and markers_param != '':
-    try:
-        import shutil
-        shutil.copy(markers_param, 'markers_tiled.csv')
-        print(f"Copied markers from {markers_param}")
-    except Exception as e:
-        print(f"Could not copy markers file: {e}, creating default")
-        with open('markers_tiled.csv', 'w') as f:
-            f.write("marker_name\\n")
-            for i in range(tile_info[0]['channels'] if tile_info else n_channels):
-                f.write(f"Channel_{i+1}\\n")
+# Create markers CSV - copy from input file if provided
+import shutil
+import os
+markers_input_file = '${markers_input}'
+if os.path.exists(markers_input_file) and os.path.getsize(markers_input_file) > 0:
+    # Copy the markers file
+    shutil.copy(markers_input_file, 'markers_tiled.csv')
+    print(f"Copied markers from {markers_input_file}")
 else:
+    # Create default markers file
+    print("No markers file provided, creating default channel names")
     with open('markers_tiled.csv', 'w') as f:
         f.write("marker_name\\n")
         for i in range(tile_info[0]['channels'] if tile_info else n_channels):
@@ -897,9 +895,23 @@ workflow {
     log.info "Cyto batch size: ${params.cyto_batch_size_tiles} tiles/batch"
     log.info "Output directory: ${params.outdir}"
     
-    // Create input channel
+    // Create input channels
     input_image_ch = Channel.fromPath(params.input_image)
-    
+
+    // Create markers channel - use provided file or look for default
+    if (params.markers_csv) {
+        markers_ch = Channel.fromPath(params.markers_csv, checkIfExists: true)
+        log.info "Using markers file: ${params.markers_csv}"
+    } else if (file('./markers.csv').exists()) {
+        markers_ch = Channel.fromPath('./markers.csv', checkIfExists: true)
+        log.info "Using default markers file: ./markers.csv"
+    } else {
+        // Create empty placeholder file
+        file('NO_MARKERS.txt').text = ''
+        markers_ch = Channel.fromPath('NO_MARKERS.txt')
+        log.info "No markers file provided - will use default channel names"
+    }
+
     // Step 0: Global background subtraction (BEFORE tiling)
     if (params.global_bg_subtract) {
         log.info "Applying global background subtraction..."
@@ -912,6 +924,7 @@ workflow {
     // Step 1: Tile the image
     TILE_LARGE_IMAGE(
         input_image_ch,
+        markers_ch,
         params.sample_name,
         params.tile_size,
         params.overlap,
