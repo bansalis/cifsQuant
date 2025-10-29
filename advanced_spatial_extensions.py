@@ -37,20 +37,35 @@ from statsmodels.stats.multitest import multipletests
 import types
 
 
-def phase11_enhanced_phenotyping(self, config: dict):
+def phase11_validate_phenotypes(self, config: dict):
     """
-    Phase 11: Enhanced phenotyping with automatic thresholding.
+    Phase 11: Validate existing phenotypes (NO re-thresholding).
 
-    Extends the existing population definitions with automatic threshold
-    determination using Otsu's method.
+    This phase validates that required populations exist from manual gating.
+    It does NOT re-threshold or re-gate - it uses existing phenotypes.
     """
     print("\n" + "=" * 80)
-    print("PHASE 11: ENHANCED PHENOTYPING (ADVANCED)")
+    print("PHASE 11: VALIDATE EXISTING PHENOTYPES")
     print("=" * 80 + "\n")
 
-    # This integrates with existing population_config
-    # Add enhanced phenotyping logic here if needed
-    print("Enhanced phenotyping integrated with existing populations")
+    required_populations = [
+        'is_Tumor',
+        'is_Tumor_PERK_positive',
+        'is_Tumor_NINJA_positive',
+        'is_CD8_T_cells',
+        'is_T_cells',
+        'is_CD45_positive'
+    ]
+
+    print("Validating required populations from manual gating:")
+    for pop in required_populations:
+        if pop in self.adata.obs.columns:
+            count = self.adata.obs[pop].sum()
+            print(f"  ✓ {pop}: {count:,} cells")
+        else:
+            print(f"  ⚠ {pop}: NOT FOUND (may affect downstream analysis)")
+
+    print("\n✓ Using existing phenotypes from manual gating (no re-thresholding)")
     print("✓ Phase 11 complete\n")
 
 
@@ -414,8 +429,8 @@ def run_advanced_analysis(self, config: dict):
     print("STARTING ADVANCED SPATIAL ANALYSIS (PHASES 11-18)")
     print("=" * 80 + "\n")
 
-    # Phase 11: Enhanced phenotyping
-    self.phase11_enhanced_phenotyping(config)
+    # Phase 11: Validate phenotypes (no re-thresholding)
+    self.phase11_validate_phenotypes(config)
 
     # Phase 12: pERK analysis
     self.phase12_perk_spatial_architecture(config)
@@ -455,8 +470,8 @@ def add_advanced_methods(analysis_instance):
         Instance to extend with advanced methods
     """
     # Add all phase methods
-    analysis_instance.phase11_enhanced_phenotyping = types.MethodType(
-        phase11_enhanced_phenotyping, analysis_instance
+    analysis_instance.phase11_validate_phenotypes = types.MethodType(
+        phase11_validate_phenotypes, analysis_instance
     )
     analysis_instance.phase12_perk_spatial_architecture = types.MethodType(
         phase12_perk_spatial_architecture, analysis_instance
