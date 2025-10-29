@@ -140,8 +140,8 @@ cellular_neighborhoods:
     - T_cells
     - CD8_T_cells
     - CD4_T_cells
-  k_neighbors: 10
-  n_rcn_clusters: 8  # Number of recurrent cellular neighborhood types
+  window_size: 100  # μm radius for neighborhood definition
+  n_clusters: 8  # Number of recurrent cellular neighborhood types
   subsample_size: 100000
   # Compare groups separately: KPT-cis, KPT-trans, KPNT-cis, KPNT-trans
   separate_group_analysis: true
