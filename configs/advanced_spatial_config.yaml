@@ -38,11 +38,17 @@ populations:
       TOM: true
     color: '#E41A1C'
 
-  Tumor_NINJA_positive:  # NINJA = AGFP
+  Tumor_AGFP_positive:
     markers:
       TOM: true
       AGFP: true
     color: '#377EB8'
+
+  Tumor_AGFP_negative:
+    markers:
+      TOM: true
+      AGFP: false
+    color: '#FDB462'
 
   Tumor_PERK_positive:
     markers:
@@ -72,19 +78,44 @@ populations:
       CD8B: true
     color: '#F781BF'
 
-  CD4_T_cells:
+  CD8_Ki67_positive:
     markers:
       CD3: true
-      CD8B: false
-    color: '#FFED6F'
+      CD8B: true
+      KI67: true
+    color: '#999999'
+
+  CD8_PERK_positive:
+    markers:
+      CD3: true
+      CD8B: true
+      PERK: true
+    color: '#B3DE69'
+
+  CD45_CD3_negative:
+    markers:
+      CD45: true
+      CD3: false
+    color: '#FCCDE5'
+
+  CD3:
+    markers:
+      CD3: true
+    color: '#A65628'
+
+  CD8:
+    markers:
+      CD8B: true
+    color: '#F781BF'
+
 
 # Tumor Structure Detection (Phase 1.2)
 # --------------------------------------
 tumor_structure_detection:
   tumor_population: 'Tumor'
-  min_cluster_size: 30  # Allow smaller tumors for comprehensive detection
-  eps: 50  # DBSCAN epsilon in μm
-  min_samples: 10  # Minimum samples for core point
+  min_cluster_size: 500
+  eps: 100
+  min_samples: 10
 
 # Spatial Zones (Phase 1.2)
 # --------------------------
@@ -139,7 +170,6 @@ cellular_neighborhoods:
     - CD45_positive
     - T_cells
     - CD8_T_cells
-    - CD4_T_cells
   window_size: 100  # μm radius for neighborhood definition
   n_clusters: 8  # Number of recurrent cellular neighborhood types
   subsample_size: 100000
@@ -152,7 +182,6 @@ distance_analysis:
   enabled: true
   source_populations:
     - CD8_T_cells
-    - CD4_T_cells
     - T_cells
   target_populations:
     - Tumor_PERK_positive
@@ -202,7 +231,6 @@ immune_infiltration:
     - CD45_positive
     - T_cells
     - CD8_T_cells
-    - CD4_T_cells
 
 # Statistical Analysis (enhanced)
 # --------------------------------
