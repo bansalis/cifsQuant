@@ -48,22 +48,47 @@ def phase11_validate_phenotypes(self, config: dict):
     print("PHASE 11: VALIDATE EXISTING PHENOTYPES")
     print("=" * 80 + "\n")
 
-    required_populations = [
-        'is_Tumor',
-        'is_Tumor_PERK_positive',
-        'is_Tumor_NINJA_positive',
-        'is_CD8_T_cells',
-        'is_T_cells',
-        'is_CD45_positive'
-    ]
+    # Show what population columns actually exist
+    pop_cols = [col for col in self.adata.obs.columns if col.startswith('is_')]
+    print(f"Found {len(pop_cols)} population columns in data:")
+    for col in sorted(pop_cols):
+        count = self.adata.obs[col].sum() if self.adata.obs[col].dtype == bool else 0
+        print(f"  • {col}: {count:,} cells")
 
-    print("Validating required populations from manual gating:")
-    for pop in required_populations:
-        if pop in self.adata.obs.columns:
-            count = self.adata.obs[pop].sum()
-            print(f"  ✓ {pop}: {count:,} cells")
-        else:
-            print(f"  ⚠ {pop}: NOT FOUND (may affect downstream analysis)")
+    # Check for key populations needed by advanced analysis
+    required_base_pops = {
+        'Tumor': ['is_Tumor', 'is_TOM_positive', 'is_Tumor_TOM_positive'],
+        'pERK+ Tumor': ['is_Tumor_PERK_positive', 'is_Tumor_pERK_positive', 'is_PERK_positive_Tumor'],
+        'NINJA+ Tumor': ['is_Tumor_NINJA_positive', 'is_Tumor_AGFP_positive', 'is_AGFP_positive'],
+        'CD8+ T cells': ['is_CD8_T_cells', 'is_CD8_positive', 'is_CD8B_positive'],
+        'T cells': ['is_T_cells', 'is_CD3_positive', 'is_CD3'],
+        'CD45+ cells': ['is_CD45_positive', 'is_CD45']
+    }
+
+    print("\n" + "=" * 60)
+    print("Checking key populations for advanced analysis:")
+    print("=" * 60)
+
+    self.population_mapping = {}  # Store found mappings
+
+    for pop_name, possible_cols in required_base_pops.items():
+        found = False
+        for col in possible_cols:
+            if col in self.adata.obs.columns:
+                count = self.adata.obs[col].sum() if self.adata.obs[col].dtype == bool else 0
+                print(f"  ✓ {pop_name}: found as '{col}' ({count:,} cells)")
+                self.population_mapping[pop_name] = col
+                found = True
+                break
+
+        if not found:
+            print(f"  ⚠ {pop_name}: NOT FOUND (tried: {', '.join(possible_cols)})")
+            print(f"     → Advanced analyses using this population will be skipped")
+
+    if len(self.population_mapping) == 0:
+        print("\n⚠ WARNING: No expected population columns found!")
+        print("   This may indicate a column naming mismatch.")
+        print("   Please check your h5ad file's obs columns.")
 
     print("\n✓ Using existing phenotypes from manual gating (no re-thresholding)")
     print("✓ Phase 11 complete\n")
@@ -85,11 +110,22 @@ def phase12_perk_spatial_architecture(self, config: dict):
         print("pERK analysis disabled in config, skipping...")
         return
 
-    # Get pERK+ cells from existing populations
-    perk_mask = self.adata.obs.get('is_Tumor_PERK_positive', pd.Series(False))
+    # Get pERK+ cells using population mapping from phase 11
+    if not hasattr(self, 'population_mapping'):
+        print("Error: Population mapping not found. Run Phase 11 first.")
+        return
+
+    perk_col = self.population_mapping.get('pERK+ Tumor')
+    if perk_col is None or perk_col not in self.adata.obs.columns:
+        print("Warning: No pERK+ tumor population found in data!")
+        print("  Checked for: is_Tumor_PERK_positive, is_Tumor_pERK_positive, is_PERK_positive_Tumor")
+        print("  Skipping pERK analysis...")
+        return
+
+    perk_mask = self.adata.obs[perk_col]
 
     if perk_mask.sum() == 0:
-        print("Warning: No pERK+ tumor cells found!")
+        print(f"Warning: No pERK+ tumor cells found in '{perk_col}' column!")
         return
 
     print(f"Analyzing {perk_mask.sum():,} pERK+ tumor cells...")
@@ -132,11 +168,17 @@ def _analyze_perk_clustering(self, config: dict):
 
     results = []
 
+    # Get pERK column from mapping
+    perk_col = self.population_mapping.get('pERK+ Tumor')
+    if perk_col is None:
+        print("  pERK+ population not found, skipping clustering analysis")
+        return None
+
     # Analyze per tumor structure if available
     if hasattr(self, 'structure_index') and self.structure_index is not None:
         print(f"  Analyzing {len(self.structure_index)} tumor structures...")
 
-        perk_mask = self.adata.obs.get('is_Tumor_PERK_positive', pd.Series(False)).values
+        perk_mask = self.adata.obs[perk_col].values
 
         for _, structure in self.structure_index.iterrows():
             structure_id = structure['structure_id']
@@ -195,8 +237,16 @@ def _analyze_perk_growth(self, config: dict):
     """Analyze pERK+ growth dynamics."""
     print("  Analyzing pERK+ fraction over time...")
 
-    perk_mask = self.adata.obs.get('is_Tumor_PERK_positive', pd.Series(False)).values
-    tumor_mask = self.adata.obs.get('is_Tumor', pd.Series(False)).values
+    # Get column names from mapping
+    perk_col = self.population_mapping.get('pERK+ Tumor')
+    tumor_col = self.population_mapping.get('Tumor')
+
+    if perk_col is None or tumor_col is None:
+        print("  Required populations not found, skipping growth analysis")
+        return None
+
+    perk_mask = self.adata.obs[perk_col].values
+    tumor_mask = self.adata.obs[tumor_col].values
 
     if not hasattr(self.adata.obs, 'timepoint'):
         print("  Warning: No timepoint information available")
@@ -240,9 +290,18 @@ def _analyze_perk_infiltration(self, config: dict):
     """Analyze differential T cell infiltration near pERK+ regions."""
     print("  Analyzing T cell infiltration around pERK+ vs pERK- regions...")
 
-    perk_mask = self.adata.obs.get('is_Tumor_PERK_positive', pd.Series(False)).values
-    tumor_mask = self.adata.obs.get('is_Tumor', pd.Series(False)).values
-    tcell_mask = self.adata.obs.get('is_CD8_T_cells', pd.Series(False)).values
+    # Get column names from mapping
+    perk_col = self.population_mapping.get('pERK+ Tumor')
+    tumor_col = self.population_mapping.get('Tumor')
+    tcell_col = self.population_mapping.get('CD8+ T cells')
+
+    if perk_col is None or tumor_col is None or tcell_col is None:
+        print("  Required populations not found, skipping infiltration analysis")
+        return None
+
+    perk_mask = self.adata.obs[perk_col].values
+    tumor_mask = self.adata.obs[tumor_col].values
+    tcell_mask = self.adata.obs[tcell_col].values
 
     if perk_mask.sum() == 0 or tcell_mask.sum() == 0:
         print("  Warning: No pERK+ cells or T cells found")
@@ -310,10 +369,22 @@ def phase13_ninja_escape_analysis(self, config: dict):
         print("NINJA analysis disabled in config, skipping...")
         return
 
-    ninja_mask = self.adata.obs.get('is_Tumor_NINJA_positive', pd.Series(False))
+    # Get NINJA+ cells using population mapping
+    if not hasattr(self, 'population_mapping'):
+        print("Error: Population mapping not found. Run Phase 11 first.")
+        return
+
+    ninja_col = self.population_mapping.get('NINJA+ Tumor')
+    if ninja_col is None or ninja_col not in self.adata.obs.columns:
+        print("Warning: No NINJA+ tumor population found in data!")
+        print("  Checked for: is_Tumor_NINJA_positive, is_Tumor_AGFP_positive, is_AGFP_positive")
+        print("  Skipping NINJA analysis...")
+        return
+
+    ninja_mask = self.adata.obs[ninja_col]
 
     if ninja_mask.sum() == 0:
-        print("Warning: No NINJA+ (AGFP+) tumor cells found!")
+        print(f"Warning: No NINJA+ tumor cells found in '{ninja_col}' column!")
         return
 
     print(f"Analyzing {ninja_mask.sum():,} NINJA+ tumor cells...")
