@@ -1204,48 +1204,118 @@ class ComprehensiveTumorSpatialAnalysis:
                                    neighborhood_df, distance_df, coloc_df,
                                    stats_results):
         """
-        Generate ALL visualizations.
+        Generate ALL visualizations with error handling.
         """
         print("\nGenerating comprehensive visualizations...")
+
+        # Ensure figures directory exists
+        import os
+        os.makedirs(f"{self.output_dir}/figures", exist_ok=True)
 
         # Set style
         sns.set_style("whitegrid")
         sns.set_context("paper", font_scale=1.2)
 
+        errors = []
+
         # 1. Spatial maps
         print("\n  1. Spatial maps...")
-        self._generate_spatial_maps()
+        try:
+            self._generate_spatial_maps()
+        except Exception as e:
+            print(f"     WARNING: Spatial maps failed: {e}")
+            errors.append(f"Spatial maps: {e}")
 
         # 2. Tumor size plots
         print("  2. Tumor size temporal plots...")
-        if len(size_df) > 0:
-            self._plot_tumor_size_comprehensive(size_df, stats_results)
+        try:
+            if len(size_df) > 0:
+                self._plot_tumor_size_comprehensive(size_df, stats_results)
+            else:
+                print("     Skipping: no size data")
+        except Exception as e:
+            print(f"     WARNING: Tumor size plots failed: {e}")
+            errors.append(f"Tumor size: {e}")
 
         # 3. Marker expression plots
         print("  3. Marker expression temporal plots...")
-        if len(marker_df) > 0:
-            self._plot_marker_expression_comprehensive(marker_df, stats_results)
+        try:
+            if len(marker_df) > 0:
+                self._plot_marker_expression_comprehensive(marker_df, stats_results)
+            else:
+                print("     Skipping: no marker data")
+        except Exception as e:
+            print(f"     WARNING: Marker plots failed: {e}")
+            errors.append(f"Markers: {e}")
 
         # 4. Infiltration plots
         print("  4. Infiltration temporal/genotype plots...")
-        if len(metrics_df) > 0:
-            self._plot_infiltration_comprehensive(metrics_df, stats_results)
+        try:
+            if len(metrics_df) > 0:
+                self._plot_infiltration_comprehensive(metrics_df, stats_results)
+            else:
+                print("     Skipping: no infiltration data")
+        except Exception as e:
+            print(f"     WARNING: Infiltration plots failed: {e}")
+            errors.append(f"Infiltration: {e}")
 
         # 5. Neighborhood plots
         print("  5. Neighborhood analysis plots...")
-        if len(neighborhood_df) > 0:
-            self._plot_neighborhoods_comprehensive(neighborhood_df)
+        try:
+            if len(neighborhood_df) > 0:
+                self._plot_neighborhoods_comprehensive(neighborhood_df)
+            else:
+                print("     Skipping: no neighborhood data")
+        except Exception as e:
+            print(f"     WARNING: Neighborhood plots failed: {e}")
+            errors.append(f"Neighborhoods: {e}")
 
         # 6. Heatmaps
         print("  6. Comprehensive heatmaps...")
-        if len(metrics_df) > 0:
-            self._plot_heatmaps_comprehensive(metrics_df, marker_df)
+        try:
+            if len(metrics_df) > 0:
+                self._plot_heatmaps_comprehensive(metrics_df, marker_df)
+            else:
+                print("     Skipping: no data for heatmaps")
+        except Exception as e:
+            print(f"     WARNING: Heatmaps failed: {e}")
+            errors.append(f"Heatmaps: {e}")
 
         # 7. Combined summary figures
         print("  7. Combined summary figures...")
-        self._plot_combined_summaries(metrics_df, marker_df, size_df)
+        try:
+            self._plot_combined_summaries(metrics_df, marker_df, size_df)
+        except Exception as e:
+            print(f"     WARNING: Combined summary failed: {e}")
+            errors.append(f"Summary: {e}")
 
-        print("\n✓ All visualizations complete!")
+        # 8. Distance plots
+        print("  8. Distance analysis plots...")
+        try:
+            if len(distance_df) > 0:
+                self._plot_distances_comprehensive(distance_df)
+            else:
+                print("     Skipping: no distance data")
+        except Exception as e:
+            print(f"     WARNING: Distance plots failed: {e}")
+            errors.append(f"Distances: {e}")
+
+        # 9. Co-localization plots
+        print("  9. Co-localization plots...")
+        try:
+            if len(coloc_df) > 0:
+                self._plot_colocalization_comprehensive(coloc_df)
+            else:
+                print("     Skipping: no co-localization data")
+        except Exception as e:
+            print(f"     WARNING: Co-localization plots failed: {e}")
+            errors.append(f"Co-localization: {e}")
+
+        if len(errors) > 0:
+            print(f"\n⚠ Completed with {len(errors)} warnings (plots may be incomplete)")
+            print("  See warnings above for details")
+        else:
+            print("\n✓ All visualizations complete!")
 
 
     def _generate_spatial_maps(self):
@@ -1535,6 +1605,124 @@ class ComprehensiveTumorSpatialAnalysis:
 
         plt.savefig(f"{self.output_dir}/figures/combined_summary.png", dpi=300, bbox_inches='tight')
         plt.close()
+
+
+    def _plot_distances_comprehensive(self, distance_df: pd.DataFrame):
+        """Generate comprehensive distance analysis plots."""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # Get top populations by sample count
+        pop_counts = distance_df.groupby('population').size()
+        top_pops = pop_counts.nlargest(4).index.tolist()
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        axes = axes.flatten()
+
+        for idx, pop in enumerate(top_pops):
+            pop_data = distance_df[distance_df['population'] == pop]
+
+            if len(pop_data) == 0:
+                continue
+
+            ax = axes[idx]
+
+            # Boxplot by genotype
+            if 'genotype' in pop_data.columns:
+                sns.boxplot(data=pop_data, x='genotype', y='mean_distance',
+                           ax=ax, palette='Set2')
+                ax.set_ylabel('Mean Distance (μm)', fontweight='bold')
+                ax.set_xlabel('Genotype', fontweight='bold')
+                ax.set_title(f'{pop} Distance to Tumor', fontweight='bold')
+                ax.grid(True, alpha=0.3, axis='y')
+
+        plt.suptitle('Immune Cell Distance to Nearest Tumor Structure',
+                    fontsize=14, fontweight='bold', y=0.995)
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/distance_analysis.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # Temporal trends
+        if 'timepoint' in distance_df.columns:
+            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+            axes = axes.flatten()
+
+            for idx, pop in enumerate(top_pops):
+                pop_data = distance_df[distance_df['population'] == pop]
+
+                if len(pop_data) == 0 or 'timepoint' not in pop_data.columns:
+                    continue
+
+                ax = axes[idx]
+
+                for genotype in pop_data['genotype'].unique():
+                    genotype_data = pop_data[pop_data['genotype'] == genotype]
+                    temporal_mean = genotype_data.groupby('timepoint')['mean_distance'].mean()
+                    ax.plot(temporal_mean.index, temporal_mean.values,
+                           marker='o', label=genotype, linewidth=2)
+
+                ax.set_xlabel('Timepoint', fontweight='bold')
+                ax.set_ylabel('Mean Distance (μm)', fontweight='bold')
+                ax.set_title(f'{pop} Distance Over Time', fontweight='bold')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+
+            plt.suptitle('Temporal Dynamics of Immune-Tumor Distances',
+                        fontsize=14, fontweight='bold', y=0.995)
+            plt.tight_layout()
+            plt.savefig(f"{self.output_dir}/figures/distance_temporal.png", dpi=300, bbox_inches='tight')
+            plt.close()
+
+
+    def _plot_colocalization_comprehensive(self, coloc_df: pd.DataFrame):
+        """Generate comprehensive co-localization plots."""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # Get unique pairs
+        pairs = coloc_df[['population_1', 'population_2']].drop_duplicates()
+        n_pairs = min(len(pairs), 6)  # Limit to top 6 pairs
+
+        if n_pairs == 0:
+            return
+
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        axes = axes.flatten()
+
+        for idx in range(n_pairs):
+            if idx >= len(pairs):
+                break
+
+            pair = pairs.iloc[idx]
+            pop1, pop2 = pair['population_1'], pair['population_2']
+
+            pair_data = coloc_df[
+                (coloc_df['population_1'] == pop1) &
+                (coloc_df['population_2'] == pop2)
+            ]
+
+            if len(pair_data) == 0:
+                continue
+
+            ax = axes[idx]
+
+            # Boxplot of enrichment scores by genotype
+            if 'genotype' in pair_data.columns:
+                sns.boxplot(data=pair_data, x='genotype', y='enrichment_score',
+                           ax=ax, palette='Set2')
+                ax.axhline(y=1, color='red', linestyle='--', alpha=0.5, label='Expected')
+                ax.set_ylabel('Enrichment Score', fontweight='bold')
+                ax.set_xlabel('Genotype', fontweight='bold')
+                ax.set_title(f'{pop1} ↔ {pop2}', fontweight='bold')
+                ax.grid(True, alpha=0.3, axis='y')
+                ax.legend()
+
+        plt.suptitle('Cell Type Co-localization Analysis (within 50μm)',
+                    fontsize=14, fontweight='bold', y=0.995)
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/colocalization_analysis.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
 
     def generate_comprehensive_report(self):
         """Generate comprehensive HTML/PDF report."""

@@ -923,6 +923,18 @@ def run_advanced_analysis(self, config: dict):
     # Phase 18: Pseudo-temporal
     self.phase18_pseudotemporal_analysis(config)
 
+    # Generate all advanced visualizations
+    print("\n" + "=" * 80)
+    print("GENERATING ADVANCED VISUALIZATIONS")
+    print("=" * 80 + "\n")
+
+    try:
+        from advanced_spatial_visualizations import plot_all_advanced_visualizations
+        plot_all_advanced_visualizations(self.output_dir)
+    except Exception as e:
+        print(f"WARNING: Advanced visualization generation failed: {e}")
+        print("  Data files were still generated successfully")
+
     print("\n" + "=" * 80)
     print("ADVANCED ANALYSIS COMPLETE (PHASES 11-18)")
     print("=" * 80)
