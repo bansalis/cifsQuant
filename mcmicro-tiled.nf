@@ -174,20 +174,58 @@ with open('tile_list.txt', 'w') as f:
     for info in tile_info:
         f.write(info['filename'] + "\\n")
 
-# Create markers CSV - copy from input file if provided
+# Create markers CSV - validate and process input file
 import shutil
 import os
+import pandas as pd
+
 markers_input_file = '${markers_input}'
+actual_channels = tile_info[0]['channels'] if tile_info else n_channels
+
 if os.path.exists(markers_input_file) and os.path.getsize(markers_input_file) > 0:
-    # Copy the markers file
-    shutil.copy(markers_input_file, 'markers_tiled.csv')
-    print(f"Copied markers from {markers_input_file}")
+    print(f"Processing markers from {markers_input_file}")
+
+    # Read markers file
+    markers_df = pd.read_csv(markers_input_file)
+
+    # Extract marker names - handle both formats (with/without cycle column)
+    if 'marker_name' in markers_df.columns:
+        marker_names = markers_df['marker_name'].tolist()
+    elif len(markers_df.columns) == 1:
+        # Single column CSV - use it as marker names
+        marker_names = markers_df.iloc[:, 0].tolist()
+    else:
+        print(f"WARNING: Unexpected markers file format, using default names")
+        marker_names = []
+
+    # Validate channel count
+    print(f"Image has {actual_channels} channels, markers file has {len(marker_names)} markers")
+
+    if len(marker_names) == actual_channels:
+        print("Channel counts match!")
+    elif len(marker_names) > actual_channels:
+        print(f"WARNING: Markers file has {len(marker_names)} markers but image has {actual_channels} channels")
+        print(f"Truncating to first {actual_channels} markers")
+        marker_names = marker_names[:actual_channels]
+    else:
+        print(f"WARNING: Markers file has {len(marker_names)} markers but image has {actual_channels} channels")
+        print(f"Padding with default names for channels {len(marker_names)+1} to {actual_channels}")
+        for i in range(len(marker_names), actual_channels):
+            marker_names.append(f"Channel_{i+1}")
+
+    # Write clean markers file with just marker_name column
+    with open('markers_tiled.csv', 'w') as f:
+        f.write("marker_name\\n")
+        for name in marker_names:
+            f.write(f"{name}\\n")
+
+    print(f"Created markers_tiled.csv with {len(marker_names)} markers")
 else:
     # Create default markers file
     print("No markers file provided, creating default channel names")
     with open('markers_tiled.csv', 'w') as f:
         f.write("marker_name\\n")
-        for i in range(tile_info[0]['channels'] if tile_info else n_channels):
+        for i in range(actual_channels):
             f.write(f"Channel_{i+1}\\n")
 
 print(f"Tiling completed! Created {len(tile_info)} tiles")
@@ -634,14 +672,38 @@ process RUN_MCQUANT {
 
     python3 -c "
 import pandas as pd
+import tifffile
+import sys
+
+# Read markers
 df = pd.read_csv('${markers_csv}')
+marker_names = df['marker_name'].tolist()
+
+# Read image to get channel count
+img = tifffile.imread('${original_tile}')
+n_channels = img.shape[0] if img.ndim == 3 else 1
+
+print(f'Image: {n_channels} channels')
+print(f'Markers: {len(marker_names)} markers')
+
+# Validate channel count
+if len(marker_names) != n_channels:
+    print(f'ERROR: Channel count mismatch!', file=sys.stderr)
+    print(f'  Image has {n_channels} channels', file=sys.stderr)
+    print(f'  Markers file has {len(marker_names)} markers', file=sys.stderr)
+    print(f'  Please check your markers.csv file', file=sys.stderr)
+    sys.exit(1)
+
+# Write channel names
 with open('channel_names.txt', 'w') as f:
-    for name in df['marker_name']:
+    for name in marker_names:
         f.write(name + '\\n')
+
+print('Channel validation passed!')
 "
-    
+
     mkdir -p quantification_output
-    
+
     mcquant \\
         --masks ${cell_mask} \\
         --image ${original_tile} \\
