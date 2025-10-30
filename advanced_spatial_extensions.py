@@ -929,8 +929,8 @@ def run_advanced_analysis(self, config: dict):
     print("=" * 80 + "\n")
 
     try:
-        from advanced_spatial_visualizations import plot_all_advanced_visualizations
-        plot_all_advanced_visualizations(self.output_dir)
+        from advanced_spatial_visualizations import plot_all_advanced_visualizations_comprehensive
+        plot_all_advanced_visualizations_comprehensive(self.output_dir)
     except Exception as e:
         print(f"WARNING: Advanced visualization generation failed: {e}")
         print("  Data files were still generated successfully")
