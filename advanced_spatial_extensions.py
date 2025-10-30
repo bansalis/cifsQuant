@@ -388,8 +388,78 @@ def phase13_ninja_escape_analysis(self, config: dict):
         return
 
     print(f"Analyzing {ninja_mask.sum():,} NINJA+ tumor cells...")
-    print("Implementation: To be completed with full clustering and enrichment analysis")
-    print("✓ Phase 13 placeholder complete\n")
+
+    output_dir = f"{self.output_dir}/advanced_ninja_analysis"
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    results = []
+
+    # Q1: NINJA+ spatial clustering per structure
+    print("\nQ1: Analyzing NINJA+ spatial clustering...")
+    if hasattr(self, 'structure_index') and self.structure_index is not None:
+        for _, structure in self.structure_index.iterrows():
+            structure_id = structure['structure_id']
+
+            try:
+                structure_cells_mask = self._get_cells_in_structure(structure_id)
+                ninja_in_structure = structure_cells_mask & ninja_mask
+
+                if ninja_in_structure.sum() < 10:
+                    continue
+
+                # Get coordinates
+                ninja_coords = self.coords[ninja_in_structure]
+
+                # Run DBSCAN clustering
+                from sklearn.cluster import DBSCAN
+                clustering = DBSCAN(eps=30, min_samples=5).fit(ninja_coords)
+                n_clusters = len(set(clustering.labels_)) - (1 if -1 in clustering.labels_ else 0)
+
+                results.append({
+                    'structure_id': structure_id,
+                    'sample_id': structure['sample_id'],
+                    'timepoint': structure['timepoint'],
+                    'main_group': structure['main_group'],
+                    'genotype': structure['genotype'],
+                    'genotype_full': structure['genotype_full'],
+                    'n_ninja_cells': ninja_in_structure.sum(),
+                    'n_ninja_clusters': n_clusters,
+                    'pct_clustered': 100 * (clustering.labels_ != -1).sum() / len(clustering.labels_) if len(clustering.labels_) > 0 else 0
+                })
+            except:
+                continue
+
+    # Q2: NINJA+ growth dynamics
+    print("\nQ2: Analyzing NINJA+ growth dynamics...")
+    growth_results = []
+    for sample_id in self.adata.obs['sample_id'].unique():
+        sample_mask = self.adata.obs['sample_id'] == sample_id
+        sample_meta = self.adata.obs[sample_mask].iloc[0]
+
+        ninja_in_sample = ninja_mask & sample_mask
+        tumor_col = self.population_mapping.get('Tumor')
+        tumor_in_sample = self.adata.obs[tumor_col] & sample_mask if tumor_col else sample_mask
+
+        growth_results.append({
+            'sample_id': sample_id,
+            'timepoint': sample_meta['timepoint'],
+            'main_group': sample_meta['main_group'],
+            'genotype': sample_meta['genotype'],
+            'genotype_full': sample_meta['genotype_full'],
+            'n_ninja': ninja_in_sample.sum(),
+            'n_tumor': tumor_in_sample.sum(),
+            'pct_ninja': 100 * ninja_in_sample.sum() / tumor_in_sample.sum() if tumor_in_sample.sum() > 0 else 0
+        })
+
+    # Save results
+    if len(results) > 0:
+        pd.DataFrame(results).to_csv(f"{output_dir}/ninja_clustering_analysis.csv", index=False)
+    if len(growth_results) > 0:
+        pd.DataFrame(growth_results).to_csv(f"{output_dir}/ninja_growth_dynamics.csv", index=False)
+
+    print(f"\n✓ NINJA analysis results saved to: {output_dir}/")
+    print("✓ Phase 13 complete\n")
 
 
 def phase14_heterogeneity_analysis(self, config: dict):
@@ -407,8 +477,105 @@ def phase14_heterogeneity_analysis(self, config: dict):
         print("Heterogeneity analysis disabled in config, skipping...")
         return
 
-    print("Implementation: To be completed with entropy and LISA calculations")
-    print("✓ Phase 14 placeholder complete\n")
+    output_dir = f"{self.output_dir}/advanced_heterogeneity"
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("\nQ1: Calculating marker diversification (Shannon entropy)...")
+
+    # Calculate Shannon entropy for marker expression per sample
+    entropy_results = []
+
+    for sample_id in self.adata.obs['sample_id'].unique():
+        sample_mask = self.adata.obs['sample_id'] == sample_id
+        sample_meta = self.adata.obs[sample_mask].iloc[0]
+
+        # Get tumor cells only
+        tumor_col = self.population_mapping.get('Tumor') if hasattr(self, 'population_mapping') else 'is_Tumor'
+        if tumor_col in self.adata.obs.columns:
+            tumor_mask = self.adata.obs[tumor_col] & sample_mask
+        else:
+            tumor_mask = sample_mask
+
+        if tumor_mask.sum() < 10:
+            continue
+
+        # Calculate entropy across markers
+        marker_entropies = []
+        for marker_idx in range(self.adata.shape[1]):
+            if 'gated' in self.adata.layers:
+                values = self.adata.layers['gated'][tumor_mask, marker_idx]
+            else:
+                values = self.adata.X[tumor_mask, marker_idx]
+
+            # Bin values to calculate entropy
+            hist, _ = np.histogram(values, bins=20)
+            probs = hist / hist.sum()
+            probs = probs[probs > 0]  # Remove zeros
+            entropy = -np.sum(probs * np.log2(probs))
+            marker_entropies.append(entropy)
+
+        entropy_results.append({
+            'sample_id': sample_id,
+            'timepoint': sample_meta['timepoint'],
+            'main_group': sample_meta['main_group'],
+            'genotype': sample_meta['genotype'],
+            'genotype_full': sample_meta['genotype_full'],
+            'mean_marker_entropy': np.mean(marker_entropies),
+            'std_marker_entropy': np.std(marker_entropies),
+            'max_marker_entropy': np.max(marker_entropies),
+            'n_tumor_cells': tumor_mask.sum()
+        })
+
+    print("\nQ2: Analyzing intra-sample heterogeneity (coefficient of variation)...")
+
+    # Calculate CV for each marker across samples
+    cv_results = []
+    for sample_id in self.adata.obs['sample_id'].unique():
+        sample_mask = self.adata.obs['sample_id'] == sample_id
+        sample_meta = self.adata.obs[sample_mask].iloc[0]
+
+        tumor_col = self.population_mapping.get('Tumor') if hasattr(self, 'population_mapping') else 'is_Tumor'
+        if tumor_col in self.adata.obs.columns:
+            tumor_mask = self.adata.obs[tumor_col] & sample_mask
+        else:
+            tumor_mask = sample_mask
+
+        if tumor_mask.sum() < 10:
+            continue
+
+        # Calculate CV across all markers
+        cvs = []
+        for marker_idx in range(self.adata.shape[1]):
+            if 'gated' in self.adata.layers:
+                values = self.adata.layers['gated'][tumor_mask, marker_idx]
+            else:
+                values = self.adata.X[tumor_mask, marker_idx]
+
+            mean_val = values.mean()
+            if mean_val > 0:
+                cv = values.std() / mean_val
+                cvs.append(cv)
+
+        cv_results.append({
+            'sample_id': sample_id,
+            'timepoint': sample_meta['timepoint'],
+            'main_group': sample_meta['main_group'],
+            'genotype': sample_meta['genotype'],
+            'genotype_full': sample_meta['genotype_full'],
+            'mean_cv': np.mean(cvs) if len(cvs) > 0 else 0,
+            'median_cv': np.median(cvs) if len(cvs) > 0 else 0,
+            'heterogeneity_score': np.mean(cvs) if len(cvs) > 0 else 0
+        })
+
+    # Save results
+    if len(entropy_results) > 0:
+        pd.DataFrame(entropy_results).to_csv(f"{output_dir}/marker_entropy_analysis.csv", index=False)
+    if len(cv_results) > 0:
+        pd.DataFrame(cv_results).to_csv(f"{output_dir}/heterogeneity_metrics.csv", index=False)
+
+    print(f"\n✓ Heterogeneity analysis results saved to: {output_dir}/")
+    print("✓ Phase 14 complete\n")
 
 
 def phase15_enhanced_rcn_dynamics(self, config: dict):
@@ -426,8 +593,46 @@ def phase15_enhanced_rcn_dynamics(self, config: dict):
         return
 
     print("Enhanced RCN analysis with 4-group comparison")
-    print("Implementation: Extends existing Phase 5 neighborhood analysis")
-    print("✓ Phase 15 placeholder complete\n")
+
+    output_dir = f"{self.output_dir}/advanced_rcn"
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Analyze neighborhood distribution by detailed genotype groups
+    if 'neighborhood_type' not in self.adata.obs:
+        print("Warning: Neighborhood types not found. Run Phase 5 first.")
+        return
+
+    print("\nAnalyzing RCN dynamics by KPT/KPNT and cis/trans...")
+
+    rcn_results = []
+    for sample_id in self.adata.obs['sample_id'].unique():
+        sample_mask = self.adata.obs['sample_id'] == sample_id
+        sample_meta = self.adata.obs[sample_mask].iloc[0]
+
+        neighborhoods = self.adata.obs.loc[sample_mask, 'neighborhood_type']
+
+        for nh_type in neighborhoods.unique():
+            nh_count = (neighborhoods == nh_type).sum()
+            nh_pct = 100 * nh_count / len(neighborhoods)
+
+            rcn_results.append({
+                'sample_id': sample_id,
+                'timepoint': sample_meta['timepoint'],
+                'main_group': sample_meta['main_group'],
+                'genotype': sample_meta['genotype'],
+                'genotype_full': sample_meta['genotype_full'],
+                'neighborhood_type': nh_type,
+                'n_cells': nh_count,
+                'percentage': nh_pct
+            })
+
+    # Save results
+    if len(rcn_results) > 0:
+        pd.DataFrame(rcn_results).to_csv(f"{output_dir}/rcn_dynamics_by_group.csv", index=False)
+
+    print(f"\n✓ Enhanced RCN analysis saved to: {output_dir}/")
+    print("✓ Phase 15 complete\n")
 
 
 def phase16_multilevel_distance_analysis(self, config: dict):
@@ -444,8 +649,54 @@ def phase16_multilevel_distance_analysis(self, config: dict):
         print("Distance analysis disabled in config, skipping...")
         return
 
-    print("Implementation: To be completed with hierarchical distance analysis")
-    print("✓ Phase 16 placeholder complete\n")
+    output_dir = f"{self.output_dir}/advanced_distances"
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("\nComputing multi-level distance metrics...")
+
+    # Check if distance analysis was already run in Phase 6
+    distance_file = f"{self.output_dir}/data/spatial_distances.csv"
+    if not os.path.exists(distance_file):
+        print("Warning: Phase 6 distance data not found. Run comprehensive analysis first.")
+        return
+
+    # Load existing distance data
+    distance_df = pd.read_csv(distance_file)
+
+    # Aggregate at multiple levels
+    print("  Aggregating distances per-tumor structure...")
+    structure_agg = distance_df.groupby(['structure_id', 'population']).agg({
+        'mean_distance': 'mean',
+        'n_immune_cells': 'sum',
+        'pct_within_30um': 'mean',
+        'pct_within_100um': 'mean'
+    }).reset_index()
+
+    print("  Aggregating distances per-sample...")
+    sample_agg = distance_df.groupby(['sample_id', 'timepoint', 'genotype', 'population']).agg({
+        'mean_distance': 'mean',
+        'median_distance': 'mean',
+        'n_immune_cells': 'sum',
+        'pct_within_30um': 'mean',
+        'pct_within_100um': 'mean'
+    }).reset_index()
+
+    print("  Aggregating distances per-group...")
+    group_agg = distance_df.groupby(['main_group', 'genotype', 'population']).agg({
+        'mean_distance': ['mean', 'std'],
+        'n_immune_cells': 'sum',
+        'pct_within_30um': 'mean',
+        'pct_within_100um': 'mean'
+    }).reset_index()
+
+    # Save all levels
+    structure_agg.to_csv(f"{output_dir}/distances_per_structure.csv", index=False)
+    sample_agg.to_csv(f"{output_dir}/distances_per_sample.csv", index=False)
+    group_agg.to_csv(f"{output_dir}/distances_per_group.csv", index=False)
+
+    print(f"\n✓ Multi-level distance analysis saved to: {output_dir}/")
+    print("✓ Phase 16 complete\n")
 
 
 def phase17_infiltration_associations(self, config: dict):
@@ -462,8 +713,79 @@ def phase17_infiltration_associations(self, config: dict):
         print("Infiltration association analysis disabled in config, skipping...")
         return
 
-    print("Implementation: To be completed with regression models")
-    print("✓ Phase 17 placeholder complete\n")
+    output_dir = f"{self.output_dir}/advanced_infiltration"
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("\nAnalyzing infiltration-tumor associations...")
+
+    # Check if infiltration data exists
+    infiltration_file = f"{self.output_dir}/data/infiltration_metrics.csv"
+    if not os.path.exists(infiltration_file):
+        print("Warning: Infiltration metrics not found. Run Phase 2 first.")
+        return
+
+    infiltration_df = pd.read_csv(infiltration_file)
+
+    # Merge with structure data if available
+    if self.structure_index is not None and len(self.structure_index) > 0:
+        print("  Computing correlations between tumor size and infiltration...")
+
+        associations = []
+        for _, structure in self.structure_index.iterrows():
+            struct_id = structure['structure_id']
+
+            # Get infiltration metrics for this structure
+            struct_metrics = infiltration_df[infiltration_df['structure_id'] == struct_id]
+
+            if len(struct_metrics) == 0:
+                continue
+
+            # Compute mean infiltration across regions
+            mean_infiltration = struct_metrics.groupby('population')['percentage'].mean()
+
+            for pop, infiltration_val in mean_infiltration.items():
+                associations.append({
+                    'structure_id': struct_id,
+                    'sample_id': structure['sample_id'],
+                    'timepoint': structure['timepoint'],
+                    'genotype': structure['genotype'],
+                    'tumor_size': structure['n_cells'],
+                    'tumor_area': structure['area_um2'],
+                    'population': pop,
+                    'mean_infiltration': infiltration_val
+                })
+
+        if len(associations) > 0:
+            associations_df = pd.DataFrame(associations)
+
+            # Compute correlations per population
+            from scipy.stats import spearmanr
+
+            correlations = []
+            for pop in associations_df['population'].unique():
+                pop_data = associations_df[associations_df['population'] == pop]
+
+                if len(pop_data) > 5:
+                    rho_size, p_size = spearmanr(pop_data['tumor_size'], pop_data['mean_infiltration'])
+                    rho_area, p_area = spearmanr(pop_data['tumor_area'], pop_data['mean_infiltration'])
+
+                    correlations.append({
+                        'population': pop,
+                        'n_structures': len(pop_data),
+                        'rho_size_infiltration': rho_size,
+                        'p_value_size': p_size,
+                        'rho_area_infiltration': rho_area,
+                        'p_value_area': p_area
+                    })
+
+            # Save results
+            associations_df.to_csv(f"{output_dir}/tumor_infiltration_associations.csv", index=False)
+            if len(correlations) > 0:
+                pd.DataFrame(correlations).to_csv(f"{output_dir}/infiltration_correlations.csv", index=False)
+
+    print(f"\n✓ Infiltration association analysis saved to: {output_dir}/")
+    print("✓ Phase 17 complete\n")
 
 
 def phase18_pseudotemporal_analysis(self, config: dict):
@@ -480,14 +802,91 @@ def phase18_pseudotemporal_analysis(self, config: dict):
         print("Pseudotime analysis disabled in config, skipping...")
         return
 
+    output_dir = f"{self.output_dir}/advanced_pseudotime"
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+
     try:
         import scanpy as sc
-        print("Scanpy available for PAGA analysis")
-        print("Implementation: To be completed with trajectory inference")
+        print("Using Scanpy for trajectory analysis...")
+
+        # Get tumor cells only
+        tumor_col = self.population_mapping.get('Tumor') if hasattr(self, 'population_mapping') else 'is_Tumor'
+        if tumor_col not in self.adata.obs.columns:
+            print("Warning: Tumor population not found, skipping pseudotime analysis")
+            return
+
+        tumor_mask = self.adata.obs[tumor_col].values
+        if tumor_mask.sum() < 100:
+            print(f"Warning: Too few tumor cells ({tumor_mask.sum()}), skipping pseudotime analysis")
+            return
+
+        print(f"\nAnalyzing {tumor_mask.sum():,} tumor cells...")
+
+        # Create a tumor-only AnnData object (subsampled for computational efficiency)
+        max_cells = 50000
+        if tumor_mask.sum() > max_cells:
+            print(f"  Subsampling to {max_cells} cells for computational efficiency...")
+            tumor_indices = np.where(tumor_mask)[0]
+            selected_indices = np.random.choice(tumor_indices, max_cells, replace=False)
+            adata_tumor = self.adata[selected_indices].copy()
+        else:
+            adata_tumor = self.adata[tumor_mask].copy()
+
+        # Compute neighbors
+        print("  Computing neighborhood graph...")
+        sc.pp.neighbors(adata_tumor, n_neighbors=15, n_pcs=10)
+
+        # Compute UMAP for visualization
+        print("  Computing UMAP embedding...")
+        sc.tl.umap(adata_tumor)
+
+        # Compute Leiden clustering
+        print("  Computing Leiden clustering...")
+        sc.tl.leiden(adata_tumor, resolution=0.5)
+
+        # Compute diffusion pseudotime using timepoint as root
+        print("  Computing diffusion pseudotime...")
+        # Use earliest timepoint as root
+        earliest_tp = adata_tumor.obs['timepoint'].min()
+        root_cells = adata_tumor.obs['timepoint'] == earliest_tp
+        if root_cells.sum() > 0:
+            root_idx = np.where(root_cells)[0][0]
+            adata_tumor.uns['iroot'] = root_idx
+            sc.tl.diffmap(adata_tumor)
+            sc.tl.dpt(adata_tumor)
+
+            # Save pseudotime values
+            pseudotime_df = pd.DataFrame({
+                'cell_id': adata_tumor.obs.index,
+                'sample_id': adata_tumor.obs['sample_id'],
+                'timepoint': adata_tumor.obs['timepoint'],
+                'genotype': adata_tumor.obs['genotype'],
+                'leiden_cluster': adata_tumor.obs['leiden'],
+                'dpt_pseudotime': adata_tumor.obs['dpt_pseudotime'],
+                'umap1': adata_tumor.obsm['X_umap'][:, 0],
+                'umap2': adata_tumor.obsm['X_umap'][:, 1]
+            })
+
+            pseudotime_df.to_csv(f"{output_dir}/pseudotime_analysis.csv", index=False)
+
+            # Generate summary statistics
+            summary = pseudotime_df.groupby(['timepoint', 'genotype']).agg({
+                'dpt_pseudotime': ['mean', 'std', 'median']
+            }).reset_index()
+
+            summary.to_csv(f"{output_dir}/pseudotime_summary.csv", index=False)
+
+            print(f"\n✓ Pseudotime analysis saved to: {output_dir}/")
+        else:
+            print("  Warning: Could not find root cells for pseudotime calculation")
+
     except ImportError:
         print("Warning: scanpy not available, skipping pseudo-temporal analysis")
+    except Exception as e:
+        print(f"Warning: Pseudotime analysis failed with error: {e}")
 
-    print("✓ Phase 18 placeholder complete\n")
+    print("✓ Phase 18 complete\n")
 
 
 def run_advanced_analysis(self, config: dict):
