@@ -801,12 +801,28 @@ class ComprehensiveTumorSpatialAnalysis:
         """Test temporal trends with multiple statistical approaches."""
 
         if group_cols is None:
-            group_cols = ['population', 'region'] if 'region' in df.columns else ['marker']
+            # Determine appropriate grouping columns based on available columns
+            if 'region' in df.columns and 'population' in df.columns:
+                # Infiltration metrics: group by population and region
+                group_cols = ['population', 'region']
+            elif 'marker' in df.columns:
+                # Marker expression: group by marker (and optionally genotype)
+                group_cols = ['marker', 'genotype'] if 'genotype' in df.columns else ['marker']
+            elif 'genotype' in df.columns:
+                # Tumor size or other genotype-based metrics
+                group_cols = ['genotype']
+            else:
+                # Fallback: no grouping, analyze all data together
+                group_cols = []
 
         results = []
 
         # Get grouping combinations
-        grouping_values = df[group_cols].drop_duplicates().values
+        if len(group_cols) > 0:
+            grouping_values = df[group_cols].drop_duplicates().values
+        else:
+            # No grouping - analyze entire dataset as one group
+            grouping_values = [tuple()]
 
         for group_vals in grouping_values:
             # Filter to this group
