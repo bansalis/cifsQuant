@@ -1365,142 +1365,35 @@ class ComprehensiveTumorSpatialAnalysis:
 
 
     def _plot_tumor_size_comprehensive(self, size_df: pd.DataFrame, stats_results: Dict):
-        """Generate comprehensive tumor size plots."""
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
-        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-
-        # Plot 1: Mean structure size over time by genotype
-        for genotype in size_df['genotype'].unique():
-            genotype_data = size_df[size_df['genotype'] == genotype]
-            axes[0, 0].plot(genotype_data['timepoint'], genotype_data['mean_structure_size'],
-                          marker='o', label=genotype, linewidth=2)
-        axes[0, 0].set_xlabel('Timepoint')
-        axes[0, 0].set_ylabel('Mean Structure Size (cells)')
-        axes[0, 0].set_title('Tumor Growth: Mean Structure Size')
-        axes[0, 0].legend()
-        axes[0, 0].grid(True, alpha=0.3)
-
-        # Plot 2: Total tumor area over time
-        for genotype in size_df['genotype'].unique():
-            genotype_data = size_df[size_df['genotype'] == genotype]
-            axes[0, 1].plot(genotype_data['timepoint'], genotype_data['total_tumor_area'],
-                          marker='s', label=genotype, linewidth=2)
-        axes[0, 1].set_xlabel('Timepoint')
-        axes[0, 1].set_ylabel('Total Tumor Area (μm²)')
-        axes[0, 1].set_title('Total Tumor Area Over Time')
-        axes[0, 1].legend()
-        axes[0, 1].grid(True, alpha=0.3)
-
-        # Plot 3: Number of structures over time
-        for genotype in size_df['genotype'].unique():
-            genotype_data = size_df[size_df['genotype'] == genotype]
-            axes[1, 0].plot(genotype_data['timepoint'], genotype_data['n_structures'],
-                          marker='^', label=genotype, linewidth=2)
-        axes[1, 0].set_xlabel('Timepoint')
-        axes[1, 0].set_ylabel('Number of Structures')
-        axes[1, 0].set_title('Tumor Structure Count')
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-
-        # Plot 4: Genotype comparison boxplot
-        sns.boxplot(data=size_df, x='genotype', y='mean_structure_size', ax=axes[1, 1])
-        axes[1, 1].set_ylabel('Mean Structure Size (cells)')
-        axes[1, 1].set_title('Tumor Size by Genotype')
-        axes[1, 1].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(f"{self.output_dir}/figures/tumor_size_comprehensive.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        """Generate comprehensive tumor size plots with CORRECT comparisons."""
+        from comprehensive_plots_fixed import plot_tumor_size_comprehensive
+        plot_tumor_size_comprehensive(size_df, self.output_dir)
 
 
     def _plot_marker_expression_comprehensive(self, marker_df: pd.DataFrame, stats_results: Dict):
-        """Generate comprehensive marker expression plots."""
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
-        # Get top markers by variability
-        marker_variability = marker_df.groupby('marker')['pct_positive'].std().sort_values(ascending=False)
-        top_markers = marker_variability.head(6).index.tolist()
-
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-        axes = axes.flatten()
-
-        for idx, marker in enumerate(top_markers):
-            marker_data = marker_df[marker_df['marker'] == marker]
-
-            for genotype in marker_data['genotype'].unique():
-                genotype_data = marker_data[marker_data['genotype'] == genotype]
-                axes[idx].plot(genotype_data['timepoint'], genotype_data['pct_positive'],
-                             marker='o', label=genotype, linewidth=2, alpha=0.7)
-
-            axes[idx].set_xlabel('Timepoint')
-            axes[idx].set_ylabel('% Positive Cells')
-            axes[idx].set_title(f'{marker} Expression Over Time')
-            axes[idx].legend()
-            axes[idx].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(f"{self.output_dir}/figures/marker_expression_temporal.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        """Generate comprehensive marker expression plots for ALL markers."""
+        from comprehensive_plots_fixed import plot_marker_expression_comprehensive
+        plot_marker_expression_comprehensive(marker_df, self.output_dir)
 
 
     def _plot_infiltration_comprehensive(self, metrics_df: pd.DataFrame, stats_results: Dict):
-        """Generate comprehensive infiltration plots."""
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
-        # Get unique populations and regions
-        populations = metrics_df['population'].unique()[:4]  # Top 4 populations
-        regions = ['Tumor_Core', 'Margin', 'Peri_Tumor', 'Distal']
-
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        axes = axes.flatten()
-
-        for idx, pop in enumerate(populations):
-            pop_data = metrics_df[metrics_df['population'] == pop]
-
-            for region in regions:
-                region_data = pop_data[pop_data['region'] == region]
-                if len(region_data) > 0:
-                    region_summary = region_data.groupby('timepoint')['percentage'].mean()
-                    axes[idx].plot(region_summary.index, region_summary.values,
-                                 marker='o', label=region, linewidth=2)
-
-            axes[idx].set_xlabel('Timepoint')
-            axes[idx].set_ylabel('% Infiltration')
-            axes[idx].set_title(f'{pop} Infiltration by Region')
-            axes[idx].legend()
-            axes[idx].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(f"{self.output_dir}/figures/infiltration_temporal.png", dpi=300, bbox_inches='tight')
-        plt.close()
+        """Generate comprehensive infiltration plots for each population."""
+        from comprehensive_plots_fixed import plot_infiltration_comprehensive
+        plot_infiltration_comprehensive(metrics_df, self.output_dir)
 
 
     def _plot_neighborhoods_comprehensive(self, neighborhood_df: pd.DataFrame):
         """Generate comprehensive neighborhood plots."""
-        import matplotlib.pyplot as plt
-        import seaborn as sns
+        import os
+        cell_nh_file = f"{self.output_dir}/data/cell_neighborhoods.csv"
+        if os.path.exists(cell_nh_file):
+            import pandas as pd
+            cell_neighborhoods_df = pd.read_csv(cell_nh_file)
+            from comprehensive_plots_fixed import plot_neighborhoods_comprehensive
+            plot_neighborhoods_comprehensive(neighborhood_df, cell_neighborhoods_df, self.output_dir)
+        else:
+            print("  WARNING: cell_neighborhoods.csv not found, skipping comprehensive plot")
 
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-
-        # Plot 1: Neighborhood sizes
-        axes[0].bar(neighborhood_df['neighborhood_id'], neighborhood_df['n_cells'])
-        axes[0].set_xlabel('Neighborhood Type')
-        axes[0].set_ylabel('Number of Cells')
-        axes[0].set_title('Neighborhood Sizes')
-        axes[0].grid(True, alpha=0.3)
-
-        # Plot 2: Neighborhood percentage
-        axes[1].pie(neighborhood_df['percentage'], labels=neighborhood_df['neighborhood_id'],
-                   autopct='%1.1f%%', startangle=90)
-        axes[1].set_title('Neighborhood Distribution')
-
-        plt.tight_layout()
-        plt.savefig(f"{self.output_dir}/figures/neighborhood_analysis.png", dpi=300, bbox_inches='tight')
-        plt.close()
 
 
     def _plot_heatmaps_comprehensive(self, metrics_df: pd.DataFrame, marker_df: pd.DataFrame):
