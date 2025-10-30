@@ -407,6 +407,28 @@ class ComprehensiveTumorSpatialAnalysis:
             self.adata.obs[f'is_{pop_name}'] = mask
 
 
+    def _get_cells_in_structure(self, structure_id: int) -> np.ndarray:
+        """
+        Get a boolean mask of cells belonging to a specific structure.
+
+        Args:
+            structure_id: The structure ID to get cells for
+
+        Returns:
+            Boolean array of length n_cells, True where cell is in the structure
+        """
+        # Load cell indices from saved file
+        cell_indices = np.load(
+            f"{self.output_dir}/structures/structure_{structure_id:04d}_cells.npy"
+        )
+
+        # Create boolean mask for all cells
+        mask = np.zeros(len(self.adata), dtype=bool)
+        mask[cell_indices] = True
+
+        return mask
+
+
     def analyze_structures_individually(self, immune_populations: List[str],
                                        boundary_widths: List[float] = [30, 100, 200],
                                        buffer_distance: float = 500) -> pd.DataFrame:
