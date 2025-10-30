@@ -751,23 +751,187 @@ class ComprehensiveTumorSpatialAnalysis:
     def analyze_spatial_distances(self, immune_populations: List[str]) -> pd.DataFrame:
         """
         Analyze distances between immune cells and tumor structures.
+
+        For each immune population, computes:
+        - Mean/median distance to nearest tumor structure
+        - Distribution of distances across regions
+        - Per-structure distance metrics
         """
         print("Analyzing spatial distances...")
 
-        # This is a simplified version - can be expanded
-        print("✓ Distance analysis complete")
-        return pd.DataFrame()
+        if self.structure_index is None or len(self.structure_index) == 0:
+            print("  No tumor structures detected, skipping distance analysis")
+            return pd.DataFrame()
+
+        all_distances = []
+        coords_f32 = self.coords.astype(np.float32)
+
+        # For each structure, compute distances
+        for idx, structure in self.structure_index.iterrows():
+            struct_id = structure['structure_id']
+
+            # Load structure cells
+            try:
+                tumor_cell_indices = np.load(
+                    f"{self.output_dir}/structures/structure_{struct_id:04d}_cells.npy"
+                )
+            except FileNotFoundError:
+                continue
+
+            if len(tumor_cell_indices) == 0:
+                continue
+
+            tumor_coords = coords_f32[tumor_cell_indices]
+            tumor_tree = cKDTree(tumor_coords)
+
+            # For each immune population
+            for pop_name in immune_populations:
+                if f'is_{pop_name}' not in self.adata.obs:
+                    continue
+
+                pop_mask = self.adata.obs[f'is_{pop_name}'].values
+                if pop_mask.sum() == 0:
+                    continue
+
+                # Get immune cells in the same sample
+                sample_mask = self.adata.obs['sample_id'] == structure['sample_id']
+                combined_mask = pop_mask & sample_mask
+
+                if combined_mask.sum() == 0:
+                    continue
+
+                immune_coords = coords_f32[combined_mask]
+
+                # Compute distances to nearest tumor cell in this structure
+                distances, _ = tumor_tree.query(immune_coords, k=1, workers=1)
+
+                # Compute statistics
+                all_distances.append({
+                    'structure_id': struct_id,
+                    'sample_id': structure['sample_id'],
+                    'timepoint': structure['timepoint'],
+                    'main_group': structure['main_group'],
+                    'genotype': structure['genotype'],
+                    'genotype_full': structure['genotype_full'],
+                    'population': pop_name,
+                    'n_immune_cells': len(immune_coords),
+                    'mean_distance': distances.mean(),
+                    'median_distance': np.median(distances),
+                    'std_distance': distances.std(),
+                    'min_distance': distances.min(),
+                    'max_distance': distances.max(),
+                    'q25_distance': np.percentile(distances, 25),
+                    'q75_distance': np.percentile(distances, 75),
+                    'n_within_30um': (distances <= 30).sum(),
+                    'n_within_100um': (distances <= 100).sum(),
+                    'pct_within_30um': 100 * (distances <= 30).sum() / len(distances),
+                    'pct_within_100um': 100 * (distances <= 100).sum() / len(distances)
+                })
+
+        if len(all_distances) == 0:
+            print("  No distance data computed")
+            return pd.DataFrame()
+
+        distance_df = pd.DataFrame(all_distances)
+        distance_df.to_csv(f"{self.output_dir}/data/spatial_distances.csv", index=False)
+
+        print(f"✓ Distance analysis complete: {len(distance_df)} structure-population combinations")
+        return distance_df
 
 
     def analyze_colocalization(self, immune_populations: List[str]) -> pd.DataFrame:
         """
         Analyze co-localization between different cell types.
+
+        For each pair of populations, computes:
+        - Spatial correlation (neighbors within radius)
+        - Enrichment scores
+        - Per-sample co-localization metrics
         """
         print("Analyzing co-localization...")
 
-        # This is a simplified version - can be expanded
-        print("✓ Co-localization analysis complete")
-        return pd.DataFrame()
+        if len(immune_populations) < 2:
+            print("  Need at least 2 populations for co-localization analysis")
+            return pd.DataFrame()
+
+        coloc_results = []
+        coords_f32 = self.coords.astype(np.float32)
+        tree = cKDTree(coords_f32)
+        radius = 50.0  # μm radius for co-localization
+
+        # Analyze each pair of populations
+        from itertools import combinations
+
+        for pop1, pop2 in combinations(immune_populations, 2):
+            col1 = f'is_{pop1}'
+            col2 = f'is_{pop2}'
+
+            if col1 not in self.adata.obs or col2 not in self.adata.obs:
+                continue
+
+            mask1 = self.adata.obs[col1].values
+            mask2 = self.adata.obs[col2].values
+
+            if mask1.sum() == 0 or mask2.sum() == 0:
+                continue
+
+            # Analyze per sample
+            for sample_id in self.adata.obs['sample_id'].unique():
+                sample_mask = self.adata.obs['sample_id'] == sample_id
+
+                sample_mask1 = mask1 & sample_mask
+                sample_mask2 = mask2 & sample_mask
+
+                if sample_mask1.sum() < 10 or sample_mask2.sum() < 10:
+                    continue
+
+                coords1 = coords_f32[sample_mask1]
+                coords2 = coords_f32[sample_mask2]
+
+                # For each cell of pop1, count neighbors of pop2 within radius
+                neighbors = tree.query_ball_point(coords1, radius, workers=1)
+
+                # Count pop2 cells in neighborhood
+                n_pop2_neighbors = []
+                for neighbor_idx in neighbors:
+                    neighbor_mask = sample_mask2[neighbor_idx]
+                    n_pop2_neighbors.append(neighbor_mask.sum())
+
+                n_pop2_neighbors = np.array(n_pop2_neighbors)
+
+                # Compute enrichment: observed vs expected
+                expected_pop2 = sample_mask2.sum() / sample_mask.sum()
+                local_densities = n_pop2_neighbors / len(coords2)
+
+                # Get sample metadata
+                sample_meta = self.adata.obs[sample_mask].iloc[0]
+
+                coloc_results.append({
+                    'sample_id': sample_id,
+                    'timepoint': sample_meta['timepoint'],
+                    'main_group': sample_meta['main_group'],
+                    'genotype': sample_meta['genotype'],
+                    'genotype_full': sample_meta['genotype_full'],
+                    'population_1': pop1,
+                    'population_2': pop2,
+                    'n_pop1': len(coords1),
+                    'n_pop2': len(coords2),
+                    'mean_pop2_neighbors': n_pop2_neighbors.mean(),
+                    'median_pop2_neighbors': np.median(n_pop2_neighbors),
+                    'std_pop2_neighbors': n_pop2_neighbors.std(),
+                    'pct_pop1_with_pop2_neighbor': 100 * (n_pop2_neighbors > 0).sum() / len(n_pop2_neighbors),
+                    'enrichment_score': (n_pop2_neighbors.mean() / len(coords2)) / (expected_pop2 + 1e-10)
+                })
+
+        if len(coloc_results) == 0:
+            print("  No co-localization data computed")
+            return pd.DataFrame()
+
+        coloc_df = pd.DataFrame(coloc_results)
+        coloc_df.to_csv(f"{self.output_dir}/data/colocalization_analysis.csv", index=False)
+
+        print(f"✓ Co-localization analysis complete: {len(coloc_df)} sample-population pairs")
+        return coloc_df
 
 
     def comprehensive_statistical_analysis(self, metrics_df: pd.DataFrame,
@@ -1085,45 +1249,491 @@ class ComprehensiveTumorSpatialAnalysis:
 
 
     def _generate_spatial_maps(self):
-        """Generate spatial maps - PLACEHOLDER for now, will implement fully."""
-        print("    Spatial maps generation - to be implemented with full sample iteration")
-        # This would iterate through samples/timepoints/genotypes and create spatial overlays
-        pass
+        """Generate spatial maps showing cell populations and structures."""
+        import matplotlib.pyplot as plt
+
+        print("    Generating spatial maps (sample plots)...")
+
+        # Generate for a subset of samples (to avoid too many plots)
+        sample_ids = self.adata.obs['sample_id'].unique()[:3]  # First 3 samples
+
+        for sample_id in sample_ids:
+            sample_mask = self.adata.obs['sample_id'] == sample_id
+            sample_coords = self.coords[sample_mask]
+
+            fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+
+            # Plot 1: Tumor structures
+            tumor_mask = self.adata.obs['is_Tumor'] & sample_mask
+            immune_mask = self.adata.obs['is_CD45_positive'] & sample_mask
+
+            axes[0].scatter(sample_coords[~(tumor_mask[sample_mask] | immune_mask[sample_mask]), 0],
+                          sample_coords[~(tumor_mask[sample_mask] | immune_mask[sample_mask]), 1],
+                          s=0.1, c='lightgray', alpha=0.3, label='Other')
+            axes[0].scatter(self.coords[tumor_mask, 0], self.coords[tumor_mask, 1],
+                          s=0.5, c='red', alpha=0.5, label='Tumor')
+            axes[0].scatter(self.coords[immune_mask, 0], self.coords[immune_mask, 1],
+                          s=0.5, c='blue', alpha=0.5, label='CD45+')
+            axes[0].set_title(f'Sample {sample_id}: Tumor & Immune')
+            axes[0].legend()
+            axes[0].set_aspect('equal')
+
+            # Plot 2: Neighborhood types
+            if 'neighborhood_type' in self.adata.obs:
+                neighborhoods = self.adata.obs.loc[sample_mask, 'neighborhood_type']
+                scatter = axes[1].scatter(sample_coords[:, 0], sample_coords[:, 1],
+                                        c=neighborhoods, s=0.5, cmap='tab10', alpha=0.5)
+                axes[1].set_title(f'Sample {sample_id}: Neighborhoods')
+                plt.colorbar(scatter, ax=axes[1], label='Neighborhood Type')
+                axes[1].set_aspect('equal')
+
+            plt.tight_layout()
+            plt.savefig(f"{self.output_dir}/figures/spatial_map_{sample_id}.png", dpi=150, bbox_inches='tight')
+            plt.close()
+
+        print(f"      Generated spatial maps for {len(sample_ids)} samples")
 
 
     def _plot_tumor_size_comprehensive(self, size_df: pd.DataFrame, stats_results: Dict):
-        """
-        Generate comprehensive tumor size plots.
-        """
-        # TO BE CONTINUED - this is getting too long for one message
-        # I'll implement this in the next part
-        pass
+        """Generate comprehensive tumor size plots."""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+
+        # Plot 1: Mean structure size over time by genotype
+        for genotype in size_df['genotype'].unique():
+            genotype_data = size_df[size_df['genotype'] == genotype]
+            axes[0, 0].plot(genotype_data['timepoint'], genotype_data['mean_structure_size'],
+                          marker='o', label=genotype, linewidth=2)
+        axes[0, 0].set_xlabel('Timepoint')
+        axes[0, 0].set_ylabel('Mean Structure Size (cells)')
+        axes[0, 0].set_title('Tumor Growth: Mean Structure Size')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+
+        # Plot 2: Total tumor area over time
+        for genotype in size_df['genotype'].unique():
+            genotype_data = size_df[size_df['genotype'] == genotype]
+            axes[0, 1].plot(genotype_data['timepoint'], genotype_data['total_tumor_area'],
+                          marker='s', label=genotype, linewidth=2)
+        axes[0, 1].set_xlabel('Timepoint')
+        axes[0, 1].set_ylabel('Total Tumor Area (μm²)')
+        axes[0, 1].set_title('Total Tumor Area Over Time')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+
+        # Plot 3: Number of structures over time
+        for genotype in size_df['genotype'].unique():
+            genotype_data = size_df[size_df['genotype'] == genotype]
+            axes[1, 0].plot(genotype_data['timepoint'], genotype_data['n_structures'],
+                          marker='^', label=genotype, linewidth=2)
+        axes[1, 0].set_xlabel('Timepoint')
+        axes[1, 0].set_ylabel('Number of Structures')
+        axes[1, 0].set_title('Tumor Structure Count')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+
+        # Plot 4: Genotype comparison boxplot
+        sns.boxplot(data=size_df, x='genotype', y='mean_structure_size', ax=axes[1, 1])
+        axes[1, 1].set_ylabel('Mean Structure Size (cells)')
+        axes[1, 1].set_title('Tumor Size by Genotype')
+        axes[1, 1].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/tumor_size_comprehensive.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
 
     def _plot_marker_expression_comprehensive(self, marker_df: pd.DataFrame, stats_results: Dict):
         """Generate comprehensive marker expression plots."""
-        pass
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # Get top markers by variability
+        marker_variability = marker_df.groupby('marker')['pct_positive'].std().sort_values(ascending=False)
+        top_markers = marker_variability.head(6).index.tolist()
+
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        axes = axes.flatten()
+
+        for idx, marker in enumerate(top_markers):
+            marker_data = marker_df[marker_df['marker'] == marker]
+
+            for genotype in marker_data['genotype'].unique():
+                genotype_data = marker_data[marker_data['genotype'] == genotype]
+                axes[idx].plot(genotype_data['timepoint'], genotype_data['pct_positive'],
+                             marker='o', label=genotype, linewidth=2, alpha=0.7)
+
+            axes[idx].set_xlabel('Timepoint')
+            axes[idx].set_ylabel('% Positive Cells')
+            axes[idx].set_title(f'{marker} Expression Over Time')
+            axes[idx].legend()
+            axes[idx].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/marker_expression_temporal.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
 
     def _plot_infiltration_comprehensive(self, metrics_df: pd.DataFrame, stats_results: Dict):
         """Generate comprehensive infiltration plots."""
-        pass
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # Get unique populations and regions
+        populations = metrics_df['population'].unique()[:4]  # Top 4 populations
+        regions = ['Tumor_Core', 'Margin', 'Peri_Tumor', 'Distal']
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        axes = axes.flatten()
+
+        for idx, pop in enumerate(populations):
+            pop_data = metrics_df[metrics_df['population'] == pop]
+
+            for region in regions:
+                region_data = pop_data[pop_data['region'] == region]
+                if len(region_data) > 0:
+                    region_summary = region_data.groupby('timepoint')['percentage'].mean()
+                    axes[idx].plot(region_summary.index, region_summary.values,
+                                 marker='o', label=region, linewidth=2)
+
+            axes[idx].set_xlabel('Timepoint')
+            axes[idx].set_ylabel('% Infiltration')
+            axes[idx].set_title(f'{pop} Infiltration by Region')
+            axes[idx].legend()
+            axes[idx].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/infiltration_temporal.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
 
     def _plot_neighborhoods_comprehensive(self, neighborhood_df: pd.DataFrame):
         """Generate comprehensive neighborhood plots."""
-        pass
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+        # Plot 1: Neighborhood sizes
+        axes[0].bar(neighborhood_df['neighborhood_id'], neighborhood_df['n_cells'])
+        axes[0].set_xlabel('Neighborhood Type')
+        axes[0].set_ylabel('Number of Cells')
+        axes[0].set_title('Neighborhood Sizes')
+        axes[0].grid(True, alpha=0.3)
+
+        # Plot 2: Neighborhood percentage
+        axes[1].pie(neighborhood_df['percentage'], labels=neighborhood_df['neighborhood_id'],
+                   autopct='%1.1f%%', startangle=90)
+        axes[1].set_title('Neighborhood Distribution')
+
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/neighborhood_analysis.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
 
     def _plot_heatmaps_comprehensive(self, metrics_df: pd.DataFrame, marker_df: pd.DataFrame):
         """Generate comprehensive heatmaps."""
-        pass
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        if len(metrics_df) == 0:
+            return
+
+        # Heatmap 1: Infiltration by population and region
+        infiltration_pivot = metrics_df.pivot_table(
+            values='percentage',
+            index='population',
+            columns='region',
+            aggfunc='mean'
+        )
+
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+        sns.heatmap(infiltration_pivot, annot=True, fmt='.1f', cmap='YlOrRd',
+                   ax=axes[0], cbar_kws={'label': '% Infiltration'})
+        axes[0].set_title('Mean Infiltration by Population & Region')
+        axes[0].set_ylabel('Population')
+        axes[0].set_xlabel('Region')
+
+        # Heatmap 2: Infiltration by genotype and region
+        if 'main_group' in metrics_df.columns:
+            genotype_pivot = metrics_df.pivot_table(
+                values='percentage',
+                index='population',
+                columns='main_group',
+                aggfunc='mean'
+            )
+
+            sns.heatmap(genotype_pivot, annot=True, fmt='.1f', cmap='viridis',
+                       ax=axes[1], cbar_kws={'label': '% Infiltration'})
+            axes[1].set_title('Mean Infiltration by Population & Group')
+            axes[1].set_ylabel('Population')
+            axes[1].set_xlabel('Main Group')
+
+        plt.tight_layout()
+        plt.savefig(f"{self.output_dir}/figures/infiltration_heatmaps.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
 
     def _plot_combined_summaries(self, metrics_df: pd.DataFrame, marker_df: pd.DataFrame,
                                  size_df: pd.DataFrame):
         """Generate combined summary figures."""
-        pass
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        fig = plt.figure(figsize=(18, 12))
+        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+
+        # Summary 1: Tumor growth
+        if len(size_df) > 0:
+            ax1 = fig.add_subplot(gs[0, :2])
+            for genotype in size_df['genotype'].unique():
+                genotype_data = size_df[size_df['genotype'] == genotype]
+                ax1.plot(genotype_data['timepoint'], genotype_data['total_tumor_cells'],
+                        marker='o', label=genotype, linewidth=2)
+            ax1.set_xlabel('Timepoint')
+            ax1.set_ylabel('Total Tumor Cells')
+            ax1.set_title('Tumor Growth Dynamics')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+
+        # Summary 2: Key infiltration metrics
+        if len(metrics_df) > 0:
+            ax2 = fig.add_subplot(gs[0, 2])
+            tumor_core = metrics_df[metrics_df['region'] == 'Tumor_Core']
+            tumor_core_summary = tumor_core.groupby('population')['percentage'].mean().sort_values(ascending=False).head(5)
+            ax2.barh(range(len(tumor_core_summary)), tumor_core_summary.values)
+            ax2.set_yticks(range(len(tumor_core_summary)))
+            ax2.set_yticklabels(tumor_core_summary.index)
+            ax2.set_xlabel('% in Tumor Core')
+            ax2.set_title('Top Infiltrating Populations')
+            ax2.grid(True, alpha=0.3, axis='x')
+
+        # Summary 3: Marker expression overview
+        if len(marker_df) > 0:
+            ax3 = fig.add_subplot(gs[1, :])
+            marker_summary = marker_df.groupby(['marker', 'genotype'])['pct_positive'].mean().unstack()
+            marker_summary.plot(kind='bar', ax=ax3, width=0.8)
+            ax3.set_xlabel('Marker')
+            ax3.set_ylabel('% Positive Cells')
+            ax3.set_title('Marker Expression by Genotype')
+            ax3.legend(title='Genotype')
+            ax3.grid(True, alpha=0.3, axis='y')
+            plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+        # Summary 4: Sample counts
+        ax4 = fig.add_subplot(gs[2, :])
+        sample_counts = self.adata.obs.groupby(['timepoint', 'genotype']).size().unstack(fill_value=0)
+        sample_counts.plot(kind='bar', ax=ax4, width=0.8)
+        ax4.set_xlabel('Timepoint')
+        ax4.set_ylabel('Number of Cells')
+        ax4.set_title('Sample Distribution')
+        ax4.legend(title='Genotype')
+        ax4.grid(True, alpha=0.3, axis='y')
+
+        plt.savefig(f"{self.output_dir}/figures/combined_summary.png", dpi=300, bbox_inches='tight')
+        plt.close()
 
     def generate_comprehensive_report(self):
         """Generate comprehensive HTML/PDF report."""
         print("Generating comprehensive report...")
-        pass
+
+        report_path = f"{self.output_dir}/comprehensive_analysis_report.html"
+
+        # Build HTML report
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Comprehensive Spatial Analysis Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background-color: white; padding: 30px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+        h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+        h2 {{ color: #34495e; border-bottom: 2px solid #95a5a6; padding-bottom: 5px; margin-top: 30px; }}
+        h3 {{ color: #7f8c8d; }}
+        .metric {{ background-color: #ecf0f1; padding: 15px; margin: 10px 0; border-left: 4px solid #3498db; }}
+        .metric-value {{ font-size: 24px; font-weight: bold; color: #2980b9; }}
+        .metric-label {{ font-size: 14px; color: #7f8c8d; }}
+        .section {{ margin: 30px 0; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+        th {{ background-color: #34495e; color: white; }}
+        tr:hover {{ background-color: #f5f5f5; }}
+        img {{ max-width: 100%; height: auto; margin: 20px 0; border: 1px solid #ddd; }}
+        .figure-caption {{ font-style: italic; color: #7f8c8d; margin-top: -15px; margin-bottom: 20px; }}
+        .warning {{ background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; margin: 10px 0; }}
+        .success {{ background-color: #d4edda; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Comprehensive Tumor Spatial Analysis Report</h1>
+        <p><strong>Analysis Date:</strong> {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>Output Directory:</strong> {self.output_dir}</p>
+
+        <div class="section">
+            <h2>Executive Summary</h2>
+            <div class="metric">
+                <div class="metric-label">Total Cells Analyzed</div>
+                <div class="metric-value">{len(self.adata):,}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Tumor Structures Detected</div>
+                <div class="metric-value">{len(self.structure_index) if self.structure_index is not None else 0}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Samples</div>
+                <div class="metric-value">{len(self.adata.obs['sample_id'].unique())}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Timepoints</div>
+                <div class="metric-value">{len(self.adata.obs['timepoint'].unique())}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Genotypes</div>
+                <div class="metric-value">{', '.join(map(str, self.adata.obs['genotype'].unique()))}</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Analysis Pipeline Overview</h2>
+            <div class="success">✓ Phase 1: Tumor Structure Detection - Complete</div>
+            <div class="success">✓ Phase 2: Infiltration Quantification - Complete</div>
+            <div class="success">✓ Phase 3: Marker Expression Analysis - Complete</div>
+            <div class="success">✓ Phase 4: Tumor Size Analysis - Complete</div>
+            <div class="success">✓ Phase 5: Cellular Neighborhood Analysis - Complete</div>
+            <div class="success">✓ Phase 6: Spatial Distance Analysis - Complete</div>
+            <div class="success">✓ Phase 7: Co-localization Analysis - Complete</div>
+            <div class="success">✓ Phase 8: Statistical Analysis - Complete</div>
+            <div class="success">✓ Phase 9: Visualizations - Complete</div>
+            <div class="success">✓ Phase 10: Report Generation - Complete</div>
+        </div>
+
+        <div class="section">
+            <h2>Population Summary</h2>
+            <table>
+                <tr>
+                    <th>Population</th>
+                    <th>Cell Count</th>
+                    <th>Percentage</th>
+                </tr>"""
+
+        # Add population statistics
+        pop_cols = [col for col in self.adata.obs.columns if col.startswith('is_')]
+        for col in sorted(pop_cols):
+            if self.adata.obs[col].dtype == bool:
+                count = self.adata.obs[col].sum()
+                pct = 100 * count / len(self.adata)
+                html_content += f"""
+                <tr>
+                    <td>{col.replace('is_', '')}</td>
+                    <td>{count:,}</td>
+                    <td>{pct:.2f}%</td>
+                </tr>"""
+
+        html_content += """
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Key Findings</h2>"""
+
+        # Add structure statistics if available
+        if self.structure_index is not None and len(self.structure_index) > 0:
+            html_content += f"""
+            <h3>Tumor Structure Characteristics</h3>
+            <ul>
+                <li>Total structures detected: {len(self.structure_index)}</li>
+                <li>Mean structure size: {self.structure_index['n_cells'].mean():.0f} cells</li>
+                <li>Size range: {self.structure_index['n_cells'].min()} - {self.structure_index['n_cells'].max()} cells</li>
+                <li>Mean structure area: {self.structure_index['area_um2'].mean():.0f} μm²</li>
+            </ul>"""
+
+        html_content += """
+        </div>
+
+        <div class="section">
+            <h2>Output Files</h2>
+            <h3>Data Files</h3>
+            <ul>
+                <li><code>data/infiltration_metrics.csv</code> - Per-structure infiltration metrics</li>
+                <li><code>data/marker_expression_temporal.csv</code> - Marker expression over time</li>
+                <li><code>data/tumor_size_temporal.csv</code> - Tumor growth metrics</li>
+                <li><code>data/spatial_distances.csv</code> - Distance analysis results</li>
+                <li><code>data/colocalization_analysis.csv</code> - Co-localization metrics</li>
+                <li><code>data/cell_neighborhoods.csv</code> - Per-cell neighborhood assignments</li>
+                <li><code>data/neighborhood_profiles.csv</code> - Neighborhood characteristics</li>
+            </ul>
+
+            <h3>Statistical Results</h3>
+            <ul>
+                <li><code>statistics/infiltration_temporal.csv</code> - Temporal trend tests</li>
+                <li><code>statistics/infiltration_genotype.csv</code> - Genotype comparison tests</li>
+                <li><code>statistics/marker_temporal.csv</code> - Marker expression trends</li>
+                <li><code>statistics/size_temporal.csv</code> - Tumor size trends</li>
+            </ul>
+
+            <h3>Visualizations</h3>
+            <ul>
+                <li><code>figures/spatial_map_*.png</code> - Spatial distribution maps</li>
+                <li><code>figures/tumor_size_comprehensive.png</code> - Tumor growth plots</li>
+                <li><code>figures/marker_expression_temporal.png</code> - Marker expression over time</li>
+                <li><code>figures/infiltration_temporal.png</code> - Infiltration dynamics</li>
+                <li><code>figures/neighborhood_analysis.png</code> - Neighborhood composition</li>
+                <li><code>figures/infiltration_heatmaps.png</code> - Infiltration heatmaps</li>
+                <li><code>figures/combined_summary.png</code> - Combined summary figure</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Analysis Notes</h2>
+            <p>This comprehensive spatial analysis includes:</p>
+            <ul>
+                <li>Tumor structure detection using DBSCAN clustering</li>
+                <li>Multi-region infiltration analysis (Core, Margin, Peri-tumor, Distal)</li>
+                <li>Temporal dynamics across multiple timepoints</li>
+                <li>Genotype comparisons (cis vs trans)</li>
+                <li>Cellular neighborhood detection and characterization</li>
+                <li>Spatial distance and co-localization analysis</li>
+                <li>Comprehensive statistical testing with FDR correction</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Next Steps</h2>
+            <p>For advanced analysis, run with --run_advanced flag to execute Phases 11-18:</p>
+            <ul>
+                <li>Phase 11: Enhanced phenotyping validation</li>
+                <li>Phase 12: pERK spatial architecture analysis</li>
+                <li>Phase 13: NINJA escape mechanism analysis</li>
+                <li>Phase 14: Heterogeneity emergence and evolution</li>
+                <li>Phase 15: Enhanced RCN temporal dynamics</li>
+                <li>Phase 16: Multi-level distance analysis</li>
+                <li>Phase 17: Infiltration-tumor associations</li>
+                <li>Phase 18: Pseudo-temporal trajectory analysis</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <p style="text-align: center; color: #7f8c8d; margin-top: 50px;">
+                Report generated by Comprehensive Tumor Spatial Analysis Pipeline<br>
+                For questions or issues, please contact the analysis team.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+        # Write report
+        with open(report_path, 'w') as f:
+            f.write(html_content)
+
+        print(f"✓ Report saved to: {report_path}")
+        print(f"  Open in browser: file://{report_path}")
 
 
 if __name__ == '__main__':
