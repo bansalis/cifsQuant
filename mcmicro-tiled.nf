@@ -207,11 +207,31 @@ process BACKGROUND_SUBTRACT {
     """
     export MPLCONFIGDIR=/tmp/matplotlib-\$\$
 
+    # Debug: Show current directory and files
+    echo "Working directory: \$(pwd)"
+    echo "Files in directory:"
+    ls -lh
+    echo "Looking for file: ${tile.name}"
+
     python3 - <<'EOF'
 import tifffile
 import numpy as np
+import os
+import sys
+
+# Debug: Show working directory and file
+print(f"Python working directory: {os.getcwd()}")
+print(f"Files in directory: {os.listdir('.')}")
+print(f"Looking for file: ${tile.name}")
+
+# Check if file exists
+if not os.path.exists('${tile.name}'):
+    print(f"ERROR: File '${tile.name}' not found!", file=sys.stderr)
+    print(f"Available files: {os.listdir('.')}", file=sys.stderr)
+    sys.exit(1)
 
 img = tifffile.imread('${tile.name}')
+print(f"Image loaded: shape={img.shape}, dtype={img.dtype}")
 
 # Per-channel 5th percentile subtraction (MCMICRO standard)
 for c in range(img.shape[0]):
@@ -223,6 +243,7 @@ for c in range(img.shape[0]):
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
 
 tifffile.imwrite('${tile.baseName}_corrected.tif', img, compression='lzw')
+print(f"Background correction complete: ${tile.baseName}_corrected.tif")
 EOF
     """
 }
