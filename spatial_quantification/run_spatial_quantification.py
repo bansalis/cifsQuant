@@ -34,9 +34,32 @@ from spatial_quantification.visualization import PlotManager
 
 
 def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
+    """Load configuration from YAML file and resolve paths."""
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
+
+    # Get project root (parent of spatial_quantification/)
+    project_root = Path(__file__).parent.parent
+
+    # Resolve input paths relative to project root
+    if 'input' in config:
+        if 'gated_data' in config['input']:
+            gated_path = Path(config['input']['gated_data'])
+            if not gated_path.is_absolute():
+                config['input']['gated_data'] = str(project_root / gated_path)
+
+        if 'metadata' in config['input']:
+            metadata_path = Path(config['input']['metadata'])
+            if not metadata_path.is_absolute():
+                config['input']['metadata'] = str(project_root / metadata_path)
+
+    # Resolve output directory relative to project root
+    if 'output' in config:
+        if 'base_directory' in config['output']:
+            output_path = Path(config['output']['base_directory'])
+            if not output_path.is_absolute():
+                config['output']['base_directory'] = str(project_root / output_path)
+
     return config
 
 
@@ -49,24 +72,37 @@ def main():
     parser.add_argument(
         '--config',
         type=str,
-        default='spatial_quantification/config/spatial_config.yaml',
+        default=None,
         help='Path to configuration YAML file'
     )
     args = parser.parse_args()
+
+    # Determine config path
+    if args.config is None:
+        # Default: look for config in same directory as script
+        script_dir = Path(__file__).parent
+        config_path = script_dir / 'config' / 'spatial_config.yaml'
+    else:
+        config_path = Path(args.config)
 
     # Load configuration
     print("\n" + "="*80)
     print("SPATIAL QUANTIFICATION PIPELINE")
     print("="*80)
-    print(f"\nLoading configuration from: {args.config}")
+    print(f"\nLoading configuration from: {config_path}")
 
-    config = load_config(args.config)
+    config = load_config(str(config_path))
+
+    # Print resolved paths
+    print(f"\nResolved paths:")
+    print(f"  Gated data: {config['input']['gated_data']}")
+    print(f"  Metadata: {config['input']['metadata']}")
+    print(f"  Output: {config['output']['base_directory']}")
 
     # Create output directory
     output_dir = Path(config['output']['base_directory'])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Output directory: {output_dir}/")
     print("="*80)
 
     # =========================================================================
