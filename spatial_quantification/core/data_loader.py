@@ -95,10 +95,20 @@ class DataLoader:
         if missing_metadata:
             warnings.warn(f"Samples in adata without metadata: {missing_metadata}")
 
-        # Check for gated columns (is_* columns from manual_gating)
+        # Check for gated columns (is_* columns)
         gated_cols = [col for col in self.adata.obs.columns if col.startswith('is_')]
+
         if not gated_cols:
-            raise ValueError("No gated columns (is_*) found in adata. Run manual_gating.py first.")
+            # Try to load gates from manual_gating output
+            print("\n  ℹ No is_* columns found, attempting to load from manual_gating layers...")
+            self._apply_gates_from_layers()
+            gated_cols = [col for col in self.adata.obs.columns if col.startswith('is_')]
+
+            if not gated_cols:
+                raise ValueError(
+                    "No gated columns (is_*) found in adata. "
+                    "Run manual_gating.py first or ensure gated_data.h5ad has 'gated' layer."
+                )
 
         print(f"\n  ✓ Found {len(gated_cols)} gated cell populations:")
         for col in sorted(gated_cols):
@@ -131,3 +141,29 @@ class DataLoader:
             self.adata = self.adata[valid_mask, :].copy()
             print(f"  ✓ Removed {n_nan} cells with invalid coordinates")
             print(f"  ✓ Remaining cells: {len(self.adata):,}")
+
+    def _apply_gates_from_layers(self):
+        """
+        Apply gates from manual_gating output.
+        Converts adata.layers['gated'] to is_* columns in obs.
+        """
+        if 'gated' not in self.adata.layers:
+            print("  ✗ No 'gated' layer found in adata")
+            return
+
+        print("  ✓ Found 'gated' layer from manual_gating")
+        print("  Creating is_* columns from gates...")
+
+        # The 'gated' layer has shape (n_cells, n_markers)
+        # with 0/1 values for negative/positive
+        gated_layer = self.adata.layers['gated']
+
+        # Create is_* column for each marker
+        for i, marker in enumerate(self.adata.var_names):
+            col_name = f'is_{marker}'
+            # Convert to boolean
+            self.adata.obs[col_name] = gated_layer[:, i].astype(bool)
+
+            n_positive = self.adata.obs[col_name].sum()
+            pct = 100 * n_positive / len(self.adata)
+            print(f"    - {col_name}: {n_positive:,} cells ({pct:.1f}%)")
