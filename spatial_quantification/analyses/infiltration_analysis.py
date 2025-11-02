@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from scipy.spatial import cKDTree
 from sklearn.cluster import DBSCAN
-from scipy.stats import moran_i
 import warnings
 
 
