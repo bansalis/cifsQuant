@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Dict
 from .individual_plots import IndividualPlots
 from .composite_plots import CompositePlots
-from ..statistics.comparisons import GroupComparison
-from ..statistics.temporal import TemporalAnalysis
+from ..stats.comparisons import GroupComparison
+from ..stats.temporal import TemporalAnalysis
 
 
 class PlotManager:
