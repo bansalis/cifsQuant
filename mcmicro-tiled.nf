@@ -80,14 +80,15 @@ def extract_tile(args):
     
     try:
         with tifffile.TiffFile(input_path) as tif:
-            pages = tif.series[0].pages if hasattr(tif, 'series') else tif.pages
-            
+            # Use tif.pages directly to access all individual channel pages in OME.TIFF
+            pages = tif.pages
+
             # Quick DAPI check
             dapi = pages[dapi_ch].asarray()[y:y_end, x:x_end]
             if dapi.max() == 0:
                 del dapi
                 return None
-            
+
             # Check for nuclei signal
             # Enhanced nuclei signal check
             p95 = np.percentile(dapi, 95)
@@ -98,7 +99,7 @@ def extract_tile(args):
             if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
                 del dapi
                 return None
-            
+
             # Read all channels
             tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
             for c in range(n_channels):
@@ -128,7 +129,8 @@ def extract_tile(args):
 # Get metadata without loading full image
 print("Reading image metadata...")
 with tifffile.TiffFile('${image}') as tif:
-    pages = tif.series[0].pages if hasattr(tif, 'series') else tif.pages
+    # Use tif.pages directly to access all individual channel pages in OME.TIFF
+    pages = tif.pages
     n_channels = len(pages)
     height = pages[0].shape[0]
     width = pages[0].shape[1]
