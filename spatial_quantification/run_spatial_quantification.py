@@ -27,6 +27,7 @@ from spatial_quantification.analyses import (
     PopulationDynamics,
     DistanceAnalysis,
     InfiltrationAnalysis,
+    InfiltrationAnalysisOptimized,
     NeighborhoodAnalysis,
     AdvancedAnalysis
 )
@@ -157,7 +158,16 @@ def main():
 
     # Infiltration Analysis
     if config.get('immune_infiltration', {}).get('enabled', False):
-        infiltration_analysis = InfiltrationAnalysis(adata, config, output_dir)
+        # Use optimized version if specified (RECOMMENDED)
+        use_optimized = config.get('immune_infiltration', {}).get('use_optimized', True)
+
+        if use_optimized:
+            print("  Using OPTIMIZED infiltration analysis (Getis-Ord Gi* + Ripley's K)")
+            infiltration_analysis = InfiltrationAnalysisOptimized(adata, config, output_dir)
+        else:
+            print("  Using standard infiltration analysis (Moran's I)")
+            infiltration_analysis = InfiltrationAnalysis(adata, config, output_dir)
+
         all_results['infiltration_analysis'] = infiltration_analysis.run()
 
     # Neighborhood Analysis
