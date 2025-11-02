@@ -105,7 +105,9 @@ def extract_tile(args):
                 tile[c] = pages[c].asarray()[y:y_end, x:x_end]
         
         filename = f"tile_y{y:06d}_x{x:06d}.tif"
-        tifffile.imwrite(filename, tile, photometric='minisblack', compression='lzw')
+        # Write as multi-page TIFF with explicit metadata to preserve all channels
+        tifffile.imwrite(filename, tile, photometric='minisblack', compression='lzw',
+                        metadata={'axes': 'CYX'})
         
         # Free memory immediately
         del tile, dapi
@@ -242,7 +244,8 @@ for c in range(img.shape[0]):
         bg = np.percentile(positive, 5)
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
 
-tifffile.imwrite('${tile.baseName}_corrected.tif', img, compression='lzw')
+tifffile.imwrite('${tile.baseName}_corrected.tif', img, compression='lzw',
+                 metadata={'axes': 'CYX'})
 print(f"Background correction complete: ${tile.baseName}_corrected.tif")
 EOF
     """
@@ -270,7 +273,8 @@ for c in range(img.shape[0]):
     corrected[c] = white_tophat(img[c], disk(${params.bg_radius}))
 
 tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected,
-                 photometric='minisblack', compression='lzw')
+                 photometric='minisblack', compression='lzw',
+                 metadata={'axes': 'CYX'})
 EOF
     """
 }
