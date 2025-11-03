@@ -348,6 +348,13 @@ for sample_entry in "${samples_to_process[@]}"; do
         tile_dir="$outdir/tiles"
         mkdir -p "$tile_dir"
 
+        # Check if output is on WSL mount (/mnt) for performance optimization
+        fast_temp_flag=""
+        if [[ "$tile_dir" == /mnt/* ]]; then
+            fast_temp_flag="--use_fast_temp"
+            echo "⚡ Detected WSL mount - using fast temp strategy (5x speedup!)"
+        fi
+
         python3 scripts/tile_from_channels.py \
             --sample_dir "$sample_path" \
             --markers_csv markers.csv \
@@ -355,7 +362,8 @@ for sample_entry in "${samples_to_process[@]}"; do
             --tile_size 8192 \
             --overlap 1024 \
             --dapi_channel 0 \
-            --max_workers 3
+            --max_workers 3 \
+            $fast_temp_flag
 
         if [ $? -ne 0 ]; then
             echo "✗ FAILED: Tiling failed for $sample_name"

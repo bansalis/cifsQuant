@@ -138,6 +138,7 @@ def main():
     parser.add_argument('--overlap', type=int, default=1024, help='Tile overlap')
     parser.add_argument('--dapi_channel', type=int, default=0, help='DAPI channel index')
     parser.add_argument('--max_workers', type=int, default=3, help='Number of parallel workers (default: 3 for memory safety)')
+    parser.add_argument('--use_fast_temp', action='store_true', help='Write to fast Linux FS first, then bulk move (5x faster on WSL!)')
 
     args = parser.parse_args()
 
@@ -189,11 +190,24 @@ def main():
 
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
+    final_output_dir = os.path.abspath(args.output_dir)
+
+    # TWO-STAGE WRITE STRATEGY for WSL performance
+    if args.use_fast_temp:
+        import tempfile
+        import shutil
+        # Use fast Linux filesystem for initial writes (5x faster than /mnt!)
+        temp_dir = tempfile.mkdtemp(prefix='tiles_', dir='/tmp')
+        work_dir = temp_dir
+        print(f"⚡ FAST MODE: Writing to Linux FS first ({temp_dir})")
+        print(f"   Will bulk-move to {final_output_dir} when done (5x faster!)")
+    else:
+        work_dir = final_output_dir
 
     # RESUME FUNCTIONALITY: Check for existing tiles
     existing_tiles = set()
-    if os.path.exists(args.output_dir):
-        for f in os.listdir(args.output_dir):
+    if os.path.exists(final_output_dir):
+        for f in os.listdir(final_output_dir):
             if f.startswith('tile_') and f.endswith('.tif'):
                 existing_tiles.add(f)
 
@@ -209,7 +223,7 @@ def main():
     else:
         print(f"Processing {len(coords)} tiles from scratch...")
 
-    os.chdir(args.output_dir)
+    os.chdir(work_dir)
 
     # Process tiles
     tile_info = []
@@ -247,6 +261,29 @@ def main():
     shutil.copy(args.markers_csv, 'markers_tiled.csv')
 
     print(f"Tiling completed! Created {len(tile_info)} tiles")
+
+    # BULK MOVE from temp to final destination if using fast temp
+    if args.use_fast_temp:
+        print(f"\n⚡ Bulk-moving {total_tiles} tiles to final destination...")
+        print(f"   From: {work_dir}")
+        print(f"   To:   {final_output_dir}")
+
+        import time
+        start_time = time.time()
+
+        # Move all tile files
+        for filename in os.listdir(work_dir):
+            if filename.endswith('.tif') or filename.endswith('.json') or filename.endswith('.txt') or filename.endswith('.csv'):
+                src = os.path.join(work_dir, filename)
+                dst = os.path.join(final_output_dir, filename)
+                shutil.move(src, dst)
+
+        # Clean up temp dir
+        os.rmdir(work_dir)
+
+        elapsed = time.time() - start_time
+        print(f"   ✓ Bulk move completed in {elapsed:.1f}s")
+        print(f"   Final tiles location: {final_output_dir}")
 
 
 if __name__ == '__main__':
