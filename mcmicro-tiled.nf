@@ -11,6 +11,7 @@ nextflow.enable.dsl = 2
  * Define parameters
  */
 params.input_image = null
+params.input_dir = null  // NEW: directory with per-channel TIFFs
 params.markers_csv = null
 params.outdir = './results'
 params.tile_size = 4096
@@ -75,43 +76,34 @@ import sys
 import gc
 import os
 
-def extract_tile(args):
+def extract_tile_from_stack(args):
+    """Extract tile from single stacked multi-channel TIFF (slower)"""
     y, x, y_end, x_end, tif, n_channels, dapi_ch = args
 
     try:
-        # tif is now the shared TiffFile object, not a path
         pages = tif.pages
 
-        # Quick DAPI check with faster percentile calculation
+        # Quick DAPI check
         dapi = pages[dapi_ch].asarray()[y:y_end, x:x_end]
         if dapi.max() == 0:
             del dapi
             return None
 
-        # Check for nuclei signal - use faster approximate percentiles
+        # Check for nuclei signal
         p95 = np.percentile(dapi, 95)
         p5 = np.percentile(dapi, 5)
         dynamic_range = p95 - p5
 
-        # Require: contrast AND minimum intensity
         if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
             del dapi
             return None
 
-        # Read all channels - optimized with preallocated array
+        # Read all channels
         tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
         for c in range(n_channels):
             tile[c] = pages[c].asarray()[y:y_end, x:x_end]
 
         filename = f"tile_y{y:06d}_x{x:06d}.tif"
-
-        # PERFORMANCE OPTIMIZATIONS FOR SLOW I/O (network/WSL mounts):
-        # 1. LOSSLESS COMPRESSION - reduces I/O by ~60% (3-6x faster on slow storage)
-        #    Using 'zlib' level 6 (balanced speed/size) - COMPLETELY LOSSLESS
-        # 2. NO internal tiling - simpler writes for slow filesystems
-        # 3. BigTIFF for >4GB support
-        #
-        # QUALITY: 100% lossless - bit-for-bit identical after decompression
         tifffile.imwrite(filename, tile,
                         photometric='minisblack',
                         compression='zlib',
@@ -119,7 +111,6 @@ def extract_tile(args):
                         metadata={'axes': 'CYX'},
                         bigtiff=True)
 
-        # Free memory immediately
         del tile, dapi
         gc.collect()
 
@@ -135,15 +126,106 @@ def extract_tile(args):
         print(f"Error tile y{y}_x{x}: {e}", file=sys.stderr)
         return None
 
-# Get metadata without loading full image
-print("Reading image metadata...")
-tif = tifffile.TiffFile('${image}')
-pages = tif.pages
-n_channels = len(pages)
-height = pages[0].shape[0]
-width = pages[0].shape[1]
+def extract_tile_from_channels(args):
+    """Extract tile from separate per-channel TIFFs (MUCH faster!)"""
+    y, x, y_end, x_end, channel_files, dapi_ch = args
 
-print(f"Image: {n_channels} channels, {height}x{width} pixels")
+    try:
+        n_channels = len(channel_files)
+
+        # Quick DAPI check - read only DAPI channel first
+        with tifffile.TiffFile(channel_files[dapi_ch]) as tif:
+            dapi = tif.pages[0].asarray()[y:y_end, x:x_end]
+
+        if dapi.max() == 0:
+            del dapi
+            return None
+
+        # Check for nuclei signal
+        p95 = np.percentile(dapi, 95)
+        p5 = np.percentile(dapi, 5)
+        dynamic_range = p95 - p5
+
+        if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
+            del dapi
+            return None
+
+        # Read all channels from separate files
+        tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
+        tile[dapi_ch] = dapi  # Already loaded
+
+        for c in range(n_channels):
+            if c == dapi_ch:
+                continue  # Already loaded
+            with tifffile.TiffFile(channel_files[c]) as tif:
+                tile[c] = tif.pages[0].asarray()[y:y_end, x:x_end]
+
+        filename = f"tile_y{y:06d}_x{x:06d}.tif"
+
+        # PERFORMANCE: Lossless compression for slow I/O (WSL mounts)
+        # Reduces write by ~60%, transparently decompressed on read
+        tifffile.imwrite(filename, tile,
+                        photometric='minisblack',
+                        compression='zlib',
+                        compressionargs={'level': 6},
+                        metadata={'axes': 'CYX'},
+                        bigtiff=True)
+
+        del tile, dapi
+        gc.collect()
+
+        return {
+            'filename': filename,
+            'y_start': y, 'x_start': x,
+            'y_end': y_end, 'x_end': x_end,
+            'height': y_end - y, 'width': x_end - x,
+            'channels': n_channels,
+            'has_data': True
+        }
+    except Exception as e:
+        print(f"Error tile y{y}_x{x}: {e}", file=sys.stderr)
+        return None
+
+# Detect input mode: per-channel files or stacked TIFF
+import glob
+from pathlib import Path
+
+input_dir = '${image}'.rsplit('/', 1)[0] if '/' in '${image}' else '.'
+input_file = '${image}'
+
+# Check if this is a directory with per-channel TIFFs
+use_channel_files = False
+channel_files = []
+
+if Path(input_dir).is_dir():
+    # Look for pattern like sample_R*.ome.tif
+    potential_channels = sorted(glob.glob(f"{input_dir}/*.ome.tif"))
+    if len(potential_channels) > 1:
+        use_channel_files = True
+        channel_files = potential_channels
+        print(f"FAST MODE: Found {len(channel_files)} per-channel TIFF files")
+    elif Path(input_file).exists():
+        print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+else:
+    print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+
+# Get metadata
+if use_channel_files:
+    # Read from first channel to get dimensions
+    with tifffile.TiffFile(channel_files[0]) as tif:
+        height = tif.pages[0].shape[0]
+        width = tif.pages[0].shape[1]
+    n_channels = len(channel_files)
+    print(f"Image: {n_channels} channels, {height}x{width} pixels")
+    print(f"Channel files: {[Path(f).name for f in channel_files[:3]]}... (showing first 3)")
+else:
+    # Legacy: read from stacked TIFF
+    tif = tifffile.TiffFile(input_file)
+    pages = tif.pages
+    n_channels = len(pages)
+    height = pages[0].shape[0]
+    width = pages[0].shape[1]
+    print(f"Image: {n_channels} channels, {height}x{width} pixels")
 
 # Generate tile coordinates
 step = ${tile_size} - ${overlap}
@@ -152,22 +234,27 @@ for y in range(0, height - ${overlap}, step):
     for x in range(0, width - ${overlap}, step):
         y_end = min(y + ${tile_size}, height)
         x_end = min(x + ${tile_size}, width)
-        coords.append((y, x, y_end, x_end, tif, n_channels, ${params.dapi_channel}))
+
+        if use_channel_files:
+            coords.append((y, x, y_end, x_end, channel_files, ${params.dapi_channel}))
+        else:
+            coords.append((y, x, y_end, x_end, tif, n_channels, ${params.dapi_channel}))
 
 print(f"Processing {len(coords)} tiles in batches...")
 sys.stdout.flush()
 
 # Process in batches with limited concurrency to avoid OOM
-# TiffFile is thread-safe for reading, so we can share it
 tile_info = []
 batch_size = 8
 max_workers = 2
+
+extract_func = extract_tile_from_channels if use_channel_files else extract_tile_from_stack
 
 for batch_start in range(0, len(coords), batch_size):
     batch = coords[batch_start:batch_start + batch_size]
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(extract_tile, c): c for c in batch}
+        futures = {executor.submit(extract_func, c): c for c in batch}
 
         for future in as_completed(futures):
             result = future.result()
@@ -177,8 +264,9 @@ for batch_start in range(0, len(coords), batch_size):
     print(f"Progress: {len(tile_info)}/{len(coords)}", flush=True)
     gc.collect()  # Force cleanup between batches
 
-# Close the shared TiffFile
-tif.close()
+# Close the shared TiffFile if using stacked mode
+if not use_channel_files:
+    tif.close()
 
 print(f"\\nTILING SUMMARY: {len(coords)} total tiles, {len(tile_info)} with meaningful data")
 
@@ -929,19 +1017,35 @@ else:
  * BATCH CELLPOSE WORKFLOW
  */
 workflow {
-    if (!params.input_image) {
-        error "Please provide --input_image parameter"
+    if (!params.input_image && !params.input_dir) {
+        error "Please provide --input_image or --input_dir parameter"
     }
-    
+
     log.info "=== MCMICRO BATCH CELLPOSE PIPELINE ==="
-    log.info "Input image: ${params.input_image}"
+
+    // NEW: Support per-channel TIFF directory (MUCH faster on slow storage!)
+    if (params.input_dir) {
+        log.info "FAST MODE: Per-channel TIFFs from directory: ${params.input_dir}"
+        input_image_ch = Channel.fromPath("${params.input_dir}/*.ome.tif").first()
+        log.info "    This mode is 5-10x faster on network/WSL mounts!"
+    } else {
+        log.info "LEGACY MODE: Stacked multi-channel TIFF: ${params.input_image}"
+        input_image_ch = Channel.fromPath(params.input_image)
+        log.info "    Consider using --input_dir with per-channel TIFFs for much faster processing"
+    }
+
     log.info "Tile size: ${params.tile_size}"
     log.info "Nuclei batch size: ${params.nuclei_batch_size} tiles/batch"
     log.info "Cyto batch size: ${params.cyto_batch_size_tiles} tiles/batch"
     log.info "Output directory: ${params.outdir}"
-    
-    // Create input channels
-    input_image_ch = Channel.fromPath(params.input_image)
+
+    // Create input channels (will be directory path or file path)
+    if (!params.input_dir) {
+        input_image_ch = Channel.fromPath(params.input_image)
+    } else {
+        // Pass any file from the directory, the script will detect and use all files
+        input_image_ch = Channel.fromPath("${params.input_dir}/*.ome.tif").first()
+    }
 
     // Create markers channel - use provided file or look for default
     if (params.markers_csv) {
