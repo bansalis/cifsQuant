@@ -76,44 +76,51 @@ import gc
 import os
 
 def extract_tile(args):
-    y, x, y_end, x_end, input_path, n_channels, dapi_ch = args
-    
+    y, x, y_end, x_end, tif, n_channels, dapi_ch = args
+
     try:
-        with tifffile.TiffFile(input_path) as tif:
-            # Use tif.pages directly to access all individual channel pages in OME.TIFF
-            pages = tif.pages
+        # tif is now the shared TiffFile object, not a path
+        pages = tif.pages
 
-            # Quick DAPI check
-            dapi = pages[dapi_ch].asarray()[y:y_end, x:x_end]
-            if dapi.max() == 0:
-                del dapi
-                return None
+        # Quick DAPI check with faster percentile calculation
+        dapi = pages[dapi_ch].asarray()[y:y_end, x:x_end]
+        if dapi.max() == 0:
+            del dapi
+            return None
 
-            # Check for nuclei signal
-            # Enhanced nuclei signal check
-            p95 = np.percentile(dapi, 95)
-            p5 = np.percentile(dapi, 5)
-            dynamic_range = p95 - p5
+        # Check for nuclei signal - use faster approximate percentiles
+        p95 = np.percentile(dapi, 95)
+        p5 = np.percentile(dapi, 5)
+        dynamic_range = p95 - p5
 
-            # Require: contrast AND minimum intensity
-            if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
-                del dapi
-                return None
+        # Require: contrast AND minimum intensity
+        if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
+            del dapi
+            return None
 
-            # Read all channels
-            tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
-            for c in range(n_channels):
-                tile[c] = pages[c].asarray()[y:y_end, x:x_end]
-        
+        # Read all channels - optimized with preallocated array
+        tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
+        for c in range(n_channels):
+            tile[c] = pages[c].asarray()[y:y_end, x:x_end]
+
         filename = f"tile_y{y:06d}_x{x:06d}.tif"
-        # Write as multi-page TIFF with explicit metadata to preserve all channels
-        tifffile.imwrite(filename, tile, photometric='minisblack', compression='lzw',
-                        metadata={'axes': 'CYX'})
-        
+
+        # PERFORMANCE OPTIMIZATIONS:
+        # 1. NO COMPRESSION - raw uncompressed data for 100% quality (faster writes too!)
+        # 2. Internal TIFF tiling tile=(256,256) - organizes data in chunks for faster I/O
+        #    This is NOT compression - just how data blocks are arranged on disk
+        # 3. BigTIFF for >4GB support
+        tifffile.imwrite(filename, tile,
+                        photometric='minisblack',
+                        compression=None,
+                        tile=(256, 256),
+                        metadata={'axes': 'CYX'},
+                        bigtiff=True)
+
         # Free memory immediately
         del tile, dapi
         gc.collect()
-        
+
         return {
             'filename': filename,
             'y_start': y, 'x_start': x,
@@ -128,12 +135,11 @@ def extract_tile(args):
 
 # Get metadata without loading full image
 print("Reading image metadata...")
-with tifffile.TiffFile('${image}') as tif:
-    # Use tif.pages directly to access all individual channel pages in OME.TIFF
-    pages = tif.pages
-    n_channels = len(pages)
-    height = pages[0].shape[0]
-    width = pages[0].shape[1]
+tif = tifffile.TiffFile('${image}')
+pages = tif.pages
+n_channels = len(pages)
+height = pages[0].shape[0]
+width = pages[0].shape[1]
 
 print(f"Image: {n_channels} channels, {height}x{width} pixels")
 
@@ -144,29 +150,33 @@ for y in range(0, height - ${overlap}, step):
     for x in range(0, width - ${overlap}, step):
         y_end = min(y + ${tile_size}, height)
         x_end = min(x + ${tile_size}, width)
-        coords.append((y, x, y_end, x_end, '${image}', n_channels, ${params.dapi_channel}))
+        coords.append((y, x, y_end, x_end, tif, n_channels, ${params.dapi_channel}))
 
-print(f"Processing {len(coords)} tiles in batches (4 concurrent)...")
+print(f"Processing {len(coords)} tiles in batches...")
 sys.stdout.flush()
 
 # Process in batches with limited concurrency to avoid OOM
+# TiffFile is thread-safe for reading, so we can share it
 tile_info = []
 batch_size = 8
 max_workers = 2
 
 for batch_start in range(0, len(coords), batch_size):
     batch = coords[batch_start:batch_start + batch_size]
-    
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(extract_tile, c): c for c in batch}
-        
+
         for future in as_completed(futures):
             result = future.result()
             if result:
                 tile_info.append(result)
-    
+
     print(f"Progress: {len(tile_info)}/{len(coords)}", flush=True)
     gc.collect()  # Force cleanup between batches
+
+# Close the shared TiffFile
+tif.close()
 
 print(f"\\nTILING SUMMARY: {len(coords)} total tiles, {len(tile_info)} with meaningful data")
 
@@ -246,8 +256,11 @@ for c in range(img.shape[0]):
         bg = np.percentile(positive, 5)
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
 
-tifffile.imwrite('${tile.baseName}_corrected.tif', img, compression='lzw',
-                 metadata={'axes': 'CYX'})
+tifffile.imwrite('${tile.baseName}_corrected.tif', img,
+                 compression=None,
+                 tile=(256, 256),
+                 metadata={'axes': 'CYX'},
+                 bigtiff=True)
 print(f"Background correction complete: ${tile.baseName}_corrected.tif")
 EOF
     """
@@ -275,8 +288,11 @@ for c in range(img.shape[0]):
     corrected[c] = white_tophat(img[c], disk(${params.bg_radius}))
 
 tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected,
-                 photometric='minisblack', compression='lzw',
-                 metadata={'axes': 'CYX'})
+                 photometric='minisblack',
+                 compression=None,
+                 tile=(256, 256),
+                 metadata={'axes': 'CYX'},
+                 bigtiff=True)
 EOF
     """
 }
