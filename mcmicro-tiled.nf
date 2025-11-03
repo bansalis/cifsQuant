@@ -11,7 +11,8 @@ nextflow.enable.dsl = 2
  * Define parameters
  */
 params.input_image = null
-params.input_dir = null  // NEW: directory with per-channel TIFFs
+params.input_dir = null  // NEW: directory with per-channel TIFFs for single sample
+params.rawdata_dir = null  // NEW: parent directory with multiple sample folders
 params.markers_csv = null
 params.outdir = './results'
 params.tile_size = 4096
@@ -47,24 +48,23 @@ params.cyto_batch_size_tiles = 4  // Process 4 tiles per cyto batch
  */
 process TILE_LARGE_IMAGE {
     tag "$sample_name"
-    publishDir "${params.outdir}/tiles", mode: 'copy'
+    publishDir "${params.outdir}/${sample_name}/tiles", mode: 'copy'
     cpus 4
     memory '32.GB'
 
     input:
-    path image
+    tuple val(sample_name), path(sample_dir)
     path markers_input
-    val sample_name
     val tile_size
     val overlap
     val pyramid_level
 
     output:
-    path "tile_*.tif", emit: tiles
-    path "tile_info.json", emit: tile_info
+    tuple val(sample_name), path("tile_*.tif"), emit: tiles
+    tuple val(sample_name), path("tile_info.json"), emit: tile_info
     path "markers_tiled.csv", emit: markers_csv
-    path "tile_list.txt", emit: tile_list
-    
+    tuple val(sample_name), path("tile_list.txt"), emit: tile_list
+
     script:
     """
 #!/usr/bin/env python3
@@ -189,25 +189,119 @@ def extract_tile_from_channels(args):
 # Detect input mode: per-channel files or stacked TIFF
 import glob
 from pathlib import Path
+import pandas as pd
+import re
 
-input_dir = '${image}'.rsplit('/', 1)[0] if '/' in '${image}' else '.'
-input_file = '${image}'
+def match_marker_to_file(marker_name, available_files):
+    """
+    Match a marker name from markers.csv to an actual file.
+    Example: "R1.0.1_DAPI" matches "JL216_1.0.1_R000_DAPI__FINAL_F.ome.tif"
+    """
+    # Extract key components from marker name
+    # Handle patterns like: R1.0.1_DAPI, R1.0.4_CY5_CD45, etc.
+    parts = marker_name.replace('R', '').split('_')
+    cycle_round = parts[0]  # e.g., "1.0.1" or "1.0.4"
 
-# Check if this is a directory with per-channel TIFFs
+    # Build search pattern components
+    search_terms = []
+    search_terms.append(cycle_round.replace('.', r'\.'))  # Match cycle/round
+
+    # Add remaining parts (channel, marker)
+    for part in parts[1:]:
+        if part:  # Skip empty parts
+            search_terms.append(part)
+
+    # Try to find matching file (case-insensitive)
+    best_match = None
+    best_score = 0
+
+    for filepath in available_files:
+        filename = Path(filepath).name.upper()  # Case-insensitive
+        marker_upper = marker_name.upper()
+
+        # Score based on how many search terms match
+        score = 0
+        for term in search_terms:
+            if term.upper() in filename:
+                score += 1
+
+        # Additional score if marker name components are in order
+        if all(term.upper() in filename for term in search_terms):
+            score += 10
+
+        if score > best_score:
+            best_score = score
+            best_match = filepath
+
+    if best_match and best_score >= len(search_terms):
+        return best_match
+
+    # Fallback: try simpler pattern matching
+    pattern = marker_name.replace('R', '').replace('_', '.*')
+    for filepath in available_files:
+        if re.search(pattern, str(filepath), re.IGNORECASE):
+            return filepath
+
+    return None
+
+# Input is the sample directory path
+input_dir = '${sample_dir}'
+input_file = None  # Will look for stacked TIFF if needed
+
+# Check if markers CSV is provided
+markers_csv_path = '${markers_input}'
 use_channel_files = False
 channel_files = []
 
-if Path(input_dir).is_dir():
-    # Look for pattern like sample_R*.ome.tif
-    potential_channels = sorted(glob.glob(f"{input_dir}/*.ome.tif"))
-    if len(potential_channels) > 1:
-        use_channel_files = True
-        channel_files = potential_channels
-        print(f"FAST MODE: Found {len(channel_files)} per-channel TIFF files")
+if Path(markers_csv_path).exists() and Path(markers_csv_path).stat().st_size > 0:
+    # Read markers.csv to get ordered list of channels
+    markers_df = pd.read_csv(markers_csv_path)
+    marker_names = markers_df['marker_name'].tolist()
+
+    print(f"Reading markers.csv: {len(marker_names)} channels defined")
+
+    # Find all available .ome.tif files in directory
+    if Path(input_dir).is_dir():
+        available_files = glob.glob(f"{input_dir}/*.ome.tif")
+        print(f"Found {len(available_files)} .ome.tif files in {input_dir}")
+
+        # Match each marker to a file
+        matched_files = []
+        for marker in marker_names:
+            matched_file = match_marker_to_file(marker, available_files)
+            if matched_file:
+                matched_files.append(matched_file)
+                print(f"  ✓ {marker} → {Path(matched_file).name}")
+            else:
+                print(f"  ✗ WARNING: No file found for marker '{marker}'")
+                # Create placeholder - will need to handle this
+                matched_files.append(None)
+
+        # Filter out None values
+        channel_files = [f for f in matched_files if f is not None]
+
+        if len(channel_files) >= len(marker_names) * 0.8:  # At least 80% matched
+            use_channel_files = True
+            print(f"FAST MODE: Using {len(channel_files)} per-channel TIFF files in markers.csv order")
+        else:
+            print(f"ERROR: Only matched {len(channel_files)}/{len(marker_names)} markers")
+            print(f"Please check markers.csv and file naming conventions")
+            sys.exit(1)
     elif Path(input_file).exists():
         print(f"LEGACY MODE: Using stacked multi-channel TIFF")
 else:
-    print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+    # No markers.csv - fall back to auto-detection
+    print("No markers.csv provided, auto-detecting channels...")
+    if Path(input_dir).is_dir():
+        potential_channels = sorted(glob.glob(f"{input_dir}/*.ome.tif"))
+        if len(potential_channels) > 1:
+            use_channel_files = True
+            channel_files = potential_channels
+            print(f"FAST MODE: Found {len(channel_files)} per-channel TIFF files (alphabetical order)")
+        elif Path(input_file).exists():
+            print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+    else:
+        print(f"LEGACY MODE: Using stacked multi-channel TIFF")
 
 # Get metadata
 if use_channel_files:
@@ -1017,34 +1111,48 @@ else:
  * BATCH CELLPOSE WORKFLOW
  */
 workflow {
-    if (!params.input_image && !params.input_dir) {
-        error "Please provide --input_image or --input_dir parameter"
-    }
-
     log.info "=== MCMICRO BATCH CELLPOSE PIPELINE ==="
-
-    // NEW: Support per-channel TIFF directory (MUCH faster on slow storage!)
-    if (params.input_dir) {
-        log.info "FAST MODE: Per-channel TIFFs from directory: ${params.input_dir}"
-        input_image_ch = Channel.fromPath("${params.input_dir}/*.ome.tif").first()
-        log.info "    This mode is 5-10x faster on network/WSL mounts!"
-    } else {
-        log.info "LEGACY MODE: Stacked multi-channel TIFF: ${params.input_image}"
-        input_image_ch = Channel.fromPath(params.input_image)
-        log.info "    Consider using --input_dir with per-channel TIFFs for much faster processing"
-    }
-
     log.info "Tile size: ${params.tile_size}"
-    log.info "Nuclei batch size: ${params.nuclei_batch_size} tiles/batch"
-    log.info "Cyto batch size: ${params.cyto_batch_size_tiles} tiles/batch"
     log.info "Output directory: ${params.outdir}"
 
-    // Create input channels (will be directory path or file path)
-    if (!params.input_dir) {
-        input_image_ch = Channel.fromPath(params.input_image)
+    // Support multiple samples from rawdata_dir
+    if (params.rawdata_dir) {
+        log.info "MULTI-SAMPLE MODE: Processing all samples in ${params.rawdata_dir}"
+        log.info "    Using markers.csv to determine channel order"
+        log.info "    This mode is 5-10x faster on network/WSL mounts!"
+
+        // Find all sample directories (directories containing .ome.tif files)
+        def rawdata = file(params.rawdata_dir)
+        def sample_dirs = rawdata.listFiles()
+            .findAll { it.isDirectory() }
+            .findAll { dir ->
+                dir.listFiles().any { it.name.endsWith('.ome.tif') }
+            }
+
+        if (sample_dirs.size() == 0) {
+            error "No sample directories with .ome.tif files found in ${params.rawdata_dir}"
+        }
+
+        log.info "Found ${sample_dirs.size()} samples: ${sample_dirs.collect { it.name }.join(', ')}"
+
+        // Create channel with (sample_name, sample_dir) tuples
+        samples_ch = Channel.fromList(
+            sample_dirs.collect { dir -> tuple(dir.name, dir) }
+        )
+    } else if (params.input_dir) {
+        // Single sample mode
+        log.info "SINGLE-SAMPLE MODE: Processing ${params.sample_name}"
+        log.info "    Using per-channel TIFFs from: ${params.input_dir}"
+        samples_ch = Channel.of(tuple(params.sample_name, file(params.input_dir)))
+    } else if (params.input_image) {
+        log.info "LEGACY MODE: Stacked multi-channel TIFF"
+        log.info "    Consider using --rawdata_dir with per-channel TIFFs for much faster processing"
+        // For legacy mode, pass the directory containing the stacked TIFF
+        def image_file = file(params.input_image)
+        def image_dir = image_file.parent
+        samples_ch = Channel.of(tuple(params.sample_name, image_dir))
     } else {
-        // Pass any file from the directory, the script will detect and use all files
-        input_image_ch = Channel.fromPath("${params.input_dir}/*.ome.tif").first()
+        error "Please provide --rawdata_dir, --input_dir, or --input_image parameter"
     }
 
     // Create markers channel - use provided file or look for default
@@ -1070,11 +1178,10 @@ workflow {
         image_to_tile = input_image_ch
     }
 
-    // Step 1: Tile the image
+    // Step 1: Tile the images for all samples
     TILE_LARGE_IMAGE(
-        input_image_ch,
+        samples_ch,
         markers_ch,
-        params.sample_name,
         params.tile_size,
         params.overlap,
         params.pyramid_level
