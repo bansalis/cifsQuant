@@ -19,13 +19,18 @@ import argparse
 
 
 def match_marker_to_file(marker_name, available_files):
-    """Match a marker name from markers.csv to an actual file."""
+    """Match a marker name from markers.csv to an actual file with flexible fuzzy matching."""
+    # Extract cycle/round (e.g., "2.0.4" from "R2.0.4_CY3_PERK")
     parts = marker_name.replace('R', '').split('_')
-    cycle_round = parts[0]
+    cycle_round = parts[0]  # e.g., "2.0.4"
 
-    search_terms = [cycle_round.replace('.', r'\.')]
+    # Build search terms from marker name
+    search_terms = []
+    search_terms.append(cycle_round)  # Must have cycle/round
+
+    # Add channel and marker parts
     for part in parts[1:]:
-        if part:
+        if part and len(part) > 1:  # Skip single chars
             search_terms.append(part)
 
     best_match = None
@@ -33,11 +38,31 @@ def match_marker_to_file(marker_name, available_files):
 
     for filepath in available_files:
         filename = Path(filepath).name.upper()
+        marker_upper = marker_name.upper()
+
         score = 0
+
+        # MUST match cycle/round exactly (critical!)
+        if cycle_round not in Path(filepath).name:
+            continue
+
+        # Score based on how many terms match (case-insensitive)
         for term in search_terms:
             if term.upper() in filename:
+                score += 2
+
+        # Bonus: Check if any word in marker is in filename
+        # This handles variations like PERK vs pERK
+        marker_words = [w for w in marker_name.split('_') if len(w) > 2]
+        for word in marker_words:
+            # Check if word appears in filename (case-insensitive, partial match OK)
+            if word.upper() in filename or word.lower() in filename.lower():
+                score += 1
+            # Also check without first char (e.g., "ERK" in "pERK")
+            if len(word) > 3 and word[1:].upper() in filename:
                 score += 1
 
+        # Strong bonus if marker components appear in order
         if all(term.upper() in filename for term in search_terms):
             score += 10
 
@@ -45,13 +70,22 @@ def match_marker_to_file(marker_name, available_files):
             best_score = score
             best_match = filepath
 
-    if best_match and best_score >= len(search_terms):
+    if best_match and best_score >= 3:  # Require minimum score
         return best_match
 
-    pattern = marker_name.replace('R', '').replace('_', '.*')
+    # Fallback: very lenient regex search
+    # Build pattern from marker parts
+    pattern_parts = []
+    for part in parts:
+        if part and len(part) > 1:
+            pattern_parts.append(part)
+
+    pattern = '.*'.join(pattern_parts)
     for filepath in available_files:
         if re.search(pattern, str(filepath), re.IGNORECASE):
-            return filepath
+            # Verify cycle/round matches
+            if cycle_round in Path(filepath).name:
+                return filepath
 
     return None
 
