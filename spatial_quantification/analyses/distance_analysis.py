@@ -9,9 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 from scipy.spatial import cKDTree
 import warnings
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from visualization.distance_analysis_plotter import DistanceAnalysisPlotter
+from ..visualization.distance_analysis_plotter import DistanceAnalysisPlotter
 
 
 class DistanceAnalysis:
