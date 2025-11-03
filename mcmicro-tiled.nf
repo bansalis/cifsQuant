@@ -31,17 +31,37 @@ params.mcquant_container = 'labsyspharm/quantification:latest'
 params.scimap_container = 'labsyspharm/scimap:0.17.7'
 
 // Cellpose specific parameters
-params.dapi_channel = 8
+params.dapi_channel = 0
 params.nuc_model = 'nuclei'
 params.nuc_diameter = 15
+params.nuc_flow_threshold = 0.4
+params.nuc_cellprob_threshold = 0.0
+params.stitch_threshold = 0.0
 params.cyto_model = 'cyto2'
 params.cyto_diameter = 28
+params.cyto_flow_threshold = 0.4
+params.cyto_cellprob_threshold = 0.0
+params.min_cell_size = 15
 params.cyto_batch_size = 8
 params.buffer_px = null
 
 // BATCH OPTIMIZATION PARAMETERS
 params.nuclei_batch_size = 6    // Process 6 tiles per nuclei batch
 params.cyto_batch_size_tiles = 4  // Process 4 tiles per cyto batch
+
+// QC parameters
+params.cylinter = false
+params.min_cell_area = 10
+params.max_cell_area = 1000
+params.max_eccentricity = 0.95
+params.min_marker_expression = 10
+params.fold_window = 50
+params.fold_cv_threshold = 0.5
+
+// Background subtraction
+params.background_subtract = false
+params.global_bg_subtract = false
+params.bg_radius = 50
 
 /*
  * Process that creates tiles
