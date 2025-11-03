@@ -5,6 +5,7 @@ from .distance_analysis import DistanceAnalysis
 from .infiltration_analysis import InfiltrationAnalysis
 from .infiltration_analysis_optimized import InfiltrationAnalysisOptimized
 from .neighborhoods import NeighborhoodAnalysis
+from .neighborhoods_optimized import NeighborhoodAnalysisOptimized
 from .advanced import AdvancedAnalysis
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     'InfiltrationAnalysis',
     'InfiltrationAnalysisOptimized',
     'NeighborhoodAnalysis',
+    'NeighborhoodAnalysisOptimized',
     'AdvancedAnalysis'
 ]
