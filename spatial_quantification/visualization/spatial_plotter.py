@@ -443,3 +443,67 @@ class SpatialPlotter:
         plt.close(fig)
 
         print(f"    ✓ Generated spatial summary for {sample}")
+
+    def plot_neighborhood_spatial_maps(self, neighborhood_assignments: Dict):
+        """
+        Plot neighborhood assignments spatially for each sample.
+
+        Shows which cells belong to which neighborhood type with consistent colors.
+
+        Parameters
+        ----------
+        neighborhood_assignments : Dict
+            Dict of {sample_id: {'labels': array, 'coords': array}}
+        """
+        print("\n  Generating neighborhood spatial maps...")
+
+        # Get unique neighborhood types across all samples
+        all_labels = []
+        for sample_data in neighborhood_assignments.values():
+            all_labels.extend(np.unique(sample_data['labels']))
+        unique_neighborhoods = sorted(set(all_labels))
+
+        # Create consistent colormap
+        n_neighborhoods = len(unique_neighborhoods)
+        colors = plt.cm.tab20(np.linspace(0, 1, n_neighborhoods))
+        nh_to_color = {nh: colors[i] for i, nh in enumerate(unique_neighborhoods)}
+
+        for sample, data in neighborhood_assignments.items():
+            labels = data['labels']
+            coords = data['coords']
+
+            if len(labels) == 0:
+                continue
+
+            fig, ax = plt.subplots(figsize=(14, 12))
+
+            # Plot each neighborhood type
+            for nh_label in unique_neighborhoods:
+                nh_mask = (labels == nh_label)
+                if nh_mask.sum() == 0:
+                    continue
+
+                nh_coords = coords[nh_mask]
+                color = nh_to_color[nh_label]
+
+                ax.scatter(nh_coords[:, 0], nh_coords[:, 1],
+                          c=[color], s=5, alpha=0.8, edgecolors='none',
+                          label=f'NH-{nh_label}')
+
+            ax.set_xlabel('X (μm)', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Y (μm)', fontsize=12, fontweight='bold')
+            ax.set_title(f'{sample} - Neighborhood Assignments',
+                        fontsize=14, fontweight='bold')
+            ax.set_aspect('equal')
+
+            # Legend
+            ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1),
+                     ncol=1, fontsize=8, markerscale=2)
+
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'{sample}_neighborhoods.png'
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+
+        print(f"    ✓ Generated {len(neighborhood_assignments)} neighborhood spatial maps")
