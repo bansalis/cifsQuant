@@ -148,43 +148,93 @@ set -euo pipefail
 SCRIPT_DIR=$(pwd)
 echo "✓ Working directory: $SCRIPT_DIR"
 
+# Detect input mode: per-channel directories or stacked TIFFs
+echo "Detecting input mode..."
+echo ""
+
 shopt -s nullglob
-images=(rawdata/*.ome.tif)
+sample_dirs=(rawdata/*/)
+stacked_tiffs=(rawdata/*.ome.tif)
 shopt -u nullglob
 
-if [ ${#images[@]} -eq 0 ]; then
-    echo "❌ No .ome.tif files found in rawdata/"
+use_per_channel=false
+samples_to_process=()
+
+# Check for per-channel directories
+if [ ${#sample_dirs[@]} -gt 0 ]; then
+    for dir in "${sample_dirs[@]}"; do
+        if ls "$dir"/*.ome.tif &>/dev/null; then
+            sample_name=$(basename "$dir")
+            samples_to_process+=("$sample_name:$dir")
+            echo "  Found per-channel directory: $sample_name/"
+            use_per_channel=true
+        fi
+    done
+fi
+
+if [ "$use_per_channel" = true ]; then
+    echo ""
+    echo "✓ FAST MODE: Using per-channel TIFF directories (5-10x faster!)"
+    echo "  Found ${#samples_to_process[@]} sample(s)"
+    echo ""
+elif [ ${#stacked_tiffs[@]} -gt 0 ]; then
+    echo ""
+    echo "✓ LEGACY MODE: Using stacked multi-channel TIFFs"
+    echo "  Found ${#stacked_tiffs[@]} file(s)"
+    echo ""
+
+    # Build samples list for legacy mode
+    for img in "${stacked_tiffs[@]}"; do
+        sample_name=$(basename "$img" _aligned_stack.ome.tif)
+        samples_to_process+=("$sample_name:$img")
+    done
+else
+    echo "❌ No input data found in rawdata/"
+    echo ""
+    echo "Expected (FAST MODE - recommended):"
+    echo "  rawdata/"
+    echo "    ├── SampleA/"
+    echo "    │   └── *.ome.tif (33 per-channel files)"
+    echo "    └── SampleB/"
+    echo "        └── *.ome.tif (33 per-channel files)"
+    echo ""
+    echo "Or (LEGACY MODE):"
+    echo "  rawdata/"
+    echo "    ├── SampleA_aligned_stack.ome.tif"
+    echo "    └── SampleB_aligned_stack.ome.tif"
+    echo ""
     exit 1
 fi
 
-echo "Found ${#images[@]} image(s) in rawdata/:"
-for i in "${!images[@]}"; do
-    sample_name=$(basename "${images[$i]}" _aligned_stack.ome.tif)
+# Show samples found
+for sample_entry in "${samples_to_process[@]}"; do
+    sample_name="${sample_entry%%:*}"
     final_csv="results/${sample_name}/final/combined_quantification.csv"
-    
+
     if [[ -f "$final_csv" ]] && [[ -s "$final_csv" ]]; then
-        echo "  [$i] ${images[$i]} [COMPLETED ✓]"
+        echo "  $sample_name [COMPLETED ✓]"
     else
-        echo "  [$i] ${images[$i]}"
+        echo "  $sample_name"
     fi
 done
 echo
 
-read -p "Run on all files? (y/n): " all_choice
-if [[ $all_choice =~ ^[Yy]$ ]]; then
-    selected=("${images[@]}")
-else
-    read -p "Enter space-separated indices of files to run: " -a idxs
-    selected=()
-    for idx in "${idxs[@]}"; do
-        selected+=("${images[$idx]}")
-    done
-fi
-
 # Ensure markers.csv exists
 if [[ ! -f "markers.csv" ]]; then
-    echo "Creating default markers.csv..."
-    cat > markers.csv <<EOF
+    if [ "$use_per_channel" = true ]; then
+        echo "⚠ WARNING: markers.csv is REQUIRED for per-channel mode!"
+        echo ""
+        echo "Please create markers.csv with your channel order."
+        echo "Example format:"
+        echo "  cycle,marker_name"
+        echo "  1,R1.0.1_DAPI"
+        echo "  1,R1.0.1_CY3"
+        echo "  ..."
+        echo ""
+        exit 1
+    else
+        echo "Creating default markers.csv..."
+        cat > markers.csv <<EOF
 marker_name
 DAPI
 Tom
@@ -197,6 +247,7 @@ Channel_8
 Channel_9
 CD3
 EOF
+    fi
 fi
 
 # Ask about resume
@@ -206,35 +257,70 @@ if [[ $resume_choice =~ ^[Nn]$ ]]; then
     rm -rf work .nextflow* results
 fi
 
-for img in "${selected[@]}"; do
-    # Reset to original directory at start of each iteration
+# Process each sample
+for sample_entry in "${samples_to_process[@]}"; do
     cd "$SCRIPT_DIR"
-    
-    sample_name=$(basename "$img" _aligned_stack.ome.tif)
+
+    sample_name="${sample_entry%%:*}"
+    sample_path="${sample_entry#*:}"
     outdir="results/${sample_name}"
     final_csv="$outdir/final/combined_quantification.csv"
-    
-    # Check if sample already completed
+
+    # Check if already completed
     if [[ -f "$final_csv" ]] && [[ -s "$final_csv" ]]; then
         echo ""
         echo "=== Skipping $sample_name (already completed) ==="
         echo "Final output exists: $final_csv"
-        echo "To rerun, delete: rm -rf $outdir"
         echo "================================================="
         continue
     fi
-    
+
     mkdir -p "$outdir"
 
     echo ""
-    echo "=== Running pipeline for $sample_name ==="
-    echo "Input: $img"
-    echo "Output: $outdir"
-    echo "========================================="
+    echo "=== Processing $sample_name ==="
+
+    # STEP 1: Create tiles (different for per-channel vs stacked)
+    if [ "$use_per_channel" = true ]; then
+        echo "Step 1: Creating tiles from per-channel TIFFs..."
+        echo "Sample directory: $sample_path"
+
+        tile_dir="$outdir/tiles"
+        mkdir -p "$tile_dir"
+
+        python3 scripts/tile_from_channels.py \
+            --sample_dir "$sample_path" \
+            --markers_csv markers.csv \
+            --output_dir "$tile_dir" \
+            --tile_size 8192 \
+            --overlap 1024 \
+            --dapi_channel 0 \
+            --max_workers 2
+
+        if [ $? -ne 0 ]; then
+            echo "✗ FAILED: Tiling failed for $sample_name"
+            continue
+        fi
+
+        echo "✓ Tiles created: $tile_dir"
+
+        # Create a pseudo stacked TIFF path for Nextflow (won't be used, just for compatibility)
+        pseudo_tiff="$tile_dir/pseudo_stack.ome.tif"
+        touch "$pseudo_tiff"  # Create empty file
+        input_image="$pseudo_tiff"
+    else
+        # Legacy mode - use stacked TIFF directly
+        input_image="$sample_path"
+        echo "Input: $input_image (stacked TIFF)"
+    fi
+
+    # STEP 2: Run Nextflow pipeline (segmentation + quantification)
+    echo ""
+    echo "Step 2: Running Cellpose segmentation and quantification..."
 
     nf_args=(
         run mcmicro-tiled.nf
-        --input_image "$img"
+        --input_image "$input_image"
         --markers_csv markers.csv
         --outdir "$outdir"
         --sample_name "$sample_name"
@@ -259,20 +345,21 @@ for img in "${selected[@]}"; do
     fi
 
     nextflow "${nf_args[@]}"
-    
+
     pipeline_exit_code=$?
 
     echo ""
-    echo "Pipeline Execution Complete for $sample_name!"
-    echo "=============================================="
+    echo "================================================="
+    echo "Pipeline Complete for $sample_name!"
+    echo "================================================="
 
     if [[ $pipeline_exit_code -eq 0 ]]; then
-        echo "✓ SUCCESS: Cellpose pipeline completed successfully for $sample_name!"
+        echo "✓ SUCCESS!"
     else
-        echo "✗ FAILED: Cellpose pipeline encountered errors for $sample_name (exit code: $pipeline_exit_code)"
+        echo "✗ FAILED (exit code: $pipeline_exit_code)"
         echo "Check $outdir logs for details"
     fi
-    
+
     echo ""
 done
 
