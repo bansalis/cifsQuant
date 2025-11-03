@@ -29,6 +29,7 @@ from spatial_quantification.analyses import (
     InfiltrationAnalysis,
     InfiltrationAnalysisOptimized,
     NeighborhoodAnalysis,
+    NeighborhoodAnalysisOptimized,
     AdvancedAnalysis
 )
 from spatial_quantification.visualization import PlotManager
@@ -172,7 +173,16 @@ def main():
 
     # Neighborhood Analysis
     if config.get('cellular_neighborhoods', {}).get('enabled', False):
-        neighborhood_analysis = NeighborhoodAnalysis(adata, config, output_dir)
+        # Use optimized version if specified (RECOMMENDED)
+        use_optimized = config.get('cellular_neighborhoods', {}).get('use_optimized', True)
+
+        if use_optimized:
+            print("  Using OPTIMIZED neighborhood analysis (windowed + HNSW)")
+            neighborhood_analysis = NeighborhoodAnalysisOptimized(adata, config, output_dir)
+        else:
+            print("  Using standard neighborhood analysis")
+            neighborhood_analysis = NeighborhoodAnalysis(adata, config, output_dir)
+
         all_results['neighborhood_analysis'] = neighborhood_analysis.run()
 
     # Advanced Analysis

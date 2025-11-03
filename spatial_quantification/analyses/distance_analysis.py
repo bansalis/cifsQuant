@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 from scipy.spatial import cKDTree
 import warnings
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from visualization.distance_analysis_plotter import DistanceAnalysisPlotter
 
 
 class DistanceAnalysis:
@@ -36,6 +39,7 @@ class DistanceAnalysis:
             Output directory
         """
         self.adata = adata
+        self.full_config = config
         self.config = config['distance_analysis']
         self.output_dir = Path(output_dir) / 'distance_analysis'
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -63,6 +67,9 @@ class DistanceAnalysis:
 
         # Save results
         self._save_results()
+
+        # Generate plots
+        self._generate_plots()
 
         print("\n✓ Distance analysis complete")
         print(f"  Results saved to: {self.output_dir}/")
@@ -211,6 +218,34 @@ class DistanceAnalysis:
             summary_df.to_csv(summary_path, index=False)
 
         print(f"\n  ✓ Saved {len(self.results)} distance datasets")
+
+    def _generate_plots(self):
+        """Generate comprehensive plots for all distance pairings."""
+        if not self.results:
+            return
+
+        print("\n  Generating distance plots...")
+
+        # Initialize plotter
+        plotter = DistanceAnalysisPlotter(self.output_dir, self.full_config)
+
+        # Get grouping config
+        group_col = self.full_config.get('metadata', {}).get('primary_grouping', 'main_group')
+        groups = self.full_config.get('metadata', {}).get('groups_to_compare', None)
+
+        # Plot each pairing
+        for pairing_name, data in self.results.items():
+            # Parse pairing name
+            parts = pairing_name.split('_to_')
+            if len(parts) == 2:
+                source, target = parts
+                print(f"    {source} → {target}")
+                plotter.plot_distance_comprehensive(data, source, target, group_col, groups)
+
+        # Generate heatmap of all pairings
+        plotter.plot_all_distances_heatmap(self.results, group_col)
+
+        print(f"  ✓ Generated plots for {len(self.results)} pairings")
 
     def get_pairing_data(self, source: str, target: str) -> pd.DataFrame:
         """Get distance data for a specific pairing."""
