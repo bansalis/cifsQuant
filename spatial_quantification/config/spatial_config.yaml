@@ -45,9 +45,9 @@ tumor_definition:
   # Tumor structure detection parameters
   structure_detection:
     method: 'DBSCAN'  # DBSCAN clustering for tumor structures
-    eps: 100  # μm, distance threshold
-    min_samples: 10  # minimum cells per cluster
-    min_cluster_size: 50  # minimum cells to be considered a tumor structure
+    eps: 800  # μm, distance threshold
+    min_samples: 250  # minimum cells per cluster
+    min_cluster_size: 250  # minimum cells to be considered a tumor structure
 
 # ============================================================================
 # METADATA CONFIGURATION
