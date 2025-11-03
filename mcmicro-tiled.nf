@@ -107,8 +107,9 @@ def extract_tile(args):
         
         filename = f"tile_y{y:06d}_x{x:06d}.tif"
         # Write as multi-page TIFF with explicit metadata to preserve all channels
+        # Use BigTIFF format for large tiles (>4GB) to avoid 32-bit offset limitations
         tifffile.imwrite(filename, tile, photometric='minisblack', compression='lzw',
-                        metadata={'axes': 'CYX'})
+                        metadata={'axes': 'CYX'}, bigtiff=True)
         
         # Free memory immediately
         del tile, dapi
@@ -247,7 +248,7 @@ for c in range(img.shape[0]):
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
 
 tifffile.imwrite('${tile.baseName}_corrected.tif', img, compression='lzw',
-                 metadata={'axes': 'CYX'})
+                 metadata={'axes': 'CYX'}, bigtiff=True)
 print(f"Background correction complete: ${tile.baseName}_corrected.tif")
 EOF
     """
@@ -276,7 +277,7 @@ for c in range(img.shape[0]):
 
 tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected,
                  photometric='minisblack', compression='lzw',
-                 metadata={'axes': 'CYX'})
+                 metadata={'axes': 'CYX'}, bigtiff=True)
 EOF
     """
 }
