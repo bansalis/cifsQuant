@@ -106,13 +106,13 @@ def extract_tile(args):
         filename = f"tile_y{y:06d}_x{x:06d}.tif"
 
         # PERFORMANCE OPTIMIZATIONS:
-        # 1. Use 'zlib' with level=1 (3-5x faster than LZW, still good compression)
-        # 2. Add tile=(256,256) for internal TIFF tiling (faster I/O)
-        # 3. Keep BigTIFF for >4GB support
+        # 1. NO COMPRESSION - raw uncompressed data for 100% quality (faster writes too!)
+        # 2. Internal TIFF tiling tile=(256,256) - organizes data in chunks for faster I/O
+        #    This is NOT compression - just how data blocks are arranged on disk
+        # 3. BigTIFF for >4GB support
         tifffile.imwrite(filename, tile,
                         photometric='minisblack',
-                        compression='zlib',
-                        compressionargs={'level': 1},
+                        compression=None,
                         tile=(256, 256),
                         metadata={'axes': 'CYX'},
                         bigtiff=True)
@@ -257,8 +257,7 @@ for c in range(img.shape[0]):
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
 
 tifffile.imwrite('${tile.baseName}_corrected.tif', img,
-                 compression='zlib',
-                 compressionargs={'level': 1},
+                 compression=None,
                  tile=(256, 256),
                  metadata={'axes': 'CYX'},
                  bigtiff=True)
@@ -290,8 +289,7 @@ for c in range(img.shape[0]):
 
 tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected,
                  photometric='minisblack',
-                 compression='zlib',
-                 compressionargs={'level': 1},
+                 compression=None,
                  tile=(256, 256),
                  metadata={'axes': 'CYX'},
                  bigtiff=True)
