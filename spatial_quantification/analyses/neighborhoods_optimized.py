@@ -26,9 +26,7 @@ from sklearn.cluster import MiniBatchKMeans
 from scipy.spatial import cKDTree
 from collections import Counter
 import gc
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from visualization.neighborhood_plotter import NeighborhoodPlotter
+from ..visualization.neighborhood_plotter import NeighborhoodPlotter
 
 
 class NeighborhoodAnalysisOptimized:
