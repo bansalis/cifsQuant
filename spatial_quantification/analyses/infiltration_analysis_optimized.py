@@ -328,7 +328,7 @@ class InfiltrationAnalysisOptimized:
                 )
 
     def _calculate_getis_ord_gi_star(self, coords: np.ndarray, mask: np.ndarray,
-                                     subsample_size: int = 10000) -> Dict:
+                                     subsample_size: int = 100000) -> Dict:
         """
         Calculate Getis-Ord Gi* local spatial statistic.
 
