@@ -10,6 +10,7 @@ import numpy as np
 from pathlib import Path
 from scipy import stats
 from typing import Dict, List, Optional
+from ..stats.plot_stats import add_significance_bars, perform_pairwise_tests, get_significance_symbol
 
 
 class DistanceAnalysisPlotter:
@@ -31,10 +32,29 @@ class DistanceAnalysisPlotter:
         self.plots_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
 
+        # Get plotting config
+        plotting_config = config.get('plotting', {})
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (days)')
+        self.show_stats = plotting_config.get('show_stats', True)
+        self.stat_method = plotting_config.get('stat_method', 'mann_whitney')
+        self.fdr_correction = plotting_config.get('fdr_correction', True)
+        self.sig_symbols = plotting_config.get('significance_symbols', {
+            0.001: '***', 0.01: '**', 0.05: '*', 1.0: 'ns'
+        })
+        self.group_colors = plotting_config.get('group_colors', {
+            'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'
+        })
+
+        # Set font
+        font_family = plotting_config.get('font_family', 'DejaVu Sans')
+        font_size = plotting_config.get('font_size', 11)
+
         # Set style
         sns.set_style('whitegrid')
         plt.rcParams['figure.dpi'] = 150
         plt.rcParams['savefig.dpi'] = 300
+        plt.rcParams['font.family'] = font_family
+        plt.rcParams['font.size'] = font_size
 
     def plot_distance_comprehensive(self, data: pd.DataFrame,
                                     source: str, target: str,

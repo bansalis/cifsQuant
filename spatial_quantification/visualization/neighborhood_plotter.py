@@ -431,3 +431,87 @@ class NeighborhoodPlotter:
             plt.close(fig)
 
         print(f"    ✓ Generated {len(groups)} summary plots")
+
+    def plot_neighborhood_stacked_area(self, data: pd.DataFrame,
+                                      group_col: str = 'main_group',
+                                      groups: List[str] = None):
+        """
+        Create stacked area chart showing neighborhood evolution over time.
+
+        Shows fractional abundance of each neighborhood type stacked to 100%.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Neighborhood statistics with timepoint column
+        group_col : str
+            Column for grouping
+        groups : List[str], optional
+            Groups to plot
+        """
+        if 'timepoint' not in data.columns:
+            print("    ✗ No timepoint column, skipping stacked area chart")
+            return
+
+        if groups is None:
+            groups = sorted(data[group_col].unique()) if group_col in data.columns else ['all']
+            if len(groups) == 0:
+                groups = ['all']
+
+        print("\n  Generating stacked area charts...")
+
+        nh_types = sorted(data['neighborhood_type'].unique())
+        n_neighborhoods = len(nh_types)
+
+        # Create colormap
+        colors = plt.cm.tab20(np.linspace(0, 1, n_neighborhoods))
+
+        for group in groups:
+            group_data = data[data[group_col] == group] if group != 'all' else data
+
+            if len(group_data) == 0:
+                continue
+
+            # Pivot data: rows=timepoints, cols=neighborhoods
+            pivot_data = group_data.pivot_table(
+                index='timepoint',
+                columns='neighborhood_type',
+                values='fraction_of_sample',
+                aggfunc='mean',
+                fill_value=0
+            )
+
+            # Ensure all neighborhoods are present
+            for nh in nh_types:
+                if nh not in pivot_data.columns:
+                    pivot_data[nh] = 0
+
+            pivot_data = pivot_data[nh_types]  # Consistent order
+
+            # Create stacked area plot
+            fig, ax = plt.subplots(figsize=(12, 8))
+
+            timepoints = pivot_data.index.values
+            values = pivot_data.values.T  # Transpose for stackplot
+
+            ax.stackplot(timepoints, values,
+                        labels=[f'NH-{nh}' for nh in nh_types],
+                        colors=colors,
+                        alpha=0.8)
+
+            ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Fraction of Tissue', fontsize=12, fontweight='bold')
+            ax.set_title(f'Neighborhood Evolution - {group}',
+                        fontsize=14, fontweight='bold')
+            ax.set_ylim(0, 1.0)
+            ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1),
+                     ncol=1, fontsize=9)
+            ax.grid(True, alpha=0.3, axis='y')
+
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'stacked_area_{group}.png'
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+
+        print(f"    ✓ Generated {len(groups)} stacked area charts")
