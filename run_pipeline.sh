@@ -207,7 +207,9 @@ else
 fi
 
 # Show samples found
-for sample_entry in "${samples_to_process[@]}"; do
+echo "Available samples:"
+all_samples=("${samples_to_process[@]}")  # Store all detected samples
+for sample_entry in "${all_samples[@]}"; do
     sample_name="${sample_entry%%:*}"
     final_csv="results/${sample_name}/final/combined_quantification.csv"
 
@@ -217,6 +219,64 @@ for sample_entry in "${samples_to_process[@]}"; do
         echo "  $sample_name"
     fi
 done
+
+echo ""
+
+# SAMPLE SELECTION: Allow user to choose which samples to process
+if [ $# -gt 0 ]; then
+    # Command-line arguments provided: filter to specified samples
+    echo "Processing specified samples: $@"
+    selected_samples=()
+    for arg in "$@"; do
+        for sample_entry in "${all_samples[@]}"; do
+            sample_name="${sample_entry%%:*}"
+            if [ "$sample_name" == "$arg" ]; then
+                selected_samples+=("$sample_entry")
+                break
+            fi
+        done
+    done
+
+    if [ ${#selected_samples[@]} -eq 0 ]; then
+        echo "❌ None of the specified samples were found!"
+        echo "Available samples: ${all_samples[@]%%:*}"
+        exit 1
+    fi
+
+    samples_to_process=("${selected_samples[@]}")
+else
+    # No arguments: interactive selection
+    echo "Sample Selection:"
+    echo "  - Press ENTER to process ALL samples"
+    echo "  - Or enter sample names separated by spaces (e.g., 'JL216_Final GUEST29')"
+    echo ""
+    read -p "Samples to process [ALL]: " user_input
+
+    if [ -n "$user_input" ]; then
+        # User specified samples
+        selected_samples=()
+        for sample_arg in $user_input; do
+            for sample_entry in "${all_samples[@]}"; do
+                sample_name="${sample_entry%%:*}"
+                if [ "$sample_name" == "$sample_arg" ]; then
+                    selected_samples+=("$sample_entry")
+                    break
+                fi
+            done
+        done
+
+        if [ ${#selected_samples[@]} -eq 0 ]; then
+            echo "❌ None of the specified samples were found!"
+            exit 1
+        fi
+
+        samples_to_process=("${selected_samples[@]}")
+        echo "✓ Will process ${#samples_to_process[@]} sample(s)"
+    else
+        # Process all samples
+        echo "✓ Will process ALL ${#samples_to_process[@]} sample(s)"
+    fi
+fi
 echo
 
 # Ensure markers.csv exists

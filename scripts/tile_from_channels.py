@@ -187,15 +187,34 @@ def main():
             x_end = min(x + args.tile_size, width)
             coords.append((y, x, y_end, x_end, channel_files, args.dapi_channel))
 
-    print(f"Processing {len(coords)} tiles...")
-
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
+
+    # RESUME FUNCTIONALITY: Check for existing tiles
+    existing_tiles = set()
+    if os.path.exists(args.output_dir):
+        for f in os.listdir(args.output_dir):
+            if f.startswith('tile_') and f.endswith('.tif'):
+                existing_tiles.add(f)
+
+    if existing_tiles:
+        print(f"RESUME MODE: Found {len(existing_tiles)} existing tiles, skipping them...")
+        coords_to_process = []
+        for y, x, y_end, x_end, ch_files, dapi in coords:
+            tile_name = f"tile_y{y:06d}_x{x:06d}.tif"
+            if tile_name not in existing_tiles:
+                coords_to_process.append((y, x, y_end, x_end, ch_files, dapi))
+        coords = coords_to_process
+        print(f"Resuming: {len(coords)} tiles remaining to process")
+    else:
+        print(f"Processing {len(coords)} tiles from scratch...")
+
     os.chdir(args.output_dir)
 
     # Process tiles
     tile_info = []
     batch_size = 8
+    tiles_completed = len(existing_tiles)  # Count of already-done tiles
 
     for batch_start in range(0, len(coords), batch_size):
         batch = coords[batch_start:batch_start + batch_size]
@@ -208,10 +227,12 @@ def main():
                 if result:
                     tile_info.append(result)
 
-        print(f"Progress: {len(tile_info)}/{len(coords)}", flush=True)
+        total_done = tiles_completed + len(tile_info)
+        print(f"Progress: {total_done} tiles completed ({len(tile_info)} new, {tiles_completed} existing)", flush=True)
         gc.collect()
 
-    print(f"\nTILING SUMMARY: {len(coords)} total tiles, {len(tile_info)} with data")
+    total_tiles = tiles_completed + len(tile_info)
+    print(f"\nTILING SUMMARY: {total_tiles} total tiles ({len(tile_info)} newly created, {tiles_completed} already existed)")
 
     # Save outputs
     with open('tile_info.json', 'w') as f:
