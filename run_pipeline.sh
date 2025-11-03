@@ -295,7 +295,7 @@ for sample_entry in "${samples_to_process[@]}"; do
             --tile_size 8192 \
             --overlap 1024 \
             --dapi_channel 0 \
-            --max_workers 8
+            --max_workers 3
 
         if [ $? -ne 0 ]; then
             echo "✗ FAILED: Tiling failed for $sample_name"

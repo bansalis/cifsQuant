@@ -137,7 +137,7 @@ def main():
     parser.add_argument('--tile_size', type=int, default=8192, help='Tile size')
     parser.add_argument('--overlap', type=int, default=1024, help='Tile overlap')
     parser.add_argument('--dapi_channel', type=int, default=0, help='DAPI channel index')
-    parser.add_argument('--max_workers', type=int, default=8, help='Number of parallel workers (default: 8 for speed)')
+    parser.add_argument('--max_workers', type=int, default=3, help='Number of parallel workers (default: 3 for memory safety)')
 
     args = parser.parse_args()
 
