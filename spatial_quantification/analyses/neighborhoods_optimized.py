@@ -84,9 +84,9 @@ class NeighborhoodAnalysisOptimized:
             print("  Using KD-tree for nearest neighbor search (install hnswlib for 10x speedup)")
 
     def run(self):
-        """Run optimized neighborhood analysis."""
+        """Run optimized neighborhood analysis with GLOBAL neighborhood definitions."""
         print("\n" + "="*80)
-        print("NEIGHBORHOOD ANALYSIS (OPTIMIZED)")
+        print("NEIGHBORHOOD ANALYSIS (OPTIMIZED - GLOBAL)")
         print("="*80)
 
         if len(self.phenotypes) == 0:
@@ -94,15 +94,26 @@ class NeighborhoodAnalysisOptimized:
             return self.results
 
         print(f"\n  Analyzing neighborhoods with {len(self.phenotypes)} phenotypes")
-        print(f"  Method: Windowed neighborhood composition")
+        print(f"  Method: GLOBAL windowed neighborhood composition")
+        print(f"  Neighborhoods defined across ALL samples for temporal tracking")
 
-        # Analyze per sample
+        # Get all samples
         samples = self.adata.obs['sample_id'].unique()
-        print(f"  Processing {len(samples)} samples...")
+        print(f"\n  Processing {len(samples)} samples...")
 
+        # CRITICAL: Define neighborhoods GLOBALLY across all samples
+        print(f"\n  STEP 1: Defining global neighborhoods across all samples...")
+        self.global_clusterer = self._define_global_neighborhoods()
+
+        if self.global_clusterer is None:
+            print("  ✗ Failed to define global neighborhoods")
+            return self.results
+
+        # STEP 2: Assign neighborhoods to each sample
+        print(f"\n  STEP 2: Assigning neighborhoods to individual samples...")
         for i, sample in enumerate(samples, 1):
             print(f"\n  [{i}/{len(samples)}] {sample}")
-            self._analyze_sample(sample)
+            self._assign_neighborhoods_to_sample(sample)
             gc.collect()  # Free memory
 
         # Save results
@@ -117,23 +128,123 @@ class NeighborhoodAnalysisOptimized:
 
         return self.results
 
-    def _get_phenotypes(self) -> List[str]:
-        """Get list of phenotypes to include in neighborhood analysis."""
-        # Get all is_* columns
-        pheno_cols = [col for col in self.adata.obs.columns if col.startswith('is_')]
+    def _define_global_neighborhoods(self):
+        """
+        Define neighborhood types across ALL samples.
 
-        # Remove 'is_' prefix
-        phenotypes = [col.replace('is_', '') for col in pheno_cols]
+        This ensures neighborhoods are consistent and comparable across time/groups.
+        """
+        samples = self.adata.obs['sample_id'].unique()
 
-        # Filter based on config if specified
-        if 'phenotypes' in self.config:
-            config_phenotypes = self.config['phenotypes']
-            phenotypes = [p for p in phenotypes if p in config_phenotypes]
+        # Subsample from each sample (75-100k cells per sample for rare populations)
+        cells_per_sample = self.config.get('cells_per_sample', 100000)
+        print(f"    Sampling up to {cells_per_sample:,} cells per sample...")
 
-        return sorted(phenotypes)
+        all_coords = []
+        all_pheno_matrices = []
+        sample_indices = []
 
-    def _analyze_sample(self, sample: str):
-        """Analyze neighborhoods for a single sample."""
+        for sample in samples:
+            sample_mask = self.adata.obs['sample_id'] == sample
+            sample_data = self.adata.obs[sample_mask]
+            sample_coords = self.adata.obsm['spatial'][sample_mask.values]
+
+            # Get phenotype matrix
+            pheno_matrix = self._build_phenotype_matrix(sample_data)
+
+            if pheno_matrix is None or len(sample_coords) < 50:
+                continue
+
+            # Subsample if needed
+            if len(sample_coords) > cells_per_sample:
+                subsample_idx = np.random.choice(len(sample_coords), cells_per_sample, replace=False)
+                sample_coords = sample_coords[subsample_idx]
+                pheno_matrix = pheno_matrix[subsample_idx]
+
+            all_coords.append(sample_coords)
+            all_pheno_matrices.append(pheno_matrix)
+            sample_indices.extend([sample] * len(sample_coords))
+
+        if len(all_coords) == 0:
+            return None
+
+        # Concatenate all samples
+        pooled_coords = np.vstack(all_coords)
+        pooled_pheno = np.vstack(all_pheno_matrices)
+
+        print(f"    Pooled {len(pooled_coords):,} cells from {len(samples)} samples")
+
+        # Compute neighborhood compositions for pooled data
+        print(f"    Computing neighborhood compositions (k={self.config.get('k_neighbors', 30)})...")
+        k_neighbors = self.config.get('k_neighbors', 30)
+
+        # For global analysis, compute within-sample neighborhoods only
+        # (avoid cross-sample neighbors which don't make biological sense)
+        pooled_compositions = self._compute_neighborhood_compositions_global(
+            pooled_coords, pooled_pheno, sample_indices, k=k_neighbors
+        )
+
+        if pooled_compositions is None:
+            return None
+
+        # Cluster to define global neighborhood types
+        print(f"    Clustering to define global neighborhood types...")
+        n_clusters = self.config.get('n_clusters', 15)  # Increased from 10
+
+        clusterer = MiniBatchKMeans(
+            n_clusters=n_clusters,
+            batch_size=min(2048, len(pooled_compositions)),
+            random_state=42,
+            n_init=20,
+            max_iter=500
+        )
+
+        clusterer.fit(pooled_compositions)
+
+        print(f"    ✓ Defined {n_clusters} global neighborhood types")
+
+        # Store for later use
+        self.global_neighborhood_centers = clusterer.cluster_centers_
+
+        return clusterer
+
+    def _compute_neighborhood_compositions_global(self, coords: np.ndarray,
+                                                 pheno_matrix: np.ndarray,
+                                                 sample_indices: List[str],
+                                                 k: int = 30) -> Optional[np.ndarray]:
+        """
+        Compute neighborhood compositions ensuring neighbors are from SAME sample.
+
+        Critical: We don't want cross-sample neighbors in spatial analysis.
+        """
+        compositions = np.zeros((len(coords), pheno_matrix.shape[1]))
+
+        # Convert sample indices to array for efficient masking
+        sample_array = np.array(sample_indices)
+        unique_samples = np.unique(sample_array)
+
+        print(f"    Processing {len(unique_samples)} samples for neighborhood computation...")
+
+        for sample in unique_samples:
+            sample_mask = (sample_array == sample)
+            sample_coords = coords[sample_mask]
+            sample_pheno = pheno_matrix[sample_mask]
+
+            if len(sample_coords) < k:
+                continue
+
+            # Compute within-sample neighborhoods
+            if self.use_hnsw and len(sample_coords) > 1000:
+                sample_compositions = self._compute_with_hnsw(sample_coords, sample_pheno, k)
+            else:
+                sample_compositions = self._compute_with_kdtree(sample_coords, sample_pheno, k)
+
+            compositions[sample_mask] = sample_compositions
+
+        return compositions
+
+    def _assign_neighborhoods_to_sample(self, sample: str):
+        """Assign global neighborhood types to cells in a specific sample."""
         # Get sample data
         sample_mask = self.adata.obs['sample_id'] == sample
         sample_data = self.adata.obs[sample_mask]
@@ -146,17 +257,9 @@ class NeighborhoodAnalysisOptimized:
             print(f"    ✗ Insufficient cells ({len(sample_coords)})")
             return
 
-        # Subsample if needed (>100k cells)
-        subsample_size = 100000
-        if len(sample_coords) > subsample_size:
-            print(f"    Subsampling {len(sample_coords):,} → {subsample_size:,} cells")
-            subsample_idx = np.random.choice(len(sample_coords), subsample_size, replace=False)
-            sample_coords = sample_coords[subsample_idx]
-            pheno_matrix = pheno_matrix[subsample_idx]
-            sample_data = sample_data.iloc[subsample_idx]
+        print(f"    Processing {len(sample_coords):,} cells...")
 
-        # Compute neighborhood compositions
-        print(f"    Computing neighborhood compositions ({len(sample_coords):,} cells)...")
+        # Compute neighborhood compositions for this sample
         k_neighbors = self.config.get('k_neighbors', 30)
         neighborhood_compositions = self._compute_neighborhood_compositions(
             sample_coords, pheno_matrix, k=k_neighbors
@@ -166,15 +269,12 @@ class NeighborhoodAnalysisOptimized:
             print(f"    ✗ Failed to compute neighborhoods")
             return
 
-        # Cluster neighborhoods
-        print(f"    Clustering neighborhoods...")
-        n_clusters = self.config.get('n_clusters', 10)
-        neighborhood_labels = self._cluster_neighborhoods(
-            neighborhood_compositions, n_clusters=n_clusters
-        )
+        # Assign to global neighborhood types using trained clusterer
+        print(f"    Assigning to global neighborhood types...")
+        neighborhood_labels = self.global_clusterer.predict(neighborhood_compositions)
 
         # Analyze neighborhood statistics
-        print(f"    Analyzing neighborhood statistics...")
+        print(f"    Computing statistics...")
         stats = self._compute_neighborhood_statistics(
             sample, sample_data, neighborhood_compositions,
             neighborhood_labels, pheno_matrix
@@ -183,10 +283,27 @@ class NeighborhoodAnalysisOptimized:
         self.results[sample] = stats
         self.neighborhood_assignments[sample] = {
             'compositions': neighborhood_compositions,
-            'labels': neighborhood_labels
+            'labels': neighborhood_labels,
+            'coords': sample_coords
         }
 
-        print(f"    ✓ Found {len(np.unique(neighborhood_labels))} neighborhood types")
+        n_unique = len(np.unique(neighborhood_labels))
+        print(f"    ✓ Assigned cells to {n_unique} neighborhood types")
+
+    def _get_phenotypes(self) -> List[str]:
+        """Get list of phenotypes to include in neighborhood analysis."""
+        # Get all is_* columns
+        pheno_cols = [col for col in self.adata.obs.columns if col.startswith('is_')]
+
+        # Remove 'is_' prefix
+        phenotypes = [col.replace('is_', '') for col in pheno_cols]
+
+        # Filter based on config if specified
+        if 'populations' in self.config:
+            config_phenotypes = self.config['populations']
+            phenotypes = [p for p in phenotypes if p in config_phenotypes]
+
+        return sorted(phenotypes)
 
     def _build_phenotype_matrix(self, sample_data: pd.DataFrame) -> Optional[np.ndarray]:
         """Build binary phenotype matrix for cells."""
