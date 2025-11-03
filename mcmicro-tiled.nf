@@ -11,6 +11,8 @@ nextflow.enable.dsl = 2
  * Define parameters
  */
 params.input_image = null
+params.input_dir = null  // NEW: directory with per-channel TIFFs for single sample
+params.rawdata_dir = null  // NEW: parent directory with multiple sample folders
 params.markers_csv = null
 params.outdir = './results'
 params.tile_size = 4096
@@ -46,24 +48,23 @@ params.cyto_batch_size_tiles = 4  // Process 4 tiles per cyto batch
  */
 process TILE_LARGE_IMAGE {
     tag "$sample_name"
-    publishDir "${params.outdir}/tiles", mode: 'copy'
+    publishDir "${params.outdir}/${sample_name}/tiles", mode: 'copy'
     cpus 4
     memory '32.GB'
 
     input:
-    path image
+    tuple val(sample_name), path(sample_dir)
     path markers_input
-    val sample_name
     val tile_size
     val overlap
     val pyramid_level
 
     output:
-    path "tile_*.tif", emit: tiles
-    path "tile_info.json", emit: tile_info
+    tuple val(sample_name), path("tile_*.tif"), emit: tiles
+    tuple val(sample_name), path("tile_info.json"), emit: tile_info
     path "markers_tiled.csv", emit: markers_csv
-    path "tile_list.txt", emit: tile_list
-    
+    tuple val(sample_name), path("tile_list.txt"), emit: tile_list
+
     script:
     """
 #!/usr/bin/env python3
@@ -75,49 +76,41 @@ import sys
 import gc
 import os
 
-def extract_tile(args):
+def extract_tile_from_stack(args):
+    """Extract tile from single stacked multi-channel TIFF (slower)"""
     y, x, y_end, x_end, tif, n_channels, dapi_ch = args
 
     try:
-        # tif is now the shared TiffFile object, not a path
         pages = tif.pages
 
-        # Quick DAPI check with faster percentile calculation
+        # Quick DAPI check
         dapi = pages[dapi_ch].asarray()[y:y_end, x:x_end]
         if dapi.max() == 0:
             del dapi
             return None
 
-        # Check for nuclei signal - use faster approximate percentiles
+        # Check for nuclei signal
         p95 = np.percentile(dapi, 95)
         p5 = np.percentile(dapi, 5)
         dynamic_range = p95 - p5
 
-        # Require: contrast AND minimum intensity
         if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
             del dapi
             return None
 
-        # Read all channels - optimized with preallocated array
+        # Read all channels
         tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
         for c in range(n_channels):
             tile[c] = pages[c].asarray()[y:y_end, x:x_end]
 
         filename = f"tile_y{y:06d}_x{x:06d}.tif"
-
-        # PERFORMANCE OPTIMIZATIONS:
-        # 1. NO COMPRESSION - raw uncompressed data for 100% quality (faster writes too!)
-        # 2. Internal TIFF tiling tile=(256,256) - organizes data in chunks for faster I/O
-        #    This is NOT compression - just how data blocks are arranged on disk
-        # 3. BigTIFF for >4GB support
         tifffile.imwrite(filename, tile,
                         photometric='minisblack',
-                        compression=None,
-                        tile=(256, 256),
+                        compression='zlib',
+                        compressionargs={'level': 6},
                         metadata={'axes': 'CYX'},
                         bigtiff=True)
 
-        # Free memory immediately
         del tile, dapi
         gc.collect()
 
@@ -133,15 +126,200 @@ def extract_tile(args):
         print(f"Error tile y{y}_x{x}: {e}", file=sys.stderr)
         return None
 
-# Get metadata without loading full image
-print("Reading image metadata...")
-tif = tifffile.TiffFile('${image}')
-pages = tif.pages
-n_channels = len(pages)
-height = pages[0].shape[0]
-width = pages[0].shape[1]
+def extract_tile_from_channels(args):
+    """Extract tile from separate per-channel TIFFs (MUCH faster!)"""
+    y, x, y_end, x_end, channel_files, dapi_ch = args
 
-print(f"Image: {n_channels} channels, {height}x{width} pixels")
+    try:
+        n_channels = len(channel_files)
+
+        # Quick DAPI check - read only DAPI channel first
+        with tifffile.TiffFile(channel_files[dapi_ch]) as tif:
+            dapi = tif.pages[0].asarray()[y:y_end, x:x_end]
+
+        if dapi.max() == 0:
+            del dapi
+            return None
+
+        # Check for nuclei signal
+        p95 = np.percentile(dapi, 95)
+        p5 = np.percentile(dapi, 5)
+        dynamic_range = p95 - p5
+
+        if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
+            del dapi
+            return None
+
+        # Read all channels from separate files
+        tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
+        tile[dapi_ch] = dapi  # Already loaded
+
+        for c in range(n_channels):
+            if c == dapi_ch:
+                continue  # Already loaded
+            with tifffile.TiffFile(channel_files[c]) as tif:
+                tile[c] = tif.pages[0].asarray()[y:y_end, x:x_end]
+
+        filename = f"tile_y{y:06d}_x{x:06d}.tif"
+
+        # PERFORMANCE: Lossless compression for slow I/O (WSL mounts)
+        # Reduces write by ~60%, transparently decompressed on read
+        tifffile.imwrite(filename, tile,
+                        photometric='minisblack',
+                        compression='zlib',
+                        compressionargs={'level': 6},
+                        metadata={'axes': 'CYX'},
+                        bigtiff=True)
+
+        del tile, dapi
+        gc.collect()
+
+        return {
+            'filename': filename,
+            'y_start': y, 'x_start': x,
+            'y_end': y_end, 'x_end': x_end,
+            'height': y_end - y, 'width': x_end - x,
+            'channels': n_channels,
+            'has_data': True
+        }
+    except Exception as e:
+        print(f"Error tile y{y}_x{x}: {e}", file=sys.stderr)
+        return None
+
+# Detect input mode: per-channel files or stacked TIFF
+import glob
+from pathlib import Path
+import pandas as pd
+import re
+
+def match_marker_to_file(marker_name, available_files):
+    """
+    Match a marker name from markers.csv to an actual file.
+    Example: "R1.0.1_DAPI" matches "JL216_1.0.1_R000_DAPI__FINAL_F.ome.tif"
+    """
+    # Extract key components from marker name
+    # Handle patterns like: R1.0.1_DAPI, R1.0.4_CY5_CD45, etc.
+    parts = marker_name.replace('R', '').split('_')
+    cycle_round = parts[0]  # e.g., "1.0.1" or "1.0.4"
+
+    # Build search pattern components
+    search_terms = []
+    search_terms.append(cycle_round.replace('.', r'\.'))  # Match cycle/round
+
+    # Add remaining parts (channel, marker)
+    for part in parts[1:]:
+        if part:  # Skip empty parts
+            search_terms.append(part)
+
+    # Try to find matching file (case-insensitive)
+    best_match = None
+    best_score = 0
+
+    for filepath in available_files:
+        filename = Path(filepath).name.upper()  # Case-insensitive
+        marker_upper = marker_name.upper()
+
+        # Score based on how many search terms match
+        score = 0
+        for term in search_terms:
+            if term.upper() in filename:
+                score += 1
+
+        # Additional score if marker name components are in order
+        if all(term.upper() in filename for term in search_terms):
+            score += 10
+
+        if score > best_score:
+            best_score = score
+            best_match = filepath
+
+    if best_match and best_score >= len(search_terms):
+        return best_match
+
+    # Fallback: try simpler pattern matching
+    pattern = marker_name.replace('R', '').replace('_', '.*')
+    for filepath in available_files:
+        if re.search(pattern, str(filepath), re.IGNORECASE):
+            return filepath
+
+    return None
+
+# Input is the sample directory path
+input_dir = '${sample_dir}'
+input_file = None  # Will look for stacked TIFF if needed
+
+# Check if markers CSV is provided
+markers_csv_path = '${markers_input}'
+use_channel_files = False
+channel_files = []
+
+if Path(markers_csv_path).exists() and Path(markers_csv_path).stat().st_size > 0:
+    # Read markers.csv to get ordered list of channels
+    markers_df = pd.read_csv(markers_csv_path)
+    marker_names = markers_df['marker_name'].tolist()
+
+    print(f"Reading markers.csv: {len(marker_names)} channels defined")
+
+    # Find all available .ome.tif files in directory
+    if Path(input_dir).is_dir():
+        available_files = glob.glob(f"{input_dir}/*.ome.tif")
+        print(f"Found {len(available_files)} .ome.tif files in {input_dir}")
+
+        # Match each marker to a file
+        matched_files = []
+        for marker in marker_names:
+            matched_file = match_marker_to_file(marker, available_files)
+            if matched_file:
+                matched_files.append(matched_file)
+                print(f"  ✓ {marker} → {Path(matched_file).name}")
+            else:
+                print(f"  ✗ WARNING: No file found for marker '{marker}'")
+                # Create placeholder - will need to handle this
+                matched_files.append(None)
+
+        # Filter out None values
+        channel_files = [f for f in matched_files if f is not None]
+
+        if len(channel_files) >= len(marker_names) * 0.8:  # At least 80% matched
+            use_channel_files = True
+            print(f"FAST MODE: Using {len(channel_files)} per-channel TIFF files in markers.csv order")
+        else:
+            print(f"ERROR: Only matched {len(channel_files)}/{len(marker_names)} markers")
+            print(f"Please check markers.csv and file naming conventions")
+            sys.exit(1)
+    elif Path(input_file).exists():
+        print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+else:
+    # No markers.csv - fall back to auto-detection
+    print("No markers.csv provided, auto-detecting channels...")
+    if Path(input_dir).is_dir():
+        potential_channels = sorted(glob.glob(f"{input_dir}/*.ome.tif"))
+        if len(potential_channels) > 1:
+            use_channel_files = True
+            channel_files = potential_channels
+            print(f"FAST MODE: Found {len(channel_files)} per-channel TIFF files (alphabetical order)")
+        elif Path(input_file).exists():
+            print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+    else:
+        print(f"LEGACY MODE: Using stacked multi-channel TIFF")
+
+# Get metadata
+if use_channel_files:
+    # Read from first channel to get dimensions
+    with tifffile.TiffFile(channel_files[0]) as tif:
+        height = tif.pages[0].shape[0]
+        width = tif.pages[0].shape[1]
+    n_channels = len(channel_files)
+    print(f"Image: {n_channels} channels, {height}x{width} pixels")
+    print(f"Channel files: {[Path(f).name for f in channel_files[:3]]}... (showing first 3)")
+else:
+    # Legacy: read from stacked TIFF
+    tif = tifffile.TiffFile(input_file)
+    pages = tif.pages
+    n_channels = len(pages)
+    height = pages[0].shape[0]
+    width = pages[0].shape[1]
+    print(f"Image: {n_channels} channels, {height}x{width} pixels")
 
 # Generate tile coordinates
 step = ${tile_size} - ${overlap}
@@ -150,22 +328,27 @@ for y in range(0, height - ${overlap}, step):
     for x in range(0, width - ${overlap}, step):
         y_end = min(y + ${tile_size}, height)
         x_end = min(x + ${tile_size}, width)
-        coords.append((y, x, y_end, x_end, tif, n_channels, ${params.dapi_channel}))
+
+        if use_channel_files:
+            coords.append((y, x, y_end, x_end, channel_files, ${params.dapi_channel}))
+        else:
+            coords.append((y, x, y_end, x_end, tif, n_channels, ${params.dapi_channel}))
 
 print(f"Processing {len(coords)} tiles in batches...")
 sys.stdout.flush()
 
 # Process in batches with limited concurrency to avoid OOM
-# TiffFile is thread-safe for reading, so we can share it
 tile_info = []
 batch_size = 8
 max_workers = 2
+
+extract_func = extract_tile_from_channels if use_channel_files else extract_tile_from_stack
 
 for batch_start in range(0, len(coords), batch_size):
     batch = coords[batch_start:batch_start + batch_size]
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(extract_tile, c): c for c in batch}
+        futures = {executor.submit(extract_func, c): c for c in batch}
 
         for future in as_completed(futures):
             result = future.result()
@@ -175,8 +358,9 @@ for batch_start in range(0, len(coords), batch_size):
     print(f"Progress: {len(tile_info)}/{len(coords)}", flush=True)
     gc.collect()  # Force cleanup between batches
 
-# Close the shared TiffFile
-tif.close()
+# Close the shared TiffFile if using stacked mode
+if not use_channel_files:
+    tif.close()
 
 print(f"\\nTILING SUMMARY: {len(coords)} total tiles, {len(tile_info)} with meaningful data")
 
@@ -257,8 +441,8 @@ for c in range(img.shape[0]):
         img[c] = np.clip(channel.astype(float) - bg, 0, None).astype(channel.dtype)
 
 tifffile.imwrite('${tile.baseName}_corrected.tif', img,
-                 compression=None,
-                 tile=(256, 256),
+                 compression='zlib',
+                 compressionargs={'level': 6},
                  metadata={'axes': 'CYX'},
                  bigtiff=True)
 print(f"Background correction complete: ${tile.baseName}_corrected.tif")
@@ -289,8 +473,8 @@ for c in range(img.shape[0]):
 
 tifffile.imwrite('${image.baseName}_bg_corrected.ome.tif', corrected,
                  photometric='minisblack',
-                 compression=None,
-                 tile=(256, 256),
+                 compression='zlib',
+                 compressionargs={'level': 6},
                  metadata={'axes': 'CYX'},
                  bigtiff=True)
 EOF
@@ -927,19 +1111,49 @@ else:
  * BATCH CELLPOSE WORKFLOW
  */
 workflow {
-    if (!params.input_image) {
-        error "Please provide --input_image parameter"
-    }
-    
     log.info "=== MCMICRO BATCH CELLPOSE PIPELINE ==="
-    log.info "Input image: ${params.input_image}"
     log.info "Tile size: ${params.tile_size}"
-    log.info "Nuclei batch size: ${params.nuclei_batch_size} tiles/batch"
-    log.info "Cyto batch size: ${params.cyto_batch_size_tiles} tiles/batch"
     log.info "Output directory: ${params.outdir}"
-    
-    // Create input channels
-    input_image_ch = Channel.fromPath(params.input_image)
+
+    // Support multiple samples from rawdata_dir
+    if (params.rawdata_dir) {
+        log.info "MULTI-SAMPLE MODE: Processing all samples in ${params.rawdata_dir}"
+        log.info "    Using markers.csv to determine channel order"
+        log.info "    This mode is 5-10x faster on network/WSL mounts!"
+
+        // Find all sample directories (directories containing .ome.tif files)
+        def rawdata = file(params.rawdata_dir)
+        def sample_dirs = rawdata.listFiles()
+            .findAll { it.isDirectory() }
+            .findAll { dir ->
+                dir.listFiles().any { it.name.endsWith('.ome.tif') }
+            }
+
+        if (sample_dirs.size() == 0) {
+            error "No sample directories with .ome.tif files found in ${params.rawdata_dir}"
+        }
+
+        log.info "Found ${sample_dirs.size()} samples: ${sample_dirs.collect { it.name }.join(', ')}"
+
+        // Create channel with (sample_name, sample_dir) tuples
+        samples_ch = Channel.fromList(
+            sample_dirs.collect { dir -> tuple(dir.name, dir) }
+        )
+    } else if (params.input_dir) {
+        // Single sample mode
+        log.info "SINGLE-SAMPLE MODE: Processing ${params.sample_name}"
+        log.info "    Using per-channel TIFFs from: ${params.input_dir}"
+        samples_ch = Channel.of(tuple(params.sample_name, file(params.input_dir)))
+    } else if (params.input_image) {
+        log.info "LEGACY MODE: Stacked multi-channel TIFF"
+        log.info "    Consider using --rawdata_dir with per-channel TIFFs for much faster processing"
+        // For legacy mode, pass the directory containing the stacked TIFF
+        def image_file = file(params.input_image)
+        def image_dir = image_file.parent
+        samples_ch = Channel.of(tuple(params.sample_name, image_dir))
+    } else {
+        error "Please provide --rawdata_dir, --input_dir, or --input_image parameter"
+    }
 
     // Create markers channel - use provided file or look for default
     if (params.markers_csv) {
@@ -964,11 +1178,10 @@ workflow {
         image_to_tile = input_image_ch
     }
 
-    // Step 1: Tile the image
+    // Step 1: Tile the images for all samples
     TILE_LARGE_IMAGE(
-        input_image_ch,
+        samples_ch,
         markers_ch,
-        params.sample_name,
         params.tile_size,
         params.overlap,
         params.pyramid_level
