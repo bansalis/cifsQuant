@@ -350,7 +350,7 @@ for sample_entry in "${samples_to_process[@]}"; do
 
         # Check if output is on WSL mount (/mnt) for performance optimization
         fast_temp_flag=""
-        if [[ "$tile_dir" == /mnt/* ]]; then
+        if [[ "$(pwd)" == /mnt/* ]]; then
             fast_temp_flag="--use_fast_temp"
             echo "⚡ Detected WSL mount - using fast temp strategy (5x speedup!)"
         fi
