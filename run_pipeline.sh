@@ -340,6 +340,12 @@ for sample_entry in "${samples_to_process[@]}"; do
         -with-dag "$outdir/nextflow_dag.html"
     )
 
+    # Add skip_tiling flag if using per-channel mode (tiles already created)
+    if [ "$use_per_channel" = true ]; then
+        nf_args+=(--skip_tiling true)
+        echo "  → Using pre-generated tiles (skip_tiling=true)"
+    fi
+
     if [[ $resume_choice =~ ^[Yy]$ ]]; then
         nf_args+=(-resume)
     fi
