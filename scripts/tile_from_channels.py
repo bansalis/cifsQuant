@@ -171,12 +171,14 @@ def main():
     available_files = glob.glob(f"{args.sample_dir}/*.ome.tif")
     print(f"Found {len(available_files)} .ome.tif files in {args.sample_dir}")
 
-    # Match markers to files
+    # Match markers to files and convert to ABSOLUTE paths
     channel_files = []
     for marker in marker_names:
         matched_file = match_marker_to_file(marker, available_files)
         if matched_file:
-            channel_files.append(matched_file)
+            # Convert to absolute path BEFORE changing directories
+            abs_path = os.path.abspath(matched_file)
+            channel_files.append(abs_path)
             print(f"  ✓ {marker} → {Path(matched_file).name}")
         else:
             print(f"  ✗ WARNING: No file found for marker '{marker}'")
