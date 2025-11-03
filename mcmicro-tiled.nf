@@ -40,6 +40,7 @@ params.buffer_px = null
 // BATCH OPTIMIZATION PARAMETERS
 params.nuclei_batch_size = 6    // Process 6 tiles per nuclei batch
 params.cyto_batch_size_tiles = 4  // Process 4 tiles per cyto batch
+params.skip_tiling = false  // Set to true if tiles are pre-generated
 
 /*
  * Process that creates tiles
@@ -942,20 +943,36 @@ workflow {
         image_to_tile = input_image_ch
     }
 
-    // Step 1: Tile the image
-    TILE_LARGE_IMAGE(
-        input_image_ch,
-        markers_ch,
-        params.sample_name,
-        params.tile_size,
-        params.overlap,
-        params.pyramid_level
-    )
+    // Step 1: Tile the image (or use pre-existing tiles)
+    if (params.skip_tiling) {
+        log.info "SKIP_TILING enabled - using pre-existing tiles from ${params.outdir}/tiles"
+
+        // Use pre-existing tiles
+        def tiles_dir = "${params.outdir}/tiles"
+        tiles_flattened = Channel.fromPath("${tiles_dir}/tile_*.tif")
+        markers_csv_ch = Channel.fromPath("${tiles_dir}/markers_tiled.csv")
+    } else {
+        log.info "Running TILE_LARGE_IMAGE process"
+
+        TILE_LARGE_IMAGE(
+            input_image_ch,
+            markers_ch,
+            params.sample_name,
+            params.tile_size,
+            params.overlap,
+            params.pyramid_level
+        )
+
+        tiles_flattened = TILE_LARGE_IMAGE.out.tiles.flatten()
+        markers_csv_ch = TILE_LARGE_IMAGE.out.markers_csv
+    }
 
     if (params.cellpose) {
-        
-        // Step 2: Background subtraction and flatten tiles
-        tiles_flattened = TILE_LARGE_IMAGE.out.tiles.flatten()
+
+        // Step 2: Background subtraction and flatten tiles (if not already flattened)
+        if (!params.skip_tiling) {
+            tiles_flattened = tiles_flattened
+        }
         
         if (params.background_subtract) {
             tiles_corrected = BACKGROUND_SUBTRACT(tiles_flattened).corrected
