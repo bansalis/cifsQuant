@@ -361,7 +361,7 @@ for sample_entry in "${samples_to_process[@]}"; do
             --output_dir "$tile_dir" \
             --tile_size 8192 \
             --overlap 1024 \
-            --dapi_channel 0 \
+            --dapi_channel 3 \
             --max_workers 3 \
             $fast_temp_flag
 
@@ -398,7 +398,7 @@ for sample_entry in "${samples_to_process[@]}"; do
         --cellpose true
         --mcquant true
         --scimap true
-        --dapi_channel 0
+        --dapi_channel 3
         --nuc_diameter 15
         --cyto_diameter 28
         --nuclei_batch_size 4
