@@ -599,6 +599,8 @@ class NeighborhoodAnalysisOptimized:
         # 2. Temporal evolution
         if 'timepoint' in combined_df.columns:
             plotter.plot_neighborhood_abundance_over_time(combined_df, group_col, groups)
+            # 2b. Stacked area chart
+            plotter.plot_neighborhood_stacked_area(combined_df, group_col, groups)
 
         # 3. Individual neighborhood comparisons
         nh_types = sorted(combined_df['neighborhood_type'].unique())
@@ -608,4 +610,10 @@ class NeighborhoodAnalysisOptimized:
         # 4. Comprehensive summary
         plotter.plot_all_neighborhoods_summary(combined_df, self.phenotypes, group_col, groups)
 
+        # 5. Spatial neighborhood maps (per sample)
+        from ..visualization.spatial_plotter import SpatialPlotter
+        spatial_plotter = SpatialPlotter(self.output_dir, full_config)
+        spatial_plotter.plot_neighborhood_spatial_maps(self.neighborhood_assignments)
+
         print(f"  ✓ Generated plots for {len(nh_types)} neighborhood types")
+        print(f"  ✓ Generated spatial maps for {len(self.neighborhood_assignments)} samples")
