@@ -351,6 +351,10 @@ immune_infiltration:
 cellular_neighborhoods:
   enabled: true
 
+  # Use optimized version (windowed + HNSW indexing)
+  # RECOMMENDED: 10-100x faster with subsampling
+  use_optimized: true
+
   # Populations to include in neighborhood analysis
   populations:
     - Tumor
@@ -363,10 +367,10 @@ cellular_neighborhoods:
 
   # Neighborhood parameters
   window_size: 100  # μm, radius for neighborhood definition
-  k_neighbors: 10   # Number of nearest neighbors to consider
+  k_neighbors: 30   # Number of nearest neighbors to consider (increased for stability)
 
   # Clustering parameters
-  n_clusters: 8  # Number of neighborhood types to identify
+  n_clusters: 10  # Number of neighborhood types to identify
   clustering_method: 'kmeans'  # or 'hierarchical'
 
   # Define neighborhoods across ALL samples, then compare
