@@ -11,6 +11,7 @@ from pathlib import Path
 from scipy import stats
 from typing import Dict, List, Optional
 import warnings
+from ..stats.plot_stats import add_significance_bars, perform_pairwise_tests
 
 
 class PopulationDynamicsPlotter:
@@ -42,11 +43,29 @@ class PopulationDynamicsPlotter:
         self.plots_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
 
+        # Get plotting settings from config
+        plotting_config = config.get('plotting', {})
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (days)')
+        self.show_stats = plotting_config.get('show_stats', True)
+        self.stat_method = plotting_config.get('stat_method', 'mann_whitney')
+        self.fdr_correction = plotting_config.get('fdr_correction', True)
+        self.sig_symbols = plotting_config.get('significance_symbols', {
+            0.001: '***', 0.01: '**', 0.05: '*', 1.0: 'ns'
+        })
+        self.group_colors = plotting_config.get('group_colors', {
+            'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'
+        })
+
+        # Set font
+        font_family = plotting_config.get('font_family', 'DejaVu Sans')
+        font_size = plotting_config.get('font_size', 11)
+
         # Set style
         sns.set_style('whitegrid')
         plt.rcParams['figure.dpi'] = 150
         plt.rcParams['savefig.dpi'] = 300
-        plt.rcParams['font.size'] = 11
+        plt.rcParams['font.family'] = font_family
+        plt.rcParams['font.size'] = font_size
 
     def plot_population_over_time(self, data: pd.DataFrame,
                                   population: str,
@@ -101,8 +120,6 @@ class PopulationDynamicsPlotter:
     def _plot_scatter_line(self, data: pd.DataFrame, ax, value_col: str,
                           group_col: str, groups: List[str]):
         """Scatter plot with line and confidence band."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
         for group in groups:
             group_data = data[data[group_col] == group]
 
@@ -115,7 +132,7 @@ class PopulationDynamicsPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = colors.get(group, '#000000')
+            color = self.group_colors.get(group, '#000000')
 
             # Plot individual points (semi-transparent)
             ax.scatter(group_data['timepoint'], group_data[value_col],
@@ -129,7 +146,7 @@ class PopulationDynamicsPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+        ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
         ax.set_ylabel(value_col.replace('_', ' ').title(), fontsize=12, fontweight='bold')
         ax.set_title('Scatter + Line with SEM', fontsize=13, fontweight='bold')
         ax.legend(frameon=True, loc='best', fontsize=11)
@@ -137,9 +154,7 @@ class PopulationDynamicsPlotter:
 
     def _plot_boxes(self, data: pd.DataFrame, ax, value_col: str,
                    group_col: str, groups: List[str]):
-        """Box plots per timepoint."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
+        """Box plots per timepoint with statistical tests."""
         timepoints = sorted(data['timepoint'].unique())
 
         # Prepare data for grouped box plot
@@ -168,7 +183,7 @@ class PopulationDynamicsPlotter:
                     if len(group_tp_data) > 0:
                         box_data.append(group_tp_data['value'].values)
                         box_positions.append(i + j * width)
-                        box_colors.append(colors.get(group, '#000000'))
+                        box_colors.append(self.group_colors.get(group, '#000000'))
                         labels.append(f'{tp}\n{group}')
 
             bp = ax.boxplot(box_data, positions=box_positions, widths=width*0.8,
@@ -180,22 +195,55 @@ class PopulationDynamicsPlotter:
 
             ax.set_xticks([i + width/2 for i in range(len(timepoints))])
             ax.set_xticklabels([str(tp) for tp in timepoints])
-            ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
             ax.set_ylabel(value_col.replace('_', ' ').title(), fontsize=12, fontweight='bold')
             ax.set_title('Box Plots', fontsize=13, fontweight='bold')
 
             # Add legend
             from matplotlib.patches import Patch
-            legend_elements = [Patch(facecolor=colors.get(g, '#000000'),
+            legend_elements = [Patch(facecolor=self.group_colors.get(g, '#000000'),
                                     alpha=0.6, label=g) for g in groups]
             ax.legend(handles=legend_elements, loc='best', frameon=True)
             ax.grid(True, alpha=0.3, axis='y')
 
+            # Add statistical tests if enabled
+            if self.show_stats and len(groups) == 2:
+                # Add significance bars for each timepoint
+                for i, tp in enumerate(timepoints):
+                    tp_data = plot_df[plot_df['timepoint'] == tp]
+                    if len(tp_data) > 10:  # Need enough data
+                        try:
+                            # Perform test
+                            test_results = perform_pairwise_tests(
+                                tp_data, 'value', 'group', groups,
+                                test=self.stat_method, fdr_correction=self.fdr_correction
+                            )
+
+                            if len(test_results) > 0 and test_results.iloc[0]['significant']:
+                                from ..stats.plot_stats import get_significance_symbol
+                                pval = test_results.iloc[0]['pvalue_adj']
+                                symbol = get_significance_symbol(pval, self.sig_symbols)
+
+                                if symbol != 'ns':
+                                    # Get max y for this timepoint
+                                    max_y = tp_data['value'].max()
+                                    y_min, y_max = ax.get_ylim()
+                                    y_range = y_max - y_min
+
+                                    # Draw significance bar
+                                    x1 = i
+                                    x2 = i + width
+                                    bar_y = max_y + y_range * 0.03
+                                    ax.plot([x1, x2], [bar_y, bar_y], 'k-', linewidth=1.0, zorder=100)
+                                    ax.text((x1 + x2) / 2, bar_y + y_range * 0.01, symbol,
+                                           ha='center', va='bottom', fontsize=9, fontweight='bold',
+                                           zorder=101)
+                        except:
+                            pass  # Skip if test fails
+
     def _plot_violins(self, data: pd.DataFrame, ax, value_col: str,
                      group_col: str, groups: List[str]):
         """Violin plots per timepoint."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
         timepoints = sorted(data['timepoint'].unique())
 
         # Prepare data
@@ -223,7 +271,7 @@ class PopulationDynamicsPlotter:
                     if len(group_tp_data) > 0:
                         violin_data.append(group_tp_data['value'].values)
                         positions.append(i + j * width)
-                        violin_colors.append(colors.get(group, '#000000'))
+                        violin_colors.append(self.group_colors.get(group, '#000000'))
 
             parts = ax.violinplot(violin_data, positions=positions, widths=width*0.8,
                                  showmeans=True, showmedians=True)
@@ -234,13 +282,13 @@ class PopulationDynamicsPlotter:
 
             ax.set_xticks([i + width/2 for i in range(len(timepoints))])
             ax.set_xticklabels([str(tp) for tp in timepoints])
-            ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
             ax.set_ylabel(value_col.replace('_', ' ').title(), fontsize=12, fontweight='bold')
             ax.set_title('Violin Plots', fontsize=13, fontweight='bold')
 
             # Add legend
             from matplotlib.patches import Patch
-            legend_elements = [Patch(facecolor=colors.get(g, '#000000'),
+            legend_elements = [Patch(facecolor=self.group_colors.get(g, '#000000'),
                                     alpha=0.6, label=g) for g in groups]
             ax.legend(handles=legend_elements, loc='best', frameon=True)
             ax.grid(True, alpha=0.3, axis='y')
@@ -248,8 +296,6 @@ class PopulationDynamicsPlotter:
     def _plot_combined(self, data: pd.DataFrame, ax, value_col: str,
                       group_col: str, groups: List[str]):
         """Combined overlay plot."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
         for group in groups:
             group_data = data[data[group_col] == group]
 
@@ -262,7 +308,7 @@ class PopulationDynamicsPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = colors.get(group, '#000000')
+            color = self.group_colors.get(group, '#000000')
 
             # Box plot style overlay
             for tp in timepoints:
@@ -279,7 +325,7 @@ class PopulationDynamicsPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.15, color=color)
 
-        ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+        ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
         ax.set_ylabel(value_col.replace('_', ' ').title(), fontsize=12, fontweight='bold')
         ax.set_title('Combined Overlay', fontsize=13, fontweight='bold')
         ax.legend(frameon=True, loc='best', fontsize=11)
@@ -289,8 +335,6 @@ class PopulationDynamicsPlotter:
                                   value_col: str, group_col: str, groups: List[str]):
         """Clean publication-quality plot."""
         fig, ax = plt.subplots(figsize=(8, 6))
-
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
 
         for group in groups:
             group_data = data[data[group_col] == group]
@@ -303,7 +347,7 @@ class PopulationDynamicsPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = colors.get(group, '#000000')
+            color = self.group_colors.get(group, '#000000')
 
             ax.plot(timepoints, means, '-o', color=color, linewidth=3,
                    markersize=10, label=group, markeredgecolor='white',
@@ -311,7 +355,7 @@ class PopulationDynamicsPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Time (days)', fontsize=14, fontweight='bold')
+        ax.set_xlabel(self.timepoint_label, fontsize=14, fontweight='bold')
         ax.set_ylabel(value_col.replace('_', ' ').title(), fontsize=14, fontweight='bold')
         ax.legend(frameon=False, loc='best', fontsize=12)
         ax.spines['top'].set_visible(False)
