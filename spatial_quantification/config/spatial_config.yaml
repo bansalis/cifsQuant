@@ -21,6 +21,36 @@ output:
   dpi: 300
 
 # ============================================================================
+# PLOT CUSTOMIZATION
+# ============================================================================
+plotting:
+  # Timepoint settings
+  timepoint_unit: 'weeks'  # 'weeks' or 'days' - used for axis labels
+  timepoint_label: 'Time (weeks)'  # Custom x-axis label
+
+  # Font settings
+  font_family: 'DejaVu Sans'  # Use DejaVu Sans instead of Arial (always available)
+  font_size: 11
+  title_size: 14
+
+  # Statistical test display
+  show_stats: true
+  stat_method: 'mann_whitney'  # Method for pairwise comparisons
+  fdr_correction: true  # Apply FDR correction
+  significance_symbols:
+    0.001: '***'
+    0.01: '**'
+    0.05: '*'
+    1.0: 'ns'  # Not significant
+
+  # Color schemes
+  group_colors:
+    KPT: '#E41A1C'    # Red
+    KPNT: '#377EB8'   # Blue
+    cis: '#4DAF4A'    # Green
+    trans: '#FF7F00'  # Orange
+
+# ============================================================================
 # TUMOR DEFINITION (CONFIGURABLE FOR FUTURE CHANGES)
 # ============================================================================
 tumor_definition:
@@ -369,8 +399,12 @@ cellular_neighborhoods:
   window_size: 100  # μm, radius for neighborhood definition
   k_neighbors: 30   # Number of nearest neighbors to consider (increased for stability)
 
+  # Subsampling (to capture rare populations while managing memory)
+  cells_per_sample: 100000  # Max cells per sample for global neighborhood definition
+                             # With 500k+ cells/sample, 100k provides good representation
+
   # Clustering parameters
-  n_clusters: 10  # Number of neighborhood types to identify
+  n_clusters: 15  # Number of neighborhood types to identify (increased for granularity)
   clustering_method: 'kmeans'  # or 'hierarchical'
 
   # Define neighborhoods across ALL samples, then compare
