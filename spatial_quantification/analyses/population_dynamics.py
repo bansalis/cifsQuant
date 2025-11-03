@@ -8,11 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple
 import warnings
-import sys
-
-# Import plotter
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from visualization.population_dynamics_plotter import PopulationDynamicsPlotter
+from ..visualization.population_dynamics_plotter import PopulationDynamicsPlotter
 
 
 class PopulationDynamics:
