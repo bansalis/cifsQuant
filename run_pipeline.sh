@@ -351,7 +351,7 @@ for sample_entry in "${samples_to_process[@]}"; do
         # Check if output is on WSL mount (/mnt) for performance optimization
         fast_temp_flag=""
         if [[ "$(pwd)" == /mnt/* ]]; then
-            fast_temp_flag="--use_fast_temp"
+            # fast_temp_flag="--use_fast_temp"
             echo "⚡ Detected WSL mount - using fast temp strategy (5x speedup!)"
         fi
 
@@ -359,8 +359,8 @@ for sample_entry in "${samples_to_process[@]}"; do
             --sample_dir "$sample_path" \
             --markers_csv markers.csv \
             --output_dir "$tile_dir" \
-            --tile_size 8192 \
-            --overlap 1024 \
+            --tile_size 4096 \
+            --overlap 512 \
             --dapi_channel 3 \
             --max_workers 3 \
             $fast_temp_flag
@@ -392,8 +392,8 @@ for sample_entry in "${samples_to_process[@]}"; do
         --markers_csv markers.csv
         --outdir "$outdir"
         --sample_name "$sample_name"
-        --tile_size 8192
-        --overlap 1024
+        --tile_size 4096
+        --overlap 512
         --pyramid_level 0
         --cellpose true
         --mcquant true
@@ -401,8 +401,8 @@ for sample_entry in "${samples_to_process[@]}"; do
         --dapi_channel 3
         --nuc_diameter 15
         --cyto_diameter 28
-        --nuclei_batch_size 4
-        --cyto_batch_size_tiles 3
+        --nuclei_batch_size 6
+        --cyto_batch_size_tiles 4
         -with-report "$outdir/nextflow_report.html"
         -with-timeline "$outdir/nextflow_timeline.html"
         -with-dag "$outdir/nextflow_dag.html"
