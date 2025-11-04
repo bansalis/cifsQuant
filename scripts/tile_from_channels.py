@@ -96,7 +96,24 @@ def extract_tile(args):
 
     try:
         n_channels = len(channel_files)
+        with tifffile.TiffFile(channel_files[dapi_ch]) as tif:
+            dapi_tile = tif.pages[0].asarray()[y:y_end, x:x_end]
+            if dapi_tile.max() == 0:
+                del dapi_tile
+                print(f"Tile y{y}_x{x}: No data in DAPI channel", file=sys.stderr)
+                return None
 
+            # Check for nuclei signal - use faster approximate percentiles
+            p95 = np.percentile(dapi_tile, 95)
+            p5 = np.percentile(dapi_tile, 5)
+            dynamic_range = p95 - p5
+
+            # Require: contrast AND minimum intensity
+            if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
+                del dapi_tile
+                print(f"Tile y{y}_x{x}: No data in DAPI channel", file=sys.stderr)
+                return None
+                
         # Read all channels directly - NO pre-checks for maximum speed
         tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
 
@@ -110,6 +127,9 @@ def extract_tile(args):
         # Uncompressed tiles are 10-20x faster to write on slow WSL mounts
         tifffile.imwrite(filename, tile,
                         photometric='minisblack',
+                        compression='zlib',
+                        compressionargs={'level': 1},
+                        tile=(256, 256),
                         metadata={'axes': 'CYX'},
                         bigtiff=True)
 
@@ -227,7 +247,7 @@ def main():
 
     # Process tiles
     tile_info = []
-    batch_size = 8
+    batch_size = 10
     tiles_completed = len(existing_tiles)  # Count of already-done tiles
 
     for batch_start in range(0, len(coords), batch_size):
