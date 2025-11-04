@@ -160,6 +160,9 @@ def extract_tile(args):
         # Uncompressed tiles are 10-20x faster to write on slow WSL mounts
         tifffile.imwrite(filename, tile,
                         photometric='minisblack',
+                        compression='zlib',
+                        compressionargs={'level': 1},
+                        tile=(256, 256),
                         metadata={'axes': 'CYX'},
                         bigtiff=True)
 
@@ -288,7 +291,7 @@ def main():
 
     # Process tiles
     tile_info = []
-    batch_size = 8
+    batch_size = 10
     tiles_completed = len(existing_tiles)  # Count of already-done tiles
 
     for batch_start in range(0, len(coords), batch_size):

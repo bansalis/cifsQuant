@@ -1,0 +1,531 @@
+# ============================================================================
+# SPATIAL QUANTIFICATION CONFIGURATION
+# ============================================================================
+# Clean, comprehensive spatial analysis workflow
+# Author: cifsQuant refactor
+# Date: 2025-11-02
+#
+# This config drives ALL spatial analyses with maximum flexibility
+
+# ============================================================================
+# INPUT/OUTPUT
+# ============================================================================
+input:
+  gated_data: 'manual_gating_output/gated_data.h5ad'  # From manual_gating.py
+  metadata: 'sample_metadata.csv'
+
+output:
+  base_directory: 'spatial_quantification_results'
+  save_intermediate: true
+  formats: ['pdf', 'png']  # Plot formats
+  dpi: 300
+
+# ============================================================================
+# PLOT CUSTOMIZATION
+# ============================================================================
+plotting:
+  # Timepoint settings
+  timepoint_unit: 'weeks'  # 'weeks' or 'days' - used for axis labels
+  timepoint_label: 'Time (weeks)'  # Custom x-axis label
+
+  # Font settings
+  font_family: 'DejaVu Sans'  # Use DejaVu Sans instead of Arial (always available)
+  font_size: 11
+  title_size: 14
+
+  # Statistical test display
+  show_stats: true
+  stat_method: 'mann_whitney'  # Method for pairwise comparisons
+  fdr_correction: true  # Apply FDR correction
+  significance_symbols:
+    0.001: '***'
+    0.01: '**'
+    0.05: '*'
+    1.0: 'ns'  # Not significant
+
+  # Color schemes
+  group_colors:
+    KPT: '#E41A1C'    # Red
+    KPNT: '#377EB8'   # Blue
+    cis: '#4DAF4A'    # Green
+    trans: '#FF7F00'  # Orange
+
+# ============================================================================
+# TUMOR DEFINITION (CONFIGURABLE FOR FUTURE CHANGES)
+# ============================================================================
+tumor_definition:
+  # Current: Tumor is TOM+ cells
+  # Future: Could be any combination of markers
+  base_phenotype: 'Tumor'
+
+  # How tumor is defined from manual gating gates
+  # Currently: TOM+ defines tumor
+  required_positive: ['TOM']
+  required_negative: []
+
+  # Alternative definitions (commented examples for future use):
+  # Example 1: Tumor = TOM+ AND DAPI+
+  # required_positive: ['TOM', 'DAPI']
+  # required_negative: []
+
+  # Example 2: Tumor = TOM+ but NOT CD45+ (exclude immune)
+  # required_positive: ['TOM']
+  # required_negative: ['CD45']
+
+  # Tumor structure detection parameters
+  structure_detection:
+    method: 'DBSCAN'  # DBSCAN clustering for tumor structures
+    eps: 800  # μm, distance threshold
+    min_samples: 250  # minimum cells per cluster
+    min_cluster_size: 250  # minimum cells to be considered a tumor structure
+
+# ============================================================================
+# METADATA CONFIGURATION
+# ============================================================================
+metadata:
+  # Core columns (required)
+  sample_column: 'sample_id'
+  group_column: 'group'
+  timepoint_column: 'timepoint'
+
+  # Additional grouping columns to extract/use
+  # These will be auto-generated if not present
+  additional_groupings:
+    - 'genotype'      # Will extract 'cis' or 'trans' from group
+    - 'main_group'    # Will extract 'KPT' or 'KPNT' from group
+    - 'treatment'     # Already in metadata
+
+  # Add your own custom groupings here as needed
+  # custom_groupings:
+  #   subgroup_name:
+  #     sample_mapping:
+  #       Guest36: 'early_responder'
+  #       Guest37: 'late_responder'
+  #       ...
+
+# ============================================================================
+# PHENOTYPE DEFINITIONS
+# ============================================================================
+# Define custom phenotypes based on manual_gating gates
+# All phenotypes use existing gates (is_TOM, is_CD3, etc.)
+
+phenotypes:
+  # --- TUMOR PHENOTYPES ---
+  Tumor:
+    description: "All tumor cells"
+    positive: ['TOM']
+    negative: []
+    color: '#E41A1C'
+
+  pERK_positive_tumor:
+    description: "pERK+ tumor cells"
+    base: 'Tumor'  # Requires TOM+
+    positive: ['PERK']
+    negative: []
+    color: '#4DAF4A'
+
+  pERK_negative_tumor:
+    description: "pERK- tumor cells"
+    base: 'Tumor'
+    positive: []
+    negative: ['PERK']
+    color: '#FDB462'
+
+  AGFP_positive_tumor:
+    description: "AGFP+ (NINJA) tumor cells"
+    base: 'Tumor'
+    positive: ['AGFP']
+    negative: []
+    color: '#377EB8'
+
+  AGFP_negative_tumor:
+    description: "AGFP- tumor cells"
+    base: 'Tumor'
+    positive: []
+    negative: ['AGFP']
+    color: '#FDB462'
+
+  Ki67_positive_tumor:
+    description: "Proliferating tumor cells"
+    base: 'Tumor'
+    positive: ['KI67']
+    negative: []
+    color: '#FF7F00'
+
+  Ki67_negative_tumor:
+    description: "Non-proliferating tumor cells"
+    base: 'Tumor'
+    positive: []
+    negative: ['KI67']
+    color: '#FFFF99'
+
+  # Complex tumor phenotypes
+  pERK_AGFP_positive_tumor:
+    description: "Double positive pERK+ AGFP+ tumor"
+    base: 'Tumor'
+    positive: ['PERK', 'AGFP']
+    negative: []
+    color: '#A65628'
+
+  pERK_Ki67_positive_tumor:
+    description: "pERK+ proliferating tumor"
+    base: 'Tumor'
+    positive: ['PERK', 'KI67']
+    negative: []
+    color: '#F781BF'
+
+  # --- IMMUNE PHENOTYPES ---
+  CD45_positive:
+    description: "All immune cells"
+    positive: ['CD45']
+    negative: []
+    color: '#984EA3'
+
+  CD3_positive:
+    description: "All T cells"
+    positive: ['CD3']
+    negative: []
+    color: '#A65628'
+
+  CD8_T_cells:
+    description: "CD8+ T cells"
+    positive: ['CD3', 'CD8B']
+    negative: []
+    color: '#F781BF'
+
+  CD4_T_cells:
+    description: "CD4+ T cells (CD3+ CD8-)"
+    positive: ['CD3']
+    negative: ['CD8B']
+    color: '#FFED6F'
+
+  CD8_Ki67_positive:
+    description: "Proliferating CD8+ T cells"
+    positive: ['CD3', 'CD8B', 'KI67']
+    negative: []
+    color: '#999999'
+
+  CD8_pERK_positive:
+    description: "pERK+ CD8+ T cells"
+    positive: ['CD3', 'CD8B', 'PERK']
+    negative: []
+    color: '#B3DE69'
+
+  Non_T_immune:
+    description: "CD45+ CD3- (non-T immune cells)"
+    positive: ['CD45']
+    negative: ['CD3']
+    color: '#FCCDE5'
+
+# ============================================================================
+# ANALYSIS 1: POPULATION DYNAMICS OVER TIME
+# ============================================================================
+population_dynamics:
+  enabled: true
+
+  # Populations to analyze
+  populations:
+    - Tumor
+    - pERK_positive_tumor
+    - AGFP_positive_tumor
+    - Ki67_positive_tumor
+    - CD45_positive
+    - CD3_positive
+    - CD8_T_cells
+    - CD4_T_cells
+
+  # For tumor subpopulations, automatically compute fraction relative to parent
+  # Format: {subset_population: parent_population}
+  fractional_populations:
+    pERK_positive_tumor: Tumor
+    AGFP_positive_tumor: Tumor
+    Ki67_positive_tumor: Tumor
+    pERK_negative_tumor: Tumor
+    AGFP_negative_tumor: Tumor
+
+  # Group comparisons
+  comparisons:
+    - name: 'KPT_vs_KPNT'
+      groups: ['KPT', 'KPNT']  # Uses main_group column
+      timepoints: [8, 10, 12, 14, 16, 18, 20]
+
+    # Add more comparisons as needed
+    # - name: 'cis_vs_trans'
+    #   groups: ['cis', 'trans']
+    #   timepoints: [8, 10, 12, 14, 16, 18, 20]
+
+  # Metrics to calculate
+  metrics:
+    - 'count'       # Raw count per sample
+    - 'density'     # Cells per mm²
+    - 'fraction'    # Fraction of parent population (for fractional_populations)
+
+  # Statistical tests
+  statistics:
+    test_per_timepoint: true  # Compare groups at each timepoint
+    test_method: 'mannwhitneyu'  # Non-parametric test
+    alpha: 0.05
+    fdr_correction: 'benjamini_hochberg'
+
+# ============================================================================
+# ANALYSIS 2: CELL-TO-CELL DISTANCE ANALYSIS
+# ============================================================================
+distance_analysis:
+  enabled: true
+
+  # Define pairings: for each source, calculate distance to each target
+  pairings:
+    - source: 'CD8_T_cells'
+      targets: ['Tumor', 'pERK_positive_tumor', 'AGFP_positive_tumor']
+
+    - source: 'CD3_positive'
+      targets: ['Tumor', 'pERK_positive_tumor', 'AGFP_positive_tumor']
+
+    - source: 'CD45_positive'
+      targets: ['Tumor']
+
+  # Distance metrics
+  metrics:
+    - 'mean_nearest_neighbor'  # Mean distance to nearest target cell
+    - 'median_nearest_neighbor'
+    - 'min_distance'  # Distance to closest target
+    - 'distance_distribution'  # Full distribution
+
+  # Analysis levels
+  levels:
+    - 'per_sample'   # Aggregate per sample
+    - 'per_structure'  # Per tumor structure (if structure detection enabled)
+
+  # Comparisons
+  comparisons:
+    - name: 'KPT_vs_KPNT'
+      groups: ['KPT', 'KPNT']
+      timepoints: [8, 10, 12, 14, 16, 18, 20]
+
+  # Visualization
+  max_distance_plot: 500  # μm, max distance for histogram plots
+
+# ============================================================================
+# ANALYSIS 3: IMMUNE INFILTRATION
+# ============================================================================
+immune_infiltration:
+  enabled: true
+
+  # Use optimized version (Getis-Ord Gi* + Ripley's K)
+  # RECOMMENDED: 10-100x faster with better spatial statistics
+  use_optimized: true
+
+  # Immune populations to analyze
+  immune_populations:
+    - CD45_positive
+    - CD3_positive
+    - CD8_T_cells
+    - CD4_T_cells
+    - Non_T_immune
+
+  # Infiltration boundaries (from tumor edge)
+  boundaries:
+    - 0      # Within tumor
+    - 50     # 0-50 μm from tumor edge
+    - 100    # 50-100 μm from tumor edge
+    - 200    # 100-200 μm from tumor edge
+    - 500    # 200-500 μm from tumor edge
+
+  # Calculate infiltration per tumor structure
+  per_structure: true
+
+  # Comparisons
+  comparisons:
+    - name: 'KPT_vs_KPNT'
+      groups: ['KPT', 'KPNT']
+      timepoints: [8, 10, 12, 14, 16, 18, 20]
+
+  # --- MARKER ZONE ANALYSIS (for tumor heterogeneity) ---
+  marker_zone_analysis:
+    enabled: true
+
+    # Analyze spatial zones for these markers
+    markers:
+      - marker: 'PERK'
+        positive_phenotype: 'pERK_positive_tumor'
+        negative_phenotype: 'pERK_negative_tumor'
+
+      - marker: 'AGFP'
+        positive_phenotype: 'AGFP_positive_tumor'
+        negative_phenotype: 'AGFP_negative_tumor'
+
+      - marker: 'KI67'
+        positive_phenotype: 'Ki67_positive_tumor'
+        negative_phenotype: 'Ki67_negative_tumor'
+
+    # Heterogeneity assessment methods
+    # Optimized version uses: Getis-Ord Gi*, Ripley's K, DBSCAN
+    # Original version uses: Moran's I, DBSCAN
+    heterogeneity_metrics:
+      - 'getis_ord_gi_star'  # Local hotspot detection (OPTIMIZED - FAST)
+      - 'ripleys_k'          # Multi-scale clustering (OPTIMIZED - FAST)
+      - 'cluster_analysis'   # DBSCAN clustering of marker+ cells
+
+    # Zone-specific infiltration
+    # Compare immune infiltration in marker+ vs marker- regions
+    zone_infiltration:
+      enabled: true
+      immune_populations:
+        - CD8_T_cells
+        - CD3_positive
+        - CD45_positive
+
+# ============================================================================
+# ANALYSIS 4: CELLULAR NEIGHBORHOODS
+# ============================================================================
+cellular_neighborhoods:
+  enabled: true
+
+  # Use optimized version (windowed + HNSW indexing)
+  # RECOMMENDED: 10-100x faster with subsampling
+  use_optimized: true
+
+  # Populations to include in neighborhood analysis
+  populations:
+    - Tumor
+    - pERK_positive_tumor
+    - AGFP_positive_tumor
+    - Ki67_positive_tumor
+    - CD45_positive
+    - CD3_positive
+    - CD8_T_cells
+
+  # Neighborhood parameters
+  window_size: 100  # μm, radius for neighborhood definition
+  k_neighbors: 30   # Number of nearest neighbors to consider (increased for stability)
+
+  # Subsampling (to capture rare populations while managing memory)
+  cells_per_sample: 100000  # Max cells per sample for global neighborhood definition
+                             # With 500k+ cells/sample, 100k provides good representation
+
+  # Clustering parameters
+  n_clusters: 15  # Number of neighborhood types to identify (increased for granularity)
+  clustering_method: 'kmeans'  # or 'hierarchical'
+
+  # Define neighborhoods across ALL samples, then compare
+  define_globally: true
+
+  # Analyses to perform
+  analyses:
+    - 'composition'       # Cell type composition of each neighborhood
+    - 'infiltration'      # Immune infiltration per neighborhood type
+    - 'temporal_evolution'  # How neighborhoods change over time
+    - 'spatial_distribution'  # Where neighborhoods are located
+
+  # Comparisons
+  comparisons:
+    - name: 'KPT_vs_KPNT'
+      groups: ['KPT', 'KPNT']
+      timepoints: [8, 10, 12, 14, 16, 18, 20]
+
+# ============================================================================
+# ANALYSIS 5: ADVANCED ANALYSES
+# ============================================================================
+advanced_analyses:
+  enabled: true
+
+  # Pseudo-time trajectory analysis
+  pseudotime:
+    enabled: true
+    method: 'diffusion_pseudotime'  # or 'monocle3', 'slingshot'
+    features:
+      - 'phenotype_composition'
+      - 'spatial_organization'
+      - 'infiltration_metrics'
+
+  # Additional advanced methods (placeholders for future)
+  # spatial_transcriptomics_integration:
+  #   enabled: false
+
+  # spatial_interaction_networks:
+  #   enabled: false
+
+# ============================================================================
+# VISUALIZATION SETTINGS
+# ============================================================================
+visualization:
+  # General settings
+  style: 'publication'  # 'publication' or 'exploratory'
+  color_palette: 'colorblind_safe'
+  font_family: 'Arial'
+  font_size: 12
+
+  # Plot types - EVERY analysis generates:
+  # 1. Individual plots (one per comparison/metric)
+  # 2. Composite multi-panel figures
+  # 3. Raw data overlay plots
+  # 4. Publication-quality summary plots
+
+  individual_plots: true
+  composite_plots: true
+
+  # Publication quality settings
+  publication:
+    remove_spines: true
+    grid: false
+    tight_layout: true
+    despine: true
+
+  # Exploratory settings (raw data)
+  exploratory:
+    show_points: true
+    alpha: 0.6
+    show_stats: true
+
+# ============================================================================
+# STATISTICAL TESTING
+# ============================================================================
+statistics:
+  enabled: true
+
+  # Test methods
+  pairwise_test: 'mannwhitneyu'  # Non-parametric for group comparisons
+  temporal_test: 'linear_mixed_model'  # For temporal trends
+  correlation_test: 'spearman'  # For correlations
+
+  # Multiple testing correction
+  fdr_correction: 'benjamini_hochberg'
+  alpha: 0.05
+
+  # Effect sizes
+  report_effect_sizes: true
+  effect_size_methods:
+    - 'cohens_d'
+    - 'rank_biserial'
+
+  # Confidence intervals
+  confidence_intervals: true
+  ci_level: 0.95
+  n_bootstrap: 10000
+
+  # Output all stats to files
+  save_all_tests: true  # Creates detailed stats CSV for every analysis
+
+# ============================================================================
+# PERFORMANCE
+# ============================================================================
+performance:
+  n_jobs: -1  # Use all CPU cores
+  parallel_processing: true
+  chunk_size: 10000  # For large datasets
+  use_kdtree: true  # For spatial queries
+  memory_efficient: true  # Process per structure when possible
+
+# ============================================================================
+# ADVANCED OPTIONS
+# ============================================================================
+advanced:
+  random_seed: 42
+  verbose: true
+  log_file: 'spatial_quantification.log'
+
+  # Checkpointing (for long-running analyses)
+  checkpointing:
+    enabled: true
+    frequency: 'per_analysis'  # Save after each major analysis
+    directory: 'checkpoints'
