@@ -90,6 +90,55 @@ def match_marker_to_file(marker_name, available_files):
     return None
 
 
+def prescreen_tiles_from_dapi(dapi_file, coords, tile_size):
+    """
+    FAST prescreening: Open DAPI once, scan all tile locations, return good coordinates.
+    This is MUCH faster than opening DAPI file separately for each tile.
+    """
+    print(f"Prescreening {len(coords)} tile locations from DAPI channel...")
+
+    # Open DAPI file ONCE
+    with tifffile.TiffFile(dapi_file) as tif:
+        dapi_full = tif.pages[0].asarray()
+
+    good_coords = []
+    empty_count = 0
+    low_signal_count = 0
+
+    for y, x, y_end, x_end, channel_files, dapi_ch in coords:
+        # Extract tile region
+        dapi_tile = dapi_full[y:y_end, x:x_end]
+
+        # Quick checks
+        if dapi_tile.max() == 0:
+            empty_count += 1
+            continue
+
+        # Check for nuclei signal - use faster approximate percentiles
+        p95 = np.percentile(dapi_tile, 95)
+        p5 = np.percentile(dapi_tile, 5)
+        dynamic_range = p95 - p5
+
+        # Require: contrast AND minimum intensity
+        if p95 < 100 or dynamic_range < 50 or p95 / (p5 + 1) < 1.5:
+            low_signal_count += 1
+            continue
+
+        # This tile passes screening
+        good_coords.append((y, x, y_end, x_end, channel_files, dapi_ch))
+
+    del dapi_full
+    gc.collect()
+
+    print(f"Prescreening complete:")
+    print(f"  ✓ {len(good_coords)} tiles with good signal")
+    print(f"  ✗ {empty_count} empty tiles (no DAPI)")
+    print(f"  ✗ {low_signal_count} low-signal tiles (weak contrast)")
+    print(f"  → Processing {len(good_coords)}/{len(coords)} tiles ({100*len(good_coords)/len(coords):.1f}%)")
+
+    return good_coords
+
+
 def extract_tile(args):
     """Extract tile from per-channel files."""
     y, x, y_end, x_end, channel_files, dapi_ch = args
@@ -97,7 +146,8 @@ def extract_tile(args):
     try:
         n_channels = len(channel_files)
 
-        # Read all channels directly - NO pre-checks for maximum speed
+        # NO prescreening here - that's done once upfront!
+        # Read all channels directly
         tile = np.zeros((n_channels, y_end - y, x_end - x), dtype=np.uint16)
 
         for c in range(n_channels):
@@ -222,6 +272,17 @@ def main():
         print(f"Resuming: {len(coords)} tiles remaining to process")
     else:
         print(f"Processing {len(coords)} tiles from scratch...")
+
+    # FAST PRESCREENING: Scan DAPI once to filter good tiles
+    # This is MUCH faster than opening DAPI separately for each tile!
+    if len(coords) > 0:
+        dapi_file = channel_files[args.dapi_channel]
+        coords = prescreen_tiles_from_dapi(dapi_file, coords, args.tile_size)
+
+        if len(coords) == 0:
+            print("⚠ No tiles passed prescreening criteria!")
+            print("   All tiles were either empty or had insufficient signal.")
+            sys.exit(1)
 
     os.chdir(work_dir)
 
