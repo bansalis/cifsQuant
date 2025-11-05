@@ -905,6 +905,8 @@ else:
 /*
  * BATCH CELLPOSE WORKFLOW
  */
+// Replace the workflow section starting around line 1000-1036:
+
 workflow {
     if (!params.input_image) {
         error "Please provide --input_image parameter"
@@ -912,67 +914,40 @@ workflow {
     
     log.info "=== MCMICRO BATCH CELLPOSE PIPELINE ==="
     log.info "Input image: ${params.input_image}"
-    log.info "Tile size: ${params.tile_size}"
-    log.info "Nuclei batch size: ${params.nuclei_batch_size} tiles/batch"
-    log.info "Cyto batch size: ${params.cyto_batch_size_tiles} tiles/batch"
-    log.info "Output directory: ${params.outdir}"
     
-    // Create input channels
-    input_image_ch = Channel.fromPath(params.input_image)
-
-    // Create markers channel - use provided file or look for default
-    if (params.markers_csv) {
-        markers_ch = Channel.fromPath(params.markers_csv, checkIfExists: true)
-        log.info "Using markers file: ${params.markers_csv}"
-    } else if (file('./markers.csv').exists()) {
-        markers_ch = Channel.fromPath('./markers.csv', checkIfExists: true)
-        log.info "Using default markers file: ./markers.csv"
-    } else {
-        // Create empty placeholder file
-        file('NO_MARKERS.txt').text = ''
-        markers_ch = Channel.fromPath('NO_MARKERS.txt')
-        log.info "No markers file provided - will use default channel names"
-    }
-
-    // Step 0: Global background subtraction (BEFORE tiling)
-    if (params.global_bg_subtract) {
-        log.info "Applying global background subtraction..."
-        bg_corrected_ch = GLOBAL_BACKGROUND_SUBTRACT(input_image_ch)
-        image_to_tile = bg_corrected_ch
-    } else {
-        image_to_tile = input_image_ch
-    }
-
-    // Step 1: Tile the image (or use pre-existing tiles)
     if (params.skip_tiling) {
-        log.info "SKIP_TILING enabled - using pre-existing tiles from ${params.outdir}/tiles"
-
-        // Use pre-existing tiles
-        def tiles_dir = "${params.outdir}/tiles"
-        tiles_flattened = Channel.fromPath("${tiles_dir}/tile_*.tif")
-        markers_csv_ch = Channel.fromPath("${tiles_dir}/markers_tiled.csv")
+        log.info "SKIP_TILING enabled - using pre-existing tiles from ${file(params.input_image).parent}"
+        
+        // Create channels from existing files
+        def tiles_dir = file(params.input_image).parent
+        tiles_ch = Channel.fromPath("${tiles_dir}/tile_*.tif")
+        tile_info_ch = Channel.fromPath("${tiles_dir}/tile_info.json")
+        markers_ch = Channel.fromPath("${tiles_dir}/markers_tiled.csv")
+        
     } else {
-        log.info "Running TILE_LARGE_IMAGE process"
-
+        log.info "Tile size: ${params.tile_size}"
+        log.info "Output directory: ${params.outdir}"
+        
+        input_image_ch = Channel.fromPath(params.input_image)
+        
         TILE_LARGE_IMAGE(
             input_image_ch,
-            markers_ch,
             params.sample_name,
             params.tile_size,
             params.overlap,
             params.pyramid_level
         )
-
-        tiles_flattened = TILE_LARGE_IMAGE.out.tiles.flatten()
-        markers_csv_ch = TILE_LARGE_IMAGE.out.markers_csv
+        
+        // Assign to same channel variables for consistency
+        tiles_ch = TILE_LARGE_IMAGE.out.tiles
+        tile_info_ch = TILE_LARGE_IMAGE.out.tile_info
+        markers_ch = TILE_LARGE_IMAGE.out.markers_csv
     }
-
+    
     if (params.cellpose) {
-
-        // Step 2: Background subtraction and flatten tiles (if not already flattened)
-        if (!params.skip_tiling) {
-            tiles_flattened = tiles_flattened
-        }
+        // Flatten and process tiles
+        tiles_flattened = tiles_ch.flatten()
+        log.info "Tiles flattened"
         
         if (params.background_subtract) {
             tiles_corrected = BACKGROUND_SUBTRACT(tiles_flattened).corrected
@@ -980,11 +955,12 @@ workflow {
         } else {
             tiles_to_use = tiles_flattened
         }
-
+        
+        // Create separate references for different uses
         tiles_for_nuclei = tiles_to_use
         tiles_for_mcquant = tiles_to_use
 
-        // Create nuclei batches separately
+        // Create nuclei batches
         nuclei_batches = tiles_to_use
             .collate(params.nuclei_batch_size)
             .map { batch ->
@@ -1007,7 +983,7 @@ workflow {
             )
             .map { basename, tile, mask -> [tile, mask] }
 
-        // Now batch the matched pairs
+        // Batch the matched pairs for cyto
         cyto_seeded_input = tiles_with_masks
             .collate(params.cyto_batch_size_tiles)
             .map { batch ->
@@ -1020,24 +996,20 @@ workflow {
         RUN_CELLPOSE_CYTO_SEEDED(cyto_seeded_input)
 
         if (params.mcquant) {
-            // Step 4: Run MCQuant on individual tiles - FIXED JOIN
-            // After creating tiles_to_use, ADD THIS:
-            // tiles_for_mcquant = tiles_to_use  // Create second reference BEFORE collate
-
-            // Then use tiles_for_mcquant for MCQuant join:
+            // Step 4: Run MCQuant on individual tiles
             mcquant_input = RUN_CELLPOSE_CYTO_SEEDED.out.cell_masks
-                .flatMap { it } //.flatten()
+                .flatMap { it }
                 .map { mask -> [mask.baseName.replaceAll('_cell$', ''), mask] }
                 .join(
                     tiles_for_mcquant.map { tile -> [tile.baseName, tile] }
                 )
                 .map { key, mask, tile -> [mask, tile] }
 
-            RUN_MCQUANT(mcquant_input, TILE_LARGE_IMAGE.out.markers_csv)
+            RUN_MCQUANT(mcquant_input, markers_ch)
 
             // Step 5: Stitch results
             STITCH_RESULTS(
-                TILE_LARGE_IMAGE.out.tile_info,
+                tile_info_ch,
                 RUN_CELLPOSE_CYTO_SEEDED.out.cell_masks.collect(),
                 RUN_MCQUANT.out.cell_quantification.collect(),
                 params.sample_name
@@ -1046,14 +1018,14 @@ workflow {
             if (params.cylinter) {
                 CYLINTER_QC(
                     STITCH_RESULTS.out.combined_csv,
-                    TILE_LARGE_IMAGE.out.markers_csv,  // Missing full_mask parameter
+                    markers_ch,
                     params.sample_name
                 )
                 
                 if (params.scimap) {
                     SPATIAL_ANALYSIS(
                         CYLINTER_QC.out.cleaned,
-                        TILE_LARGE_IMAGE.out.markers_csv,
+                        markers_ch,
                         params.sample_name
                     )
                 }
@@ -1070,12 +1042,17 @@ workflow.onComplete {
     
     if (workflow.success) {
         println ""
-        println "SUCCESS! Batch processing completed:"
-        println "- TILE_LARGE_IMAGE: 1 of 1 ✔"
-        println "- RUN_CELLPOSE_NUCLEI_BATCH: X batches ✔"
-        println "- RUN_CELLPOSE_CYTO_BATCH: X batches ✔" 
-        println "- RUN_MCQUANT: X tiles ✔"
-        println ""
-        println "Batch optimization delivered significant speedup!"
+        println "SUCCESS! Processing completed"
+        if (params.skip_tiling) {
+            println "- Used pre-existing tiles ✔"
+        } else {
+            println "- TILE_LARGE_IMAGE: completed ✔"
+        }
+        println "- RUN_CELLPOSE_NUCLEI_BATCH: completed ✔"
+        println "- RUN_CELLPOSE_CYTO_SEEDED: completed ✔" 
+        if (params.mcquant) {
+            println "- RUN_MCQUANT: completed ✔"
+            println "- STITCH_RESULTS: completed ✔"
+        }
     }
 }

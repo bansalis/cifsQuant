@@ -100,7 +100,6 @@ echo "✓ Container preparation complete"
 echo ""
 
 # Pre-download Cellpose models
-# Pre-download Cellpose models
 echo "Pre-downloading Cellpose models..."
 echo "This is a one-time download (~100MB)"
 
@@ -310,12 +309,46 @@ EOF
     fi
 fi
 
-# Ask about resume
-read -p "Resume previous runs? (y/n): " resume_choice
-if [[ $resume_choice =~ ^[Nn]$ ]]; then
-    echo "Cleaning up previous runs..."
-    rm -rf work .nextflow* results
+# SEPARATED RESUME OPTIONS
+echo "=========================================="
+echo "RESUME OPTIONS"
+echo "=========================================="
+echo ""
+echo "1. Tiling Resume:"
+echo "   - YES: Keep existing tiles (skip tiling step)"
+echo "   - NO: Delete all tiles and re-tile from scratch"
+echo ""
+read -p "Resume previous tiling? (y/n): " resume_tiling
+echo ""
+
+echo "2. Nextflow Resume:"
+echo "   - YES: Continue from last checkpoint (faster)"
+echo "   - NO: Clean Nextflow work directory and start fresh"
+echo ""
+read -p "Resume previous Nextflow runs? (y/n): " resume_nextflow
+echo ""
+
+# Clean up based on selections
+if [[ $resume_tiling =~ ^[Nn]$ ]]; then
+    echo "Cleaning up tiles..."
+    for sample_entry in "${samples_to_process[@]}"; do
+        sample_name="${sample_entry%%:*}"
+        rm -rf "results/${sample_name}/tiles"
+        echo "  ✓ Removed tiles for $sample_name"
+    done
+    echo ""
 fi
+
+if [[ $resume_nextflow =~ ^[Nn]$ ]]; then
+    echo "Cleaning up Nextflow work directory and logs..."
+    rm -rf work .nextflow* 
+    echo "  ✓ Removed work/ directory"
+    echo "  ✓ Removed .nextflow.log and cache"
+    echo ""
+fi
+
+echo "=========================================="
+echo ""
 
 # Process each sample
 for sample_entry in "${samples_to_process[@]}"; do
@@ -341,45 +374,63 @@ for sample_entry in "${samples_to_process[@]}"; do
     echo "=== Processing $sample_name ==="
 
     # STEP 1: Create tiles (different for per-channel vs stacked)
-    if [ "$use_per_channel" = true ]; then
-        echo "Step 1: Creating tiles from per-channel TIFFs..."
-        echo "Sample directory: $sample_path"
-
-        tile_dir="$outdir/tiles"
-        mkdir -p "$tile_dir"
-
-        # Check if output is on WSL mount (/mnt) for performance optimization
-        fast_temp_flag=""
-        if [[ "$(pwd)" == /mnt/* ]]; then
-            # fast_temp_flag="--use_fast_temp"
-            echo "⚡ Detected WSL mount - using fast temp strategy (5x speedup!)"
+    tile_dir="$outdir/tiles"
+    
+    # Check if tiles already exist (and tiling resume was selected)
+    if [[ -d "$tile_dir" ]] && [[ -f "$tile_dir/tile_info.json" ]] && [[ $resume_tiling =~ ^[Yy]$ ]]; then
+        echo "Step 1: Using existing tiles (resume enabled)..."
+        echo "  → Tiles directory: $tile_dir"
+        
+        if [ "$use_per_channel" = true ]; then
+            # Create pseudo stacked TIFF for compatibility
+            pseudo_tiff="$tile_dir/pseudo_stack.ome.tif"
+            touch "$pseudo_tiff"
+            input_image="$pseudo_tiff"
+        else
+            input_image="$sample_path"
         fi
-
-        python3 scripts/tile_from_channels.py \
-            --sample_dir "$sample_path" \
-            --markers_csv markers.csv \
-            --output_dir "$tile_dir" \
-            --tile_size 4096 \
-            --overlap 512 \
-            --dapi_channel 3 \
-            --max_workers 3 \
-            $fast_temp_flag
-
-        if [ $? -ne 0 ]; then
-            echo "✗ FAILED: Tiling failed for $sample_name"
-            continue
-        fi
-
-        echo "✓ Tiles created: $tile_dir"
-
-        # Create a pseudo stacked TIFF path for Nextflow (won't be used, just for compatibility)
-        pseudo_tiff="$tile_dir/pseudo_stack.ome.tif"
-        touch "$pseudo_tiff"  # Create empty file
-        input_image="$pseudo_tiff"
+        
+        echo "  ✓ Skipping tiling step"
     else
-        # Legacy mode - use stacked TIFF directly
-        input_image="$sample_path"
-        echo "Input: $input_image (stacked TIFF)"
+        # Need to create tiles
+        if [ "$use_per_channel" = true ]; then
+            echo "Step 1: Creating tiles from per-channel TIFFs..."
+            echo "Sample directory: $sample_path"
+
+            mkdir -p "$tile_dir"
+
+            # Check if output is on WSL mount (/mnt) for performance optimization
+            fast_temp_flag=""
+            if [[ "$(pwd)" == /mnt/* ]]; then
+                echo "⚡ Detected WSL mount - using fast temp strategy (5x speedup!)"
+            fi
+
+            python3 scripts/tile_from_channels.py \
+                --sample_dir "$sample_path" \
+                --markers_csv markers.csv \
+                --output_dir "$tile_dir" \
+                --tile_size 4096 \
+                --overlap 512 \
+                --dapi_channel 3 \
+                --max_workers 10 \
+                $fast_temp_flag
+
+            if [ $? -ne 0 ]; then
+                echo "✗ FAILED: Tiling failed for $sample_name"
+                continue
+            fi
+
+            echo "✓ Tiles created: $tile_dir"
+
+            # Create a pseudo stacked TIFF path for Nextflow (won't be used, just for compatibility)
+            pseudo_tiff="$tile_dir/pseudo_stack.ome.tif"
+            touch "$pseudo_tiff"
+            input_image="$pseudo_tiff"
+        else
+            # Legacy mode - use stacked TIFF directly
+            input_image="$sample_path"
+            echo "Input: $input_image (stacked TIFF)"
+        fi
     fi
 
     # STEP 2: Run Nextflow pipeline (segmentation + quantification)
@@ -401,8 +452,8 @@ for sample_entry in "${samples_to_process[@]}"; do
         --dapi_channel 3
         --nuc_diameter 15
         --cyto_diameter 28
-        --nuclei_batch_size 6
-        --cyto_batch_size_tiles 4
+        --nuclei_batch_size 8
+        --cyto_batch_size_tiles 5
         -with-report "$outdir/nextflow_report.html"
         -with-timeline "$outdir/nextflow_timeline.html"
         -with-dag "$outdir/nextflow_dag.html"
@@ -414,8 +465,10 @@ for sample_entry in "${samples_to_process[@]}"; do
         echo "  → Using pre-generated tiles (skip_tiling=true)"
     fi
 
-    if [[ $resume_choice =~ ^[Yy]$ ]]; then
+    # Add resume flag if Nextflow resume was selected
+    if [[ $resume_nextflow =~ ^[Yy]$ ]]; then
         nf_args+=(-resume)
+        echo "  → Nextflow resume enabled"
     fi
 
     nextflow "${nf_args[@]}"
