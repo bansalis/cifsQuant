@@ -472,12 +472,11 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     python3 - <<'PYSCRIPT'
 import numpy as np
 import tifffile
+from cellpose import models
 from pathlib import Path
 import os
 import sys
-from scipy import ndimage
-from skimage.segmentation import watershed
-from skimage.filters import gaussian
+import torch
 
 def parse_channel_config():
     config = {}
@@ -529,14 +528,22 @@ def create_weighted_cytoplasm(img, channel_weights):
     
     return (cyto * 65535).astype(np.uint16)
 
+# Verify GPU and initialize
+use_gpu = torch.cuda.is_available()
+print(f"GPU available: {use_gpu}")
+if use_gpu:
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB")
+
 # Parse config
 channel_weights = parse_channel_config()
 print(f"Channel weights: {channel_weights}")
 sys.stdout.flush()
 
-# NOTE: Using watershed segmentation instead of Cellpose for nuclei-seeded cytoplasm
-# Cellpose doesn't support nuclei seeding, so we use watershed with custom channel weights
-print("Using watershed segmentation with nuclei seeding...", flush=True)
+# Load Cellpose model for two-channel cyto+nuclei segmentation
+print(f"Loading Cellpose model on {'GPU' if use_gpu else 'CPU'}...", flush=True)
+model = models.Cellpose(model_type='${params.cyto_model}', gpu=use_gpu)
+print("Model loaded successfully!", flush=True)
 
 # Process all tiles in batch (exclude masks and intermediate files)
 all_files = sorted(Path('.').glob('tile_*.tif'))
@@ -567,17 +574,21 @@ for idx, tile_path in enumerate(tile_paths):
         cyto = create_weighted_cytoplasm(img, channel_weights)
         del img  # Free memory
 
-        # Nuclei-seeded watershed segmentation
-        # Cellpose doesn't support nuc_mask parameter, so we use watershed instead
+        # Create two-channel image: [cyto, nuclei_mask]
+        # Cellpose uses channels=[1,2] to mean "segment channel 1 using channel 2 as nuclei"
+        two_channel = np.stack([cyto, nuclei_mask.astype(np.uint16)], axis=0)
 
-        # Smooth the cytoplasm signal
-        cyto_smooth = gaussian(cyto.astype(np.float32), sigma=2)
-
-        # Invert for watershed (watershed finds basins, we want peaks)
-        distance = -cyto_smooth
-
-        # Use nuclei centers as markers
-        cells = watershed(distance, markers=nuclei_mask, mask=cyto_smooth > np.percentile(cyto_smooth, 10))
+        # Run Cellpose with two channels
+        cells = model.eval(
+            two_channel,
+            channels=[1, 2],  # Channel 1 = cytoplasm to segment, Channel 2 = nuclei
+            diameter=${params.cyto_diameter},
+            flow_threshold=${params.cyto_flow_threshold},
+            cellprob_threshold=${params.cyto_cellprob_threshold},
+            min_size=${params.min_cell_size},
+            do_3D=False,
+            batch_size=8
+        )[0]
         
         n_cells = int(cells.max())
         recovery = n_cells / n_nuclei if n_nuclei > 0 else 0
