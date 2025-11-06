@@ -284,7 +284,7 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
 
     input:
     tuple val(batch_id), path(tiles)
-    path models_cache_dir
+    path 'models_cache/*'
 
     output:
     path "*_nuclei_mask.tif", emit: nuclei_masks
@@ -297,7 +297,7 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
     """
     # Use locally cached Cellpose models
     export HOME=/tmp
-    export CELLPOSE_LOCAL_MODELS_PATH=\${PWD}/${models_cache_dir}
+    export CELLPOSE_LOCAL_MODELS_PATH=\${PWD}/models_cache
 
     echo "Using cached models from: \${CELLPOSE_LOCAL_MODELS_PATH}"
     ls -la \${CELLPOSE_LOCAL_MODELS_PATH}/ || echo "Warning: models_cache not found"
@@ -435,7 +435,7 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     input:
     tuple val(batch_id), path(tiles), path(nuclei_masks)
     val custom_weights
-    path models_cache_dir
+    path 'models_cache/*'
 
     output:
     path "*_cell.tif", emit: cell_masks
@@ -455,7 +455,7 @@ process RUN_CELLPOSE_CYTO_SEEDED {
 
     # Use locally cached Cellpose models
     export HOME=/tmp
-    export CELLPOSE_LOCAL_MODELS_PATH=\${PWD}/${models_cache_dir}
+    export CELLPOSE_LOCAL_MODELS_PATH=\${PWD}/models_cache
 
     echo "Using cached models from: \${CELLPOSE_LOCAL_MODELS_PATH}"
     ls -la \${CELLPOSE_LOCAL_MODELS_PATH}/ || echo "Warning: models_cache not found"
@@ -1020,7 +1020,10 @@ workflow {
                 [batch_id, batch]
             }
 
-        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches, file(params.models_cache, checkIfExists: true))
+        // Stage all model files
+        models_cache_files = Channel.fromPath("${params.models_cache}/*").collect()
+
+        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches, models_cache_files)
 
         // Create nuclei-seeded cyto batches
         nuclei_masks_flat = RUN_CELLPOSE_NUCLEI_BATCH.out.nuclei_masks.flatten()
@@ -1048,7 +1051,7 @@ workflow {
         RUN_CELLPOSE_CYTO_SEEDED(
             cyto_seeded_input,
             params.custom_channel_weights ?: '',
-            file(params.models_cache, checkIfExists: true))
+            models_cache_files)
 
         if (params.mcquant) {
             // Step 4: Run MCQuant on individual tiles
