@@ -297,8 +297,10 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
     """
     # Use locally cached Cellpose models by copying to standard location
     mkdir -p /root/.cellpose/models
-    cp -v ${models_cache_dir}/* /root/.cellpose/models/ || echo "Warning: Could not copy models"
+    cp -f ${models_cache_dir}/* /root/.cellpose/models/ 2>&1 || echo "Warning: Could not copy some models"
     ls -la /root/.cellpose/models/
+    echo "Staged model files:"
+    ls -la ${models_cache_dir}/
 
     echo "=== CELLPOSE NUCLEI BATCH ${batch_id}: ${tiles.size()} tiles ==="
 
@@ -453,8 +455,10 @@ process RUN_CELLPOSE_CYTO_SEEDED {
 
     # Use locally cached Cellpose models by copying to standard location
     mkdir -p /root/.cellpose/models
-    cp -v ${models_cache_dir}/* /root/.cellpose/models/ || echo "Warning: Could not copy models"
+    cp -f ${models_cache_dir}/* /root/.cellpose/models/ 2>&1 || echo "Warning: Could not copy some models"
     ls -la /root/.cellpose/models/
+    echo "Staged model files:"
+    ls -la ${models_cache_dir}/
 
     echo "=== CYTO SEEDED BATCH ${batch_id}: ${tiles.size()} tiles ==="
     echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
