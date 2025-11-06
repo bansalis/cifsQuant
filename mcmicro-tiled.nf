@@ -592,12 +592,14 @@ for idx, tile_path in enumerate(tile_paths):
 
         # Create two-channel image: [cyto, nuclei_mask]
         # Cellpose uses channels=[1,2] to mean "segment channel 1 using channel 2 as nuclei"
-        two_channel = np.stack([cyto, nuclei_mask.astype(np.uint16)], axis=0)
+        h, w = cyto.shape
+        rgb_image = np.zeros((h, w, 3), dtype=np.uint16)
+        rgb_image[:, :, 0] = cyto  # Red channel = cytoplasm
+        rgb_image[:, :, 1] = nuclei_mask  # Green channel = nuclei
 
-        # Run Cellpose with two channels on GPU
         cellpose_output = model.eval(
-            two_channel,
-            channels=[1, 2],  # Channel 1 = cytoplasm to segment, Channel 2 = nuclei
+            rgb_image,
+            channels=[1, 2],  # 1=red (cyto), 2=green (nuclei)
             diameter=${params.cyto_diameter},
             flow_threshold=${params.cyto_flow_threshold},
             cellprob_threshold=${params.cyto_cellprob_threshold},
