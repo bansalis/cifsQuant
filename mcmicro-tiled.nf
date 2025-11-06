@@ -284,6 +284,7 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
 
     input:
     tuple val(batch_id), path(tiles)
+    path models_cache_dir
 
     output:
     path "*_nuclei_mask.tif", emit: nuclei_masks
@@ -294,9 +295,10 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
 
     script:
     """
-    # Use locally cached Cellpose models (mounted at /root/.cellpose/models via Docker)
-    echo "Using Cellpose models from Docker mount at /root/.cellpose/models"
-    ls -la /root/.cellpose/models/ || echo "Warning: models not found"
+    # Use locally cached Cellpose models by copying to standard location
+    mkdir -p /root/.cellpose/models
+    cp -v ${models_cache_dir}/* /root/.cellpose/models/ || echo "Warning: Could not copy models"
+    ls -la /root/.cellpose/models/
 
     echo "=== CELLPOSE NUCLEI BATCH ${batch_id}: ${tiles.size()} tiles ==="
 
@@ -431,6 +433,7 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     input:
     tuple val(batch_id), path(tiles), path(nuclei_masks)
     val custom_weights
+    path models_cache_dir
 
     output:
     path "*_cell.tif", emit: cell_masks
@@ -448,9 +451,10 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     """
     set -euo pipefail
 
-    # Use locally cached Cellpose models (mounted at /root/.cellpose/models via Docker)
-    echo "Using Cellpose models from Docker mount at /root/.cellpose/models"
-    ls -la /root/.cellpose/models/ || echo "Warning: models not found"
+    # Use locally cached Cellpose models by copying to standard location
+    mkdir -p /root/.cellpose/models
+    cp -v ${models_cache_dir}/* /root/.cellpose/models/ || echo "Warning: Could not copy models"
+    ls -la /root/.cellpose/models/
 
     echo "=== CYTO SEEDED BATCH ${batch_id}: ${tiles.size()} tiles ==="
     echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
@@ -1012,10 +1016,10 @@ workflow {
                 [batch_id, batch]
             }
 
-        // Models are available via Docker mount at /root/.cellpose/models
-        // No need to stage model files as input
+        // Stage models cache directory as input
+        models_cache_ch = Channel.fromPath(params.models_cache, type: 'dir', checkIfExists: true)
 
-        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches)
+        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches, models_cache_ch)
 
         // Create nuclei-seeded cyto batches
         nuclei_masks_flat = RUN_CELLPOSE_NUCLEI_BATCH.out.nuclei_masks.flatten()
@@ -1042,7 +1046,8 @@ workflow {
 
         RUN_CELLPOSE_CYTO_SEEDED(
             cyto_seeded_input,
-            params.custom_channel_weights ?: '')
+            params.custom_channel_weights ?: '',
+            models_cache_ch)
 
         if (params.mcquant) {
             // Step 4: Run MCQuant on individual tiles
