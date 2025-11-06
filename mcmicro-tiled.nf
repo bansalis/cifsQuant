@@ -545,14 +545,15 @@ print(f"Loading Cellpose model on {'GPU' if use_gpu else 'CPU'}...", flush=True)
 model = models.Cellpose(model_type='${params.cyto_model}', gpu=use_gpu)
 print("Model loaded successfully!", flush=True)
 
-# Process all tiles in batch
-tile_paths = sorted(Path('.').glob('tile_*.tif'))
+# Process all tiles in batch (exclude masks and intermediate files)
+all_files = sorted(Path('.').glob('tile_*.tif'))
+tile_paths = [f for f in all_files if '_nuclei_mask' not in f.stem and '_dapi_bg_subtracted' not in f.stem]
 n_tiles = len(tile_paths)
 
 for idx, tile_path in enumerate(tile_paths):
     base = tile_path.stem
-    base_for_mask = base.replace('_corrected', '')
-    nuc_mask_path = f'{base_for_mask}_nuclei_mask.tif'
+    # Mask naming: tile_y000000_x007168_corrected.tif -> tile_y000000_x007168_corrected_nuclei_mask.tif
+    nuc_mask_path = f'{base}_nuclei_mask.tif'
     
     if not Path(nuc_mask_path).exists():
         print(f"[{idx+1}/{n_tiles}] Skip {base}: no nuclei mask", flush=True)
