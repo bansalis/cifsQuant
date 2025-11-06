@@ -1016,10 +1016,8 @@ workflow {
                 [batch_id, batch]
             }
 
-        // Stage models cache directory as input
-        models_cache_ch = Channel.fromPath(params.models_cache, type: 'dir', checkIfExists: true)
-
-        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches, models_cache_ch)
+        // Stage models cache directory as input (use file() to avoid channel consumption)
+        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches, file(params.models_cache, checkIfExists: true))
 
         // Create nuclei-seeded cyto batches
         nuclei_masks_flat = RUN_CELLPOSE_NUCLEI_BATCH.out.nuclei_masks.flatten()
@@ -1047,7 +1045,7 @@ workflow {
         RUN_CELLPOSE_CYTO_SEEDED(
             cyto_seeded_input,
             params.custom_channel_weights ?: '',
-            models_cache_ch)
+            file(params.models_cache, checkIfExists: true))
 
         if (params.mcquant) {
             // Step 4: Run MCQuant on individual tiles
