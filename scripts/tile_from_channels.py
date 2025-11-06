@@ -9,6 +9,75 @@ from concurrent.futures import ThreadPoolExecutor
 import argparse
 import sys
 import shutil
+import pandas as pd
+
+def parse_markers_csv(markers_csv):
+    """Parse markers.csv and return ordered list of marker names."""
+    df = pd.read_csv(markers_csv)
+    
+    # Sort by cycle if present
+    if 'cycle' in df.columns:
+        df = df.sort_values('cycle')
+    
+    marker_names = df['marker_name'].tolist()
+    print(f"Markers.csv contains {len(marker_names)} channels:")
+    for i, name in enumerate(marker_names):
+        print(f"  [{i}] {name}")
+    
+    return marker_names
+
+def find_matching_channels(sample_dir, marker_names):
+    """Find channel files that match marker names with flexible matching."""
+    all_files = sorted(Path(sample_dir).glob('*.ome.tif'))
+    
+    # Filter out non-image files
+    all_files = [f for f in all_files if 'DAPI' in f.stem or any(x in f.stem for x in ['Cy3', 'Cy5', 'Cy7', 'FITC'])]
+    
+    matched_files = []
+    missing_markers = []
+    
+    for marker_name in marker_names:
+        # Extract key components from marker name
+        # e.g., "R1.0.4_CY5_CD45" -> round="1.0.4", fluor="Cy5", protein="CD45"
+        parts = marker_name.split('_')
+        round_num = parts[0].replace('R', '')  # "1.0.4"
+        fluor = parts[1].upper() if len(parts) > 1 else ''  # "CY5"
+        protein = parts[2] if len(parts) > 2 else ''  # "CD45"
+        
+        # Normalize fluorophore name
+        fluor_norm = fluor.replace('CY', 'Cy')  # CY5 -> Cy5
+        
+        found = False
+        for fpath in all_files:
+            fname = fpath.stem
+            
+            # Check if round number matches
+            if round_num not in fname:
+                continue
+            
+            # Check if fluorophore matches (case-insensitive)
+            if fluor_norm.lower() not in fname.lower():
+                continue
+            
+            # If protein specified, check for it (flexible matching)
+            if protein and protein.lower() not in fname.lower():
+                continue
+            
+            # Found a match!
+            matched_files.append(fpath)
+            found = True
+            print(f"  ✓ {marker_name} -> {fpath.name}")
+            break
+        
+        if not found:
+            missing_markers.append(marker_name)
+            print(f"  ✗ No match for '{marker_name}'")
+    
+    if missing_markers:
+        print(f"\n⚠ {len(missing_markers)} markers not found")
+        raise ValueError(f"Missing {len(missing_markers)} required markers")
+    
+    return matched_files
 
 def extract_tile_from_channel(args):
     """Extract one tile from channel data"""
@@ -51,7 +120,9 @@ def main():
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     
     # Get channel files
-    channel_files = sorted(Path(args.sample_dir).glob('*.ome.tif'))
+    #channel_files = sorted(Path(args.sample_dir).glob('*.ome.tif'))
+    marker_names = parse_markers_csv(args.markers_csv)
+    channel_files = find_matching_channels(args.sample_dir, marker_names)
     if not channel_files:
         print(f"❌ No .ome.tif files found in {args.sample_dir}")
         sys.exit(1)
