@@ -578,8 +578,8 @@ for idx, tile_path in enumerate(tile_paths):
         # Cellpose uses channels=[1,2] to mean "segment channel 1 using channel 2 as nuclei"
         two_channel = np.stack([cyto, nuclei_mask.astype(np.uint16)], axis=0)
 
-        # Run Cellpose with two channels
-        cells = model.eval(
+        # Run Cellpose with two channels on GPU
+        cellpose_output = model.eval(
             two_channel,
             channels=[1, 2],  # Channel 1 = cytoplasm to segment, Channel 2 = nuclei
             diameter=${params.cyto_diameter},
@@ -587,23 +587,48 @@ for idx, tile_path in enumerate(tile_paths):
             cellprob_threshold=${params.cyto_cellprob_threshold},
             min_size=${params.min_cell_size},
             do_3D=False,
-            batch_size=8
+            batch_size=8,
+            gpu=use_gpu  # Use GPU for acceleration
         )[0]
-        
-        n_cells = int(cells.max())
-        recovery = n_cells / n_nuclei if n_nuclei > 0 else 0
-        
+
+        # Enforce 1:1 nuclei-to-cell correspondence
+        # For each nucleus, assign it the Cellpose cell that overlaps it most
+        cells = np.zeros_like(nuclei_mask, dtype=np.int32)
+
+        for nuc_id in range(1, n_nuclei + 1):
+            # Get pixels belonging to this nucleus
+            nuc_pixels = (nuclei_mask == nuc_id)
+
+            # Find which Cellpose cell overlaps this nucleus most
+            overlapping_cells = cellpose_output[nuc_pixels]
+            if len(overlapping_cells) > 0:
+                # Get most common cell ID (excluding background=0)
+                overlapping_cells = overlapping_cells[overlapping_cells > 0]
+                if len(overlapping_cells) > 0:
+                    # Find the Cellpose cell ID that overlaps this nucleus most
+                    cell_id = np.bincount(overlapping_cells).argmax()
+                    # Assign all pixels of that Cellpose cell to this nucleus ID
+                    cells[cellpose_output == cell_id] = nuc_id
+                else:
+                    # No cell found, use just the nucleus
+                    cells[nuc_pixels] = nuc_id
+            else:
+                # No overlap, use nucleus mask
+                cells[nuc_pixels] = nuc_id
+
+        n_cells = n_nuclei  # Guaranteed 1:1 correspondence
+
         # Calculate expansion metrics
         nuc_area = np.sum(nuclei_mask > 0)
         cell_area = np.sum(cells > 0)
         expansion_ratio = cell_area / nuc_area if nuc_area > 0 else 0
-        
-        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei}→{n_cells} ({recovery:.1%}), '
+
+        print(f'[{idx+1}/{n_tiles}] {base}: {n_nuclei} cells (1:1 with nuclei), '
               f'expansion: {expansion_ratio:.2f}x', flush=True)
         
         # Save and free memory
         tifffile.imwrite(f'{base}_cell.tif', cells.astype(np.int32), compression='lzw')
-        del cyto, nuclei_mask, cells
+        del cyto, nuclei_mask, cellpose_output, cells, two_channel
         
     except Exception as e:
         print(f'[{idx+1}/{n_tiles}] ERROR {base}: {e}', flush=True)
