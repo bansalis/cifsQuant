@@ -103,7 +103,17 @@ echo ""
 echo "Pre-downloading Cellpose models..."
 echo "This is a one-time download (~100MB)"
 
-CELLPOSE_MODELS_DIR="$(pwd)/cellpose_models"
+CELLPOSE_MODELS_DIR="$(pwd)/models_cache"
+# Clean up any stale mount points
+if [[ -d "$CELLPOSE_MODELS_DIR" ]]; then
+    # Check if it's actually a mount point or corrupted
+    if ! ls "$CELLPOSE_MODELS_DIR" &>/dev/null; then
+        echo "  Cleaning stale mount point..."
+        sudo umount "$CELLPOSE_MODELS_DIR" 2>/dev/null || true
+        rm -rf "$CELLPOSE_MODELS_DIR"
+    fi
+fi
+
 mkdir -p "$CELLPOSE_MODELS_DIR"
 
 # Check if models already exist
@@ -340,10 +350,23 @@ if [[ $resume_tiling =~ ^[Nn]$ ]]; then
 fi
 
 if [[ $resume_nextflow =~ ^[Nn]$ ]]; then
-    echo "Cleaning up Nextflow work directory and logs..."
-    rm -rf work .nextflow* 
+    echo "Cleaning up Nextflow outputs (keeping tiles)..."
+    rm -rf work .nextflow*
     echo "  ✓ Removed work/ directory"
     echo "  ✓ Removed .nextflow.log and cache"
+    
+    # Clean each sample's results directory but preserve tiles
+    for sample_entry in "${samples_to_process[@]}"; do
+        sample_name="${sample_entry%%:*}"
+        sample_results="results/${sample_name}"
+        
+        if [[ -d "$sample_results" ]]; then
+            echo "  Cleaning $sample_name results (preserving tiles)..."
+            # Delete everything in the sample directory EXCEPT tiles/
+            find "$sample_results" -mindepth 1 -maxdepth 1 ! -name 'tiles' -exec rm -rf {} +
+            echo "    ✓ Cleaned $sample_name"
+        fi
+    done
     echo ""
 fi
 
@@ -409,10 +432,10 @@ for sample_entry in "${samples_to_process[@]}"; do
                 --sample_dir "$sample_path" \
                 --markers_csv markers.csv \
                 --output_dir "$tile_dir" \
-                --tile_size 4096 \
-                --overlap 512 \
+                --tile_size 8192 \
+                --overlap 1024 \
                 --dapi_channel 3 \
-                --max_workers 10 \
+                --max_workers 18 \
                 $fast_temp_flag
 
             if [ $? -ne 0 ]; then
@@ -443,8 +466,8 @@ for sample_entry in "${samples_to_process[@]}"; do
         --markers_csv markers.csv
         --outdir "$outdir"
         --sample_name "$sample_name"
-        --tile_size 4096
-        --overlap 512
+        --tile_size 8192
+        --overlap 1024
         --pyramid_level 0
         --cellpose true
         --mcquant true
@@ -452,8 +475,8 @@ for sample_entry in "${samples_to_process[@]}"; do
         --dapi_channel 3
         --nuc_diameter 15
         --cyto_diameter 28
-        --nuclei_batch_size 8
-        --cyto_batch_size_tiles 5
+        --nuclei_batch_size 6
+        --cyto_batch_size_tiles 4
         -with-report "$outdir/nextflow_report.html"
         -with-timeline "$outdir/nextflow_timeline.html"
         -with-dag "$outdir/nextflow_dag.html"

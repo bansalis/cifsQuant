@@ -293,9 +293,10 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
     
     script:
     """
-    export HOME=/tmp
-    export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
-    mkdir -p /tmp/cellpose_models
+    # export HOME=/tmp
+    # export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
+    # mkdir -p /tmp/cellpose_models
+    export CELLPOSE_LOCAL_MODELS_PATH=/root/.cellpose/models
     
     echo "=== CELLPOSE NUCLEI BATCH ${batch_id}: ${tiles.size()} tiles ==="
     
@@ -429,6 +430,7 @@ process RUN_CELLPOSE_CYTO_SEEDED {
 
     input:
     tuple val(batch_id), path(tiles), path(nuclei_masks)
+    val custom_weights
 
     output:
     path "*_cell.tif", emit: cell_masks
@@ -452,7 +454,20 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     
     echo "=== CYTO SEEDED BATCH ${batch_id}: ${tiles.size()} tiles ==="
     echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
-    echo "Immune channels: ${immune_channels} (weight: ${immune_weight})"
+    # NEW (add export statements):
+    export CUSTOM_WEIGHTS="${custom_weights}"
+    export TUMOR_CHANNELS="${tumor_channels}"
+    export IMMUNE_CHANNELS="${immune_channels}"
+    export TUMOR_WEIGHT="${tumor_weight}"
+    export IMMUNE_WEIGHT="${immune_weight}"
+
+    echo "=== CYTO SEEDED BATCH ${batch_id}: ${tiles.size()} tiles ==="
+    if [ -n "${custom_weights}" ]; then
+        echo "Custom channel weights: ${custom_weights}"
+    else
+        echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
+        echo "Immune channels: ${immune_channels} (weight: ${immune_weight})"
+    fi
     
     python3 - <<'PYSCRIPT'
 import numpy as np
@@ -536,7 +551,8 @@ n_tiles = len(tile_paths)
 
 for idx, tile_path in enumerate(tile_paths):
     base = tile_path.stem
-    nuc_mask_path = f'{base}_nuclei_mask.tif'
+    base_for_mask = base.replace('_corrected', '')
+    nuc_mask_path = f'{base_for_mask}_nuclei_mask.tif'
     
     if not Path(nuc_mask_path).exists():
         print(f"[{idx+1}/{n_tiles}] Skip {base}: no nuclei mask", flush=True)
@@ -993,7 +1009,9 @@ workflow {
                 [batch_id, tiles, masks]
             }
 
-        RUN_CELLPOSE_CYTO_SEEDED(cyto_seeded_input)
+        RUN_CELLPOSE_CYTO_SEEDED(
+            cyto_seeded_input,
+            params.custom_channel_weights ?: '')
 
         if (params.mcquant) {
             // Step 4: Run MCQuant on individual tiles
