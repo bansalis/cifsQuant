@@ -36,6 +36,7 @@ params.cyto_model = 'cyto2'
 params.cyto_diameter = 28
 params.cyto_batch_size = 8
 params.buffer_px = null
+params.models_cache = './models_cache'  // Local cache directory for Cellpose models
 
 // BATCH OPTIMIZATION PARAMETERS
 params.nuclei_batch_size = 6    // Process 6 tiles per nuclei batch
@@ -280,26 +281,29 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
     tag "nuclei_batch_${batch_id}"
     container params.cellpose_container
     publishDir "${params.outdir}/nuclei_masks", mode: 'copy'
-    
+
     input:
     tuple val(batch_id), path(tiles)
-    
+    path models_cache_dir
+
     output:
     path "*_nuclei_mask.tif", emit: nuclei_masks
     path "*_dapi_bg_subtracted.tif", emit: dapi_processed
-    
+
     when:
     params.cellpose
-    
+
     script:
     """
-    # export HOME=/tmp
-    # export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
-    # mkdir -p /tmp/cellpose_models
-    export CELLPOSE_LOCAL_MODELS_PATH=/root/.cellpose/models
-    
+    # Use locally cached Cellpose models
+    export HOME=/tmp
+    export CELLPOSE_LOCAL_MODELS_PATH=\${PWD}/${models_cache_dir}
+
+    echo "Using cached models from: \${CELLPOSE_LOCAL_MODELS_PATH}"
+    ls -la \${CELLPOSE_LOCAL_MODELS_PATH}/ || echo "Warning: models_cache not found"
+
     echo "=== CELLPOSE NUCLEI BATCH ${batch_id}: ${tiles.size()} tiles ==="
-    
+
     python3 - <<'PYSCRIPT'
 import numpy as np
 import tifffile
@@ -431,6 +435,7 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     input:
     tuple val(batch_id), path(tiles), path(nuclei_masks)
     val custom_weights
+    path models_cache_dir
 
     output:
     path "*_cell.tif", emit: cell_masks
@@ -444,13 +449,16 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     def tumor_weight = params.tumor_weight ?: 0.7
     def immune_weight = params.immune_weight ?: 0.3
     def custom_weights = params.custom_channel_weights ?: ''
-    
+
     """
     set -euo pipefail
-    
+
+    # Use locally cached Cellpose models
     export HOME=/tmp
-    export CELLPOSE_LOCAL_MODELS_PATH=/tmp/cellpose_models
-    mkdir -p /tmp/cellpose_models
+    export CELLPOSE_LOCAL_MODELS_PATH=\${PWD}/${models_cache_dir}
+
+    echo "Using cached models from: \${CELLPOSE_LOCAL_MODELS_PATH}"
+    ls -la \${CELLPOSE_LOCAL_MODELS_PATH}/ || echo "Warning: models_cache not found"
     
     echo "=== CYTO SEEDED BATCH ${batch_id}: ${tiles.size()} tiles ==="
     echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
@@ -1012,7 +1020,10 @@ workflow {
                 [batch_id, batch]
             }
 
-        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches)
+        // Create models cache channel
+        models_cache_ch = Channel.fromPath(params.models_cache, type: 'dir', checkIfExists: true)
+
+        RUN_CELLPOSE_NUCLEI_BATCH(nuclei_batches, models_cache_ch)
 
         // Create nuclei-seeded cyto batches
         nuclei_masks_flat = RUN_CELLPOSE_NUCLEI_BATCH.out.nuclei_masks.flatten()
@@ -1039,7 +1050,8 @@ workflow {
 
         RUN_CELLPOSE_CYTO_SEEDED(
             cyto_seeded_input,
-            params.custom_channel_weights ?: '')
+            params.custom_channel_weights ?: '',
+            models_cache_ch)
 
         if (params.mcquant) {
             // Step 4: Run MCQuant on individual tiles
