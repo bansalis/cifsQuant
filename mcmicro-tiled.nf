@@ -295,16 +295,21 @@ process RUN_CELLPOSE_NUCLEI_BATCH {
 
     script:
     """
-    # Use locally cached Cellpose models by copying to standard location
-    mkdir -p /root/.cellpose/models
-    cp -f ${models_cache_dir}/* /root/.cellpose/models/ 2>&1 || echo "Warning: Could not copy some models"
-    ls -la /root/.cellpose/models/
+    # Use locally cached Cellpose models
     echo "Staged model files:"
     ls -la ${models_cache_dir}/
 
     echo "=== CELLPOSE NUCLEI BATCH ${batch_id}: ${tiles.size()} tiles ==="
 
     python3 - <<'PYSCRIPT'
+import os
+import sys
+
+# Set Cellpose to use local models BEFORE importing
+os.environ['CELLPOSE_LOCAL_MODELS_PATH'] = '${models_cache_dir}'
+print(f"CELLPOSE_LOCAL_MODELS_PATH set to: {os.environ['CELLPOSE_LOCAL_MODELS_PATH']}")
+sys.stdout.flush()
+
 import numpy as np
 import tifffile
 from cellpose import models
@@ -453,10 +458,7 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     """
     set -euo pipefail
 
-    # Use locally cached Cellpose models by copying to standard location
-    mkdir -p /root/.cellpose/models
-    cp -f ${models_cache_dir}/* /root/.cellpose/models/ 2>&1 || echo "Warning: Could not copy some models"
-    ls -la /root/.cellpose/models/
+    # Use locally cached Cellpose models
     echo "Staged model files:"
     ls -la ${models_cache_dir}/
 
@@ -476,14 +478,20 @@ process RUN_CELLPOSE_CYTO_SEEDED {
         echo "Tumor channels: ${tumor_channels} (weight: ${tumor_weight})"
         echo "Immune channels: ${immune_channels} (weight: ${immune_weight})"
     fi
-    
+
     python3 - <<'PYSCRIPT'
+import os
+import sys
+
+# Set Cellpose to use local models BEFORE importing
+os.environ['CELLPOSE_LOCAL_MODELS_PATH'] = '${models_cache_dir}'
+print(f"CELLPOSE_LOCAL_MODELS_PATH set to: {os.environ['CELLPOSE_LOCAL_MODELS_PATH']}")
+sys.stdout.flush()
+
 import numpy as np
 import tifffile
 from cellpose import models
 from pathlib import Path
-import os
-import sys
 import torch
 
 def parse_channel_config():
