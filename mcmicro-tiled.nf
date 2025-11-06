@@ -478,13 +478,6 @@ import os
 import sys
 import torch
 
-# Verify GPU and initialize model
-use_gpu = torch.cuda.is_available()
-print(f"GPU available: {use_gpu}")
-if use_gpu:
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB")
-
 def parse_channel_config():
     config = {}
     
@@ -535,12 +528,19 @@ def create_weighted_cytoplasm(img, channel_weights):
     
     return (cyto * 65535).astype(np.uint16)
 
+# Verify GPU and initialize
+use_gpu = torch.cuda.is_available()
+print(f"GPU available: {use_gpu}")
+if use_gpu:
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB")
+
 # Parse config
 channel_weights = parse_channel_config()
 print(f"Channel weights: {channel_weights}")
 sys.stdout.flush()
 
-# Load model ONCE for entire batch with GPU
+# Load Cellpose model for two-channel cyto+nuclei segmentation
 print(f"Loading Cellpose model on {'GPU' if use_gpu else 'CPU'}...", flush=True)
 model = models.Cellpose(model_type='${params.cyto_model}', gpu=use_gpu)
 print("Model loaded successfully!", flush=True)
@@ -573,19 +573,21 @@ for idx, tile_path in enumerate(tile_paths):
         # Create weighted cytoplasm
         cyto = create_weighted_cytoplasm(img, channel_weights)
         del img  # Free memory
-        
-        # Run Cellpose with nuclei seeding
+
+        # Create two-channel image: [cyto, nuclei_mask]
+        # Cellpose uses channels=[1,2] to mean "segment channel 1 using channel 2 as nuclei"
+        two_channel = np.stack([cyto, nuclei_mask.astype(np.uint16)], axis=0)
+
+        # Run Cellpose with two channels
         cells = model.eval(
-            cyto,
-            channels=[0, 0],
+            two_channel,
+            channels=[1, 2],  # Channel 1 = cytoplasm to segment, Channel 2 = nuclei
             diameter=${params.cyto_diameter},
             flow_threshold=${params.cyto_flow_threshold},
             cellprob_threshold=${params.cyto_cellprob_threshold},
             min_size=${params.min_cell_size},
-            nuc_mask=nuclei_mask,
             do_3D=False,
-            batch_size=8,
-            gpu=use_gpu
+            batch_size=8
         )[0]
         
         n_cells = int(cells.max())
