@@ -32,6 +32,16 @@ from spatial_quantification.analyses import (
     NeighborhoodAnalysisOptimized,
     AdvancedAnalysis
 )
+# Import new analyses
+try:
+    from spatial_quantification.analyses.per_tumor_analysis import PerTumorAnalysis
+    from spatial_quantification.analyses.coexpression_analysis import CoexpressionAnalysis
+    from spatial_quantification.analyses.enhanced_neighborhood_analysis import EnhancedNeighborhoodAnalysis
+    from spatial_quantification.analyses.pseudotime_analysis import PseudotimeAnalysis
+    HAS_NEW_ANALYSES = True
+except ImportError:
+    HAS_NEW_ANALYSES = False
+    print("  ⚠ New analyses not available (per_tumor, coexpression, enhanced_neighborhoods, pseudotime)")
 from spatial_quantification.visualization import PlotManager
 
 
@@ -146,6 +156,22 @@ def main():
     print("="*80)
 
     all_results = {}
+    tumor_structures = None  # Will be populated by per_tumor_analysis
+
+    # NEW: Per-Tumor Analysis (run first to detect tumor structures)
+    if HAS_NEW_ANALYSES and config.get('per_tumor_analysis', {}).get('enabled', False):
+        per_tumor = PerTumorAnalysis(adata, config, output_dir)
+        all_results['per_tumor_analysis'] = per_tumor.run()
+        tumor_structures = per_tumor.get_tumor_structures()
+
+        # Generate plots if configured
+        if config.get('per_tumor_analysis', {}).get('generate_plots', True):
+            try:
+                from spatial_quantification.visualization.per_tumor_plotter import PerTumorPlotter
+                plotter = PerTumorPlotter(output_dir / 'per_tumor_analysis', config)
+                plotter.generate_all_plots(all_results['per_tumor_analysis'])
+            except Exception as e:
+                print(f"  ⚠ Could not generate per-tumor plots: {e}")
 
     # Population Dynamics
     if config.get('population_dynamics', {}).get('enabled', False):
@@ -189,6 +215,23 @@ def main():
     if config.get('advanced_analyses', {}).get('enabled', False):
         advanced_analysis = AdvancedAnalysis(adata, config, output_dir)
         all_results['advanced_analysis'] = advanced_analysis.run()
+
+    # NEW: Coexpression Analysis
+    if HAS_NEW_ANALYSES and config.get('coexpression_analysis', {}).get('enabled', False):
+        coexpression = CoexpressionAnalysis(adata, config, output_dir)
+        all_results['coexpression_analysis'] = coexpression.run()
+
+    # NEW: Enhanced Neighborhood Analysis (marker-specific regions)
+    if HAS_NEW_ANALYSES and config.get('enhanced_neighborhoods', {}).get('enabled', False):
+        enhanced_neighborhoods = EnhancedNeighborhoodAnalysis(
+            adata, config, output_dir, tumor_structures=tumor_structures
+        )
+        all_results['enhanced_neighborhoods'] = enhanced_neighborhoods.run()
+
+    # NEW: Pseudotime Analysis
+    if HAS_NEW_ANALYSES and config.get('pseudotime_analysis', {}).get('enabled', False):
+        pseudotime = PseudotimeAnalysis(adata, config, output_dir)
+        all_results['pseudotime_analysis'] = pseudotime.run()
 
     # =========================================================================
     # STEP 5: Generate Plots
