@@ -246,32 +246,42 @@ def main():
         except Exception as e:
             print(f"  ⚠ Could not generate enhanced neighborhood plots: {e}")
 
-    # NEW: Pseudotime Analysis
-    if HAS_NEW_ANALYSES and config.get('pseudotime_analysis', {}).get('enabled', False):
-        pseudotime = PseudotimeAnalysis(adata, config, output_dir)
-        all_results['pseudotime_analysis'] = pseudotime.run()
-
-        # Generate differentiation plots
-        if config.get('pseudotime_analysis', {}).get('generate_plots', True):
-            print("\n  Generating pseudotime visualizations...")
-            try:
-                from spatial_quantification.visualization.pseudotime_plotter import PseudotimePlotter
-                pseudotime_plotter = PseudotimePlotter(output_dir / 'pseudotime_analysis', config)
-                pseudotime_plotter.generate_all_plots(all_results['pseudotime_analysis'])
-            except Exception as e:
-                print(f"  ⚠ Could not generate pseudotime plots: {e}")
-
-    # NEW: UMAP Visualization
+    # NEW: UMAP Visualization (MUST RUN FIRST - pseudotime builds from it!)
+    umap_results = {}
     if config.get('umap_visualization', {}).get('enabled', False):
         print("\n  Generating UMAP visualizations...")
         try:
             from spatial_quantification.visualization.umap_plotter import UMAPPlotter
             umap_plotter = UMAPPlotter(output_dir / 'umap_visualization', config)
             umap_plotter.generate_all_plots(adata)
+
+            # Load saved UMAP results for pseudotime
+            import pandas as pd
+            umap_output_dir = output_dir / 'umap_visualization'
+            if (umap_output_dir / 'umap_coordinates_all_cells.csv').exists():
+                umap_results['umap_all_cells'] = pd.read_csv(umap_output_dir / 'umap_coordinates_all_cells.csv')
+            if (umap_output_dir / 'umap_coordinates_tumor_only.csv').exists():
+                umap_results['umap_tumor_only'] = pd.read_csv(umap_output_dir / 'umap_coordinates_tumor_only.csv')
+
         except Exception as e:
             print(f"  ⚠ Could not generate UMAP plots: {e}")
             import traceback
             traceback.print_exc()
+
+    # NEW: Pseudotime Analysis (builds from UMAP!)
+    if config.get('pseudotime_analysis', {}).get('enabled', False):
+        if umap_results:
+            print("\n  Generating pseudotime visualizations from UMAP...")
+            try:
+                from spatial_quantification.visualization.pseudotime_plotter import PseudotimePlotter
+                pseudotime_plotter = PseudotimePlotter(output_dir / 'pseudotime_analysis', config)
+                pseudotime_plotter.generate_all_plots(umap_results)
+            except Exception as e:
+                print(f"  ⚠ Could not generate pseudotime plots: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("\n  ⚠ Pseudotime requires UMAP - enable umap_visualization first")
 
     # =========================================================================
     # STEP 5: Generate Plots

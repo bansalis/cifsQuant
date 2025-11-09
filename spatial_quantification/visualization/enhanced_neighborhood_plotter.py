@@ -65,7 +65,18 @@ class EnhancedNeighborhoodPlotter:
         if regional_infiltration_df is None or len(regional_infiltration_df) == 0:
             return
 
-        immune_pops = regional_infiltration_df['immune_population'].unique()
+        # Extract immune population names from column names (wide format)
+        # Look for columns like 'CD8_T_cells_in_pos_region_percent'
+        immune_pops = []
+        for col in regional_infiltration_df.columns:
+            if '_in_pos_region_percent' in col:
+                immune_pop = col.replace('_in_pos_region_percent', '')
+                immune_pops.append(immune_pop)
+
+        if not immune_pops:
+            print(f"    ⚠ No immune population data found in {marker} regional infiltration")
+            return
+
         n_pops = len(immune_pops)
 
         fig, axes = plt.subplots(n_pops, 2, figsize=(14, 5*n_pops))
@@ -76,18 +87,15 @@ class EnhancedNeighborhoodPlotter:
         groups = sorted(regional_infiltration_df['main_group'].unique())
 
         for pop_idx, immune_pop in enumerate(immune_pops):
-            pop_data = regional_infiltration_df[
-                regional_infiltration_df['immune_population'] == immune_pop
-            ]
-
             # Panel 1: Percent in region
             ax = axes[pop_idx, 0]
 
-            # Aggregate by sample
-            agg_data = pop_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
+            # Aggregate by sample (data is already in wide format)
+            agg_cols = {
                 f'{immune_pop}_in_pos_region_percent': 'mean',
                 f'{immune_pop}_in_neg_region_percent': 'mean'
-            }).reset_index()
+            }
+            agg_data = regional_infiltration_df.groupby(['sample_id', 'timepoint', 'main_group']).agg(agg_cols).reset_index()
 
             for group in groups:
                 group_data = agg_data[agg_data['main_group'] == group]
@@ -130,10 +138,11 @@ class EnhancedNeighborhoodPlotter:
             # Panel 2: Mean distance
             ax = axes[pop_idx, 1]
 
-            agg_data = pop_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
+            agg_cols = {
                 f'{immune_pop}_mean_dist_to_pos': 'mean',
                 f'{immune_pop}_mean_dist_to_neg': 'mean'
-            }).reset_index()
+            }
+            agg_data = regional_infiltration_df.groupby(['sample_id', 'timepoint', 'main_group']).agg(agg_cols).reset_index()
 
             for group in groups:
                 group_data = agg_data[agg_data['main_group'] == group]
