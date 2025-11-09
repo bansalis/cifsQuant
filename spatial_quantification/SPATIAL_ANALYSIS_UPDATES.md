@@ -332,3 +332,104 @@ python run_spatial_quantification.py --config config/spatial_config.yaml
 ## Author
 Claude AI (2025-11-08)
 Based on requirements from cifsQuant project
+
+---
+
+## CRITICAL UPDATE: Comprehensive Visualization Added
+
+### Problem Identified
+The initial implementation generated CSVs with all analysis data but **lacked interpretable summary visualizations** showing trends over time and group comparisons.
+
+### Solution Implemented
+
+#### 1. Infiltration Analysis Visualization (`infiltration_plotter.py`)
+
+**Generates 4 Key Plot Types:**
+
+1. **Infiltration Trends Over Time**
+   - Line plots for each immune population (CD8, CD3, CD45, etc.)
+   - Multiple zones shown (within tumor, 0-50μm, 50-100μm)
+   - Group comparison (KPT vs KPNT) with statistical bands
+   - Shows infiltration density (immune cells per tumor cell)
+
+2. **Heterogeneity Metrics Over Time**
+   - Getis-Ord Gi* (hotspot detection)
+   - Number of significant hotspots
+   - Ripley's L function (multi-scale clustering)
+   - DBSCAN clustering scores
+   - Per marker (pERK, NINJA, Ki67) over time
+
+3. **Zone-Specific Infiltration (Marker+ vs Marker-)**
+   - Direct comparison of infiltration in marker+ regions (solid line)
+   - vs marker- regions (dashed line)
+   - Per immune population, per marker
+   - Statistical comparison between groups
+
+4. **Summary Heatmap**
+   - Overview of all infiltration metrics
+   - Rows: immune populations
+   - Columns: timepoints
+   - Color: infiltration density
+
+**Output:** `infiltration_analysis/plots/`
+- `infiltration_trends_over_time.png`
+- `heterogeneity_metrics_over_time.png`
+- `zone_specific_infiltration.png`
+- `infiltration_summary_heatmap.png`
+
+#### 2. Enhanced Neighborhood Visualization (`enhanced_neighborhood_plotter.py`)
+
+**Generates 3 Key Plot Types (per marker):**
+
+1. **Regional Infiltration Comparison**
+   - Panel 1: % of immune cells in marker+ vs marker- regions
+   - Panel 2: Mean distance to marker+ vs marker- regions
+   - Temporal trends with group comparisons
+   - Clearly shows preferential infiltration
+
+2. **Regional Neighborhood Composition**
+   - Upper panels: Cell type composition in marker+ regions
+   - Lower panels: Cell type composition in marker- regions
+   - Key cell types: CD8, CD3, CD45, Tumor
+   - Direct visual comparison
+
+3. **Per-Cell Neighborhood Comparison**
+   - For marker+ cells: what's in their neighborhood?
+   - For marker- cells: what's in their neighborhood?
+   - Solid line = marker+, dashed = marker-
+   - Shows if marker+ cells have different local environments
+
+**Output:** `enhanced_neighborhoods/plots/`
+- `pERK_regional_infiltration.png`
+- `pERK_regional_neighborhoods.png`
+- `pERK_per_cell_neighborhoods.png`
+- `NINJA_regional_infiltration.png`
+- `NINJA_regional_neighborhoods.png`
+- `NINJA_per_cell_neighborhoods.png`
+
+### How to Use
+
+These plots are **automatically generated** when you run the pipeline:
+
+```bash
+python run_spatial_quantification.py --config config/spatial_config.yaml
+```
+
+### What You Can Now Interpret
+
+✅ **Infiltration dynamics** - See how immune infiltration changes over time
+✅ **Heterogeneity patterns** - Understand if markers are clustered or dispersed
+✅ **Regional differences** - Compare infiltration in marker+ vs marker- regions
+✅ **Neighborhood effects** - See what cell types surround marker+ vs marker- cells
+✅ **Group comparisons** - KPT vs KPNT differences clearly visualized
+✅ **Temporal trends** - Track changes across all timepoints
+
+### Before vs After
+
+**Before:** Individual spatial plots per structure (first sample only) ❌
+**After:** Comprehensive summary plots across all samples and timepoints ✅
+
+**Before:** CSVs with data but hard to interpret ❌
+**After:** Clear visualizations showing trends and comparisons ✅
+
+---
