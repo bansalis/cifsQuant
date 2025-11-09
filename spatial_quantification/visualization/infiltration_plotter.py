@@ -443,15 +443,25 @@ class InfiltrationPlotter:
         if 'infiltration' in results:
             self.plot_infiltration_over_time(results['infiltration'])
 
-        # Plot 2: Heterogeneity metrics
+        # Plot 2: Heterogeneity metrics - combine all markers to avoid overwriting
+        heterogeneity_dfs = []
         for key in results.keys():
             if 'zone_heterogeneity' in key:
-                self.plot_heterogeneity_over_time(results[key])
+                heterogeneity_dfs.append(results[key])
 
-        # Plot 3: Zone-specific infiltration (marker+ vs marker-)
+        if heterogeneity_dfs:
+            combined_heterogeneity = pd.concat(heterogeneity_dfs, ignore_index=True)
+            self.plot_heterogeneity_over_time(combined_heterogeneity)
+
+        # Plot 3: Zone-specific infiltration - combine all markers to avoid overwriting
+        zone_infiltration_dfs = []
         for key in results.keys():
             if 'zone_infiltration' in key:
-                self.plot_zone_infiltration_comparison(results[key])
+                zone_infiltration_dfs.append(results[key])
+
+        if zone_infiltration_dfs:
+            combined_zone_infiltration = pd.concat(zone_infiltration_dfs, ignore_index=True)
+            self.plot_zone_infiltration_comparison(combined_zone_infiltration)
 
         # Plot 4: Summary heatmap
         if 'infiltration' in results:

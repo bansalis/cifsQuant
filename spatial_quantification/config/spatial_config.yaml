@@ -79,6 +79,13 @@ tumor_definition:
     min_samples: 250  # minimum cells per cluster
     min_cluster_size: 250  # minimum cells to be considered a tumor structure
 
+    # Boundary expansion for softer tumor definition
+    # After DBSCAN identifies core tumor cells, expand boundary to include nearby cells
+    # This captures infiltrating immune cells and associated stroma that are spatially
+    # "within" the tumor mass but may not be TOM+
+    boundary_buffer: 100  # μm, expand tumor region by this distance
+    use_expanded_boundary: true  # Use expanded boundary for "within tumor" calculations
+
 # ============================================================================
 # METADATA CONFIGURATION
 # ============================================================================
