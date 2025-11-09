@@ -44,6 +44,7 @@ class EnhancedNeighborhoodPlotter:
         self.group_colors = plotting_config.get('group_colors', {
             'KPT': '#E41A1C', 'KPNT': '#377EB8'
         })
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
         # Set style
         sns.set_style('whitegrid')
@@ -119,7 +120,7 @@ class EnhancedNeighborhoodPlotter:
                 ax.fill_between(tp, means_neg - sems_neg, means_neg + sems_neg,
                                alpha=0.1, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
             ax.set_ylabel('% Immune in Region', fontsize=11, fontweight='bold')
             ax.set_title(f'{immune_pop}: % in {marker}+ vs {marker}- Regions',
                         fontsize=12, fontweight='bold')
@@ -170,7 +171,7 @@ class EnhancedNeighborhoodPlotter:
                     ax.fill_between(tp, means_neg - sems_neg, means_neg + sems_neg,
                                    alpha=0.1, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
             ax.set_ylabel('Mean Distance (μm)', fontsize=11, fontweight='bold')
             ax.set_title(f'{immune_pop}: Distance to {marker}+ vs {marker}- Regions',
                         fontsize=12, fontweight='bold')
@@ -254,7 +255,7 @@ class EnhancedNeighborhoodPlotter:
                 ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
                                alpha=0.2, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=10, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
             ax.set_ylabel('% of Neighborhood', fontsize=10, fontweight='bold')
             ax.set_title(f'{cell_type}\nin {marker}+ Regions',
                         fontsize=11, fontweight='bold')
@@ -285,7 +286,7 @@ class EnhancedNeighborhoodPlotter:
                 ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
                                alpha=0.2, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=10, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
             ax.set_ylabel('% of Neighborhood', fontsize=10, fontweight='bold')
             ax.set_title(f'{cell_type}\nin {marker}- Regions',
                         fontsize=11, fontweight='bold')
@@ -380,7 +381,7 @@ class EnhancedNeighborhoodPlotter:
                     ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
                                    alpha=0.1, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=10, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
             ax.set_ylabel('% of Neighborhood', fontsize=10, fontweight='bold')
             ax.set_title(f'{cell_type} in\nLocal Neighborhood',
                         fontsize=11, fontweight='bold')
@@ -421,9 +422,15 @@ class EnhancedNeighborhoodPlotter:
             if key in results:
                 self.plot_regional_neighborhoods(results[key], marker)
 
-            # Per-cell neighborhoods
-            key = f'{marker}_per_cell_neighborhoods'
-            if key in results:
-                self.plot_per_cell_neighborhoods(results[key], marker)
+            # Per-cell neighborhoods - use summary data for plotting
+            key_summary = f'{marker}_per_cell_neighborhoods_summary'
+            key_individual = f'{marker}_per_cell_neighborhoods_individual'
+
+            if key_summary in results:
+                self.plot_per_cell_neighborhoods(results[key_summary], marker)
+            elif key_individual in results:
+                # If only individual data exists, aggregate it for plotting
+                print(f"    Using individual cell data for {marker} (aggregating for plot)")
+                self.plot_per_cell_neighborhoods(results[key_individual], marker)
 
         print(f"  ✓ All enhanced neighborhood plots saved to {self.plots_dir}/")

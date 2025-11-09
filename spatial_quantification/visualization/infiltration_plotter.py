@@ -44,6 +44,7 @@ class InfiltrationPlotter:
         self.group_colors = plotting_config.get('group_colors', {
             'KPT': '#E41A1C', 'KPNT': '#377EB8'
         })
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
         # Set style
         sns.set_style('whitegrid')
@@ -136,7 +137,7 @@ class InfiltrationPlotter:
                     ax.fill_between(timepoints, means - sems, means + sems,
                                    alpha=0.2, color=color)
 
-                ax.set_xlabel('Time (weeks)', fontsize=10, fontweight='bold')
+                ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
                 ax.set_ylabel('Immune/Tumor Density', fontsize=10, fontweight='bold')
                 ax.set_title(f'{immune_pop} - {zone}', fontsize=11, fontweight='bold')
 
@@ -239,7 +240,7 @@ class InfiltrationPlotter:
                     ax.fill_between(timepoints, means - sems, means + sems,
                                    alpha=0.2, color=color)
 
-                ax.set_xlabel('Time (weeks)', fontsize=10, fontweight='bold')
+                ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
                 ax.set_ylabel(ylabel, fontsize=10, fontweight='bold')
                 ax.set_title(f'{marker} - {title}', fontsize=11, fontweight='bold')
 
@@ -340,7 +341,7 @@ class InfiltrationPlotter:
                     ax.fill_between(tp, means_neg - sems_neg, means_neg + sems_neg,
                                    alpha=0.1, color=color)
 
-                ax.set_xlabel('Time (weeks)', fontsize=10, fontweight='bold')
+                ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
                 ax.set_ylabel('Infiltration Density', fontsize=10, fontweight='bold')
                 ax.set_title(f'{marker}: {immune_pop}\n(solid={marker}+, dashed={marker}-)',
                             fontsize=11, fontweight='bold')
@@ -416,7 +417,7 @@ class InfiltrationPlotter:
 
             ax.set_title(f'{group} - Infiltration Density\n(Zone: {key_zone})',
                         fontsize=13, fontweight='bold')
-            ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
             ax.set_ylabel('Immune Population', fontsize=11, fontweight='bold')
 
         plt.tight_layout()
