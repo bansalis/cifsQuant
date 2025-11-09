@@ -197,6 +197,15 @@ def main():
 
         all_results['infiltration_analysis'] = infiltration_analysis.run()
 
+        # Generate comprehensive summary plots
+        print("\n  Generating infiltration summary visualizations...")
+        try:
+            from spatial_quantification.visualization.infiltration_plotter import InfiltrationPlotter
+            infiltration_plotter = InfiltrationPlotter(output_dir / 'infiltration_analysis', config)
+            infiltration_plotter.generate_all_plots(all_results['infiltration_analysis'])
+        except Exception as e:
+            print(f"  ⚠ Could not generate infiltration plots: {e}")
+
     # Neighborhood Analysis
     if config.get('cellular_neighborhoods', {}).get('enabled', False):
         # Use optimized version if specified (RECOMMENDED)
@@ -227,6 +236,15 @@ def main():
             adata, config, output_dir, tumor_structures=tumor_structures
         )
         all_results['enhanced_neighborhoods'] = enhanced_neighborhoods.run()
+
+        # Generate comprehensive summary plots
+        print("\n  Generating enhanced neighborhood visualizations...")
+        try:
+            from spatial_quantification.visualization.enhanced_neighborhood_plotter import EnhancedNeighborhoodPlotter
+            enh_plotter = EnhancedNeighborhoodPlotter(output_dir / 'enhanced_neighborhoods', config)
+            enh_plotter.generate_all_plots(all_results['enhanced_neighborhoods'])
+        except Exception as e:
+            print(f"  ⚠ Could not generate enhanced neighborhood plots: {e}")
 
     # NEW: Pseudotime Analysis
     if HAS_NEW_ANALYSES and config.get('pseudotime_analysis', {}).get('enabled', False):

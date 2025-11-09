@@ -230,6 +230,15 @@ per_tumor_analysis:
   # - Growth-normalized pERK metrics (adjusted by Ki67+ proliferation rate)
   # - Per-tumor infiltration metrics
 
+  # Markers to analyze (configurable)
+  markers:
+    - name: 'pERK'
+      phenotype: 'pERK_positive_tumor'
+    - name: 'NINJA'
+      phenotype: 'AGFP_positive_tumor'
+    - name: 'Ki67'
+      phenotype: 'Ki67_positive_tumor'
+
 # ============================================================================
 # ANALYSIS 1: POPULATION DYNAMICS OVER TIME
 # ============================================================================
@@ -471,6 +480,13 @@ coexpression_analysis:
   # - Temporal dynamics
   # - Jaccard similarity indices
 
+  # Markers to analyze (configurable)
+  # Format: marker_name: column_name
+  markers:
+    pERK: 'is_PERK'
+    NINJA: 'is_AGFP'
+    Ki67: 'is_KI67'
+
 # ============================================================================
 # ANALYSIS 7: ENHANCED NEIGHBORHOODS (NEW)
 # ============================================================================
@@ -485,6 +501,26 @@ enhanced_neighborhoods:
   # - Per-cell neighborhood comparison (pERK+ vs pERK- cells)
 
   neighborhood_radius: 50  # μm
+
+  # Markers to analyze (configurable)
+  markers:
+    - name: 'pERK'
+      pos_col: 'is_pERK_positive_tumor'
+      neg_col: 'is_pERK_negative_tumor'
+    - name: 'NINJA'
+      pos_col: 'is_AGFP_positive_tumor'
+      neg_col: 'is_AGFP_negative_tumor'
+
+  # Cell types to include in neighborhood analysis (configurable)
+  cell_types:
+    - Tumor
+    - pERK_positive_tumor
+    - AGFP_positive_tumor
+    - Ki67_positive_tumor
+    - CD45_positive
+    - CD3_positive
+    - CD8_T_cells
+    - CD4_T_cells
 
 # ============================================================================
 # ANALYSIS 8: PSEUDOTIME ANALYSIS (NEW)

@@ -44,12 +44,19 @@ class CoexpressionAnalysis:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.plots_dir.mkdir(parents=True, exist_ok=True)
 
-        # Markers to analyze
-        self.markers = {
-            'pERK': 'is_PERK',
-            'NINJA': 'is_AGFP',
-            'Ki67': 'is_KI67'
-        }
+        # Markers to analyze - read from config
+        coexp_config = config.get('coexpression_analysis', {})
+        marker_config = coexp_config.get('markers', {})
+
+        if marker_config:
+            self.markers = marker_config
+        else:
+            # Default markers
+            self.markers = {
+                'pERK': 'is_PERK',
+                'NINJA': 'is_AGFP',
+                'Ki67': 'is_KI67'
+            }
 
         # Results storage
         self.results = {}
