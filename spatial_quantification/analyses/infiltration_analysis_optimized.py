@@ -49,7 +49,8 @@ class InfiltrationAnalysisOptimized:
 
         # Storage
         self.results = {}
-        self.tumor_structures = {}  # Per-sample tumor structure labels
+        self.tumor_structures = {}  # Per-sample tumor structure labels (core tumor cells)
+        self.tumor_regions = {}  # Per-sample expanded tumor regions (includes buffer)
 
     def run(self):
         """Run complete infiltration analysis."""
@@ -81,7 +82,7 @@ class InfiltrationAnalysisOptimized:
         return self.results
 
     def _detect_tumor_structures(self):
-        """Detect tumor structures using DBSCAN clustering."""
+        """Detect tumor structures using DBSCAN clustering with optional boundary expansion."""
         tumor_def = self.tumor_config
         tumor_pheno = tumor_def.get('base_phenotype', 'Tumor')
         tumor_col = f'is_{tumor_pheno}'
@@ -94,8 +95,12 @@ class InfiltrationAnalysisOptimized:
         eps = struct_config.get('eps', 100)
         min_samples = struct_config.get('min_samples', 10)
         min_cluster_size = struct_config.get('min_cluster_size', 50)
+        boundary_buffer = struct_config.get('boundary_buffer', 100)
+        use_expanded_boundary = struct_config.get('use_expanded_boundary', True)
 
         print(f"  Using DBSCAN with eps={eps}, min_samples={min_samples}")
+        if use_expanded_boundary:
+            print(f"  Expanding boundaries by {boundary_buffer}μm for softer tumor definition")
 
         # Detect structures per sample
         for sample in self.adata.obs['sample_id'].unique():
@@ -111,7 +116,7 @@ class InfiltrationAnalysisOptimized:
 
             tumor_coords = sample_coords[tumor_mask]
 
-            # DBSCAN clustering
+            # DBSCAN clustering on core tumor cells
             clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(tumor_coords)
             labels = clustering.labels_
 
@@ -122,7 +127,7 @@ class InfiltrationAnalysisOptimized:
                 if (labels == label).sum() >= min_cluster_size:
                     valid_labels.append(label)
 
-            # Store structure labels
+            # Store core structure labels (tumor cells only)
             structure_labels = np.full(len(sample_data), -1)
             tumor_indices = np.where(tumor_mask)[0]
             for label in valid_labels:
@@ -131,17 +136,82 @@ class InfiltrationAnalysisOptimized:
 
             self.tumor_structures[sample] = structure_labels
 
+            # Create expanded tumor regions (includes non-tumor cells within buffer)
+            if use_expanded_boundary:
+                expanded_labels = self._expand_tumor_boundaries(
+                    sample_coords, structure_labels, valid_labels, boundary_buffer
+                )
+                self.tumor_regions[sample] = expanded_labels
+            else:
+                # If not using expansion, regions = structures
+                self.tumor_regions[sample] = structure_labels.copy()
+
             n_structures = len(valid_labels)
             print(f"    ✓ {sample}: Detected {n_structures} tumor structures")
 
+    def _expand_tumor_boundaries(self, all_coords: np.ndarray, structure_labels: np.ndarray,
+                                  valid_labels: List[int], buffer_distance: float) -> np.ndarray:
+        """
+        Expand tumor boundaries to include nearby cells, creating softer tumor regions.
+
+        This captures infiltrating immune cells and associated cells that are spatially
+        inside the tumor mass but are not TOM+ cells.
+
+        Parameters
+        ----------
+        all_coords : np.ndarray
+            Coordinates of ALL cells in the sample (N x 2)
+        structure_labels : np.ndarray
+            Structure labels for all cells (-1 for non-tumor, 0+ for tumor structures)
+        valid_labels : list of int
+            Valid structure IDs to expand
+        buffer_distance : float
+            Distance in μm to expand tumor boundaries
+
+        Returns
+        -------
+        np.ndarray
+            Expanded region labels for all cells
+        """
+        expanded_labels = np.full(len(all_coords), -1)
+
+        for label in valid_labels:
+            # Get core tumor cells for this structure
+            core_mask = structure_labels == label
+            core_coords = all_coords[core_mask]
+
+            if len(core_coords) < 10:
+                continue
+
+            # Build KDTree for core tumor cells
+            tumor_tree = cKDTree(core_coords)
+
+            # Find all cells within buffer distance of this tumor structure
+            # This includes tumor cells AND non-tumor cells (immune, stromal, etc.)
+            distances, _ = tumor_tree.query(all_coords, k=1)
+            within_buffer = distances <= buffer_distance
+
+            # Assign these cells to the expanded region
+            # Note: If a cell is within buffer of multiple structures, it gets assigned
+            # to the last one processed. This is acceptable as these are edge cases.
+            expanded_labels[within_buffer] = label
+
+        return expanded_labels
+
     def _calculate_infiltration(self):
-        """Calculate immune infiltration per tumor structure."""
+        """Calculate immune infiltration per tumor structure using expanded regions."""
         # Get immune populations
         immune_pops = self.config.get('immune_populations', [])
         boundaries = self.config.get('boundaries', [0, 50, 100, 200])
 
+        # Check if using expanded boundaries
+        struct_config = self.tumor_config.get('structure_detection', {})
+        use_expanded_boundary = struct_config.get('use_expanded_boundary', True)
+
         print(f"  Analyzing {len(immune_pops)} immune populations...")
         print(f"  Boundaries: {boundaries} μm")
+        if use_expanded_boundary:
+            print(f"  Using expanded tumor regions for 'within_tumor' calculation")
 
         infiltration_results = []
 
@@ -151,17 +221,21 @@ class InfiltrationAnalysisOptimized:
             sample_coords = self.adata.obsm['spatial'][sample_mask.values]
 
             structure_labels = self.tumor_structures[sample]
+            region_labels = self.tumor_regions[sample]  # Expanded regions
             unique_structures = set(structure_labels) - {-1}
 
             for structure_id in unique_structures:
-                # Get tumor structure cells
+                # Get CORE tumor structure cells (for distance calculations)
                 structure_mask = structure_labels == structure_id
                 structure_coords = sample_coords[structure_mask]
+
+                # Get EXPANDED tumor region (for "within tumor" calculations)
+                region_mask = region_labels == structure_id
 
                 if len(structure_coords) < 10:
                     continue
 
-                # Build KDTree for distance calculations
+                # Build KDTree for distance calculations (from core tumor)
                 tumor_tree = cKDTree(structure_coords)
 
                 # Calculate infiltration for each immune population
@@ -176,7 +250,7 @@ class InfiltrationAnalysisOptimized:
                     if len(immune_coords) == 0:
                         continue
 
-                    # Calculate distances from immune cells to tumor
+                    # Calculate distances from immune cells to CORE tumor
                     distances, _ = tumor_tree.query(immune_coords, k=1)
 
                     # Count infiltration in each boundary
@@ -185,7 +259,17 @@ class InfiltrationAnalysisOptimized:
                             zone_name = 'within_tumor'
                             lower = 0
                             upper = boundaries[i]
-                            count = 0  # Within tumor handled separately
+
+                            if use_expanded_boundary:
+                                # NEW: Count immune cells in expanded tumor REGION
+                                # This captures immune cells spatially inside the tumor mass
+                                # including TOM- cells (lymphocytes, macrophages, etc.)
+                                immune_in_region = immune_mask & region_mask
+                                count = immune_in_region.sum()
+                            else:
+                                # FALLBACK: Use distance threshold
+                                within_threshold = boundaries[i] if boundaries[i] > 0 else 50
+                                count = (distances < within_threshold).sum()
                         else:
                             lower = boundaries[i-1]
                             upper = boundaries[i]
@@ -201,6 +285,7 @@ class InfiltrationAnalysisOptimized:
                             'boundary_upper': upper,
                             'count': int(count),
                             'structure_size': int(structure_mask.sum()),
+                            'region_size': int(region_mask.sum()) if use_expanded_boundary else int(structure_mask.sum()),
                             'timepoint': sample_data['timepoint'].iloc[0] if 'timepoint' in sample_data.columns else np.nan,
                             'group': sample_data['group'].iloc[0] if 'group' in sample_data.columns else '',
                             'main_group': sample_data['main_group'].iloc[0] if 'main_group' in sample_data.columns else ''
