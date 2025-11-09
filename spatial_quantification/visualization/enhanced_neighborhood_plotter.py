@@ -410,17 +410,34 @@ class EnhancedNeighborhoodPlotter:
         """
         print("  Generating enhanced neighborhood analysis plots...")
 
+        # Get markers from config
+        enh_config = self.config.get('enhanced_neighborhoods', {})
+        marker_configs = enh_config.get('markers', [])
+
+        # Extract marker names from config
+        if marker_configs:
+            markers = [m['name'] for m in marker_configs]
+        else:
+            # Default markers (fallback)
+            markers = ['pERK', 'NINJA']
+
+        print(f"    Processing {len(markers)} markers: {', '.join(markers)}")
+
         # Process each marker
-        for marker in ['pERK', 'NINJA']:
+        for marker in markers:
             # Regional infiltration
             key = f'{marker}_regional_infiltration'
             if key in results:
                 self.plot_regional_infiltration(results[key], marker)
+            else:
+                print(f"    ⚠ {key} not found in results")
 
             # Regional neighborhoods
             key = f'{marker}_regional_neighborhoods'
             if key in results:
                 self.plot_regional_neighborhoods(results[key], marker)
+            else:
+                print(f"    ⚠ {key} not found in results")
 
             # Per-cell neighborhoods - use summary data for plotting
             key_summary = f'{marker}_per_cell_neighborhoods_summary'
@@ -432,5 +449,7 @@ class EnhancedNeighborhoodPlotter:
                 # If only individual data exists, aggregate it for plotting
                 print(f"    Using individual cell data for {marker} (aggregating for plot)")
                 self.plot_per_cell_neighborhoods(results[key_individual], marker)
+            else:
+                print(f"    ⚠ No per-cell neighborhood data found for {marker}")
 
         print(f"  ✓ All enhanced neighborhood plots saved to {self.plots_dir}/")
