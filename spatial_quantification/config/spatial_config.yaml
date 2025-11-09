@@ -541,6 +541,50 @@ pseudotime_analysis:
   # - Marker dynamics along trajectory
   # - PCA-based dimensionality reduction
 
+  # Generate differentiation plots
+  generate_plots: true
+
+# ============================================================================
+# ANALYSIS 9: UMAP VISUALIZATION (NEW)
+# ============================================================================
+umap_visualization:
+  enabled: true
+
+  # Dimensionality reduction and clustering of cells
+  # Provides:
+  # - UMAP embedding colored by clusters
+  # - UMAP embedding colored by marker expression
+  # - UMAP embedding colored by phenotypes
+
+  # Markers to use for UMAP computation
+  markers:
+    - is_PERK
+    - is_AGFP
+    - is_KI67
+    - is_Tumor
+    - is_CD45_positive
+    - is_CD3_positive
+    - is_CD8_T_cells
+
+  # Phenotypes to visualize
+  phenotypes:
+    - Tumor
+    - CD45_positive
+    - CD3_positive
+    - CD8_T_cells
+    - CD4_T_cells
+    - pERK_positive_tumor
+    - AGFP_positive_tumor
+    - Ki67_positive_tumor
+
+  # UMAP parameters
+  n_neighbors: 30     # Smaller = more local structure
+  min_dist: 0.3       # Smaller = tighter clusters
+  n_clusters: 10      # Number of clusters for KMeans
+
+  # Subsampling for performance (set to null for all cells)
+  subsample: 100000   # Use 100k cells max for speed
+
 # ============================================================================
 # VISUALIZATION SETTINGS
 # ============================================================================

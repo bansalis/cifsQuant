@@ -251,6 +251,28 @@ def main():
         pseudotime = PseudotimeAnalysis(adata, config, output_dir)
         all_results['pseudotime_analysis'] = pseudotime.run()
 
+        # Generate differentiation plots
+        if config.get('pseudotime_analysis', {}).get('generate_plots', True):
+            print("\n  Generating pseudotime visualizations...")
+            try:
+                from spatial_quantification.visualization.pseudotime_plotter import PseudotimePlotter
+                pseudotime_plotter = PseudotimePlotter(output_dir / 'pseudotime_analysis', config)
+                pseudotime_plotter.generate_all_plots(all_results['pseudotime_analysis'])
+            except Exception as e:
+                print(f"  ⚠ Could not generate pseudotime plots: {e}")
+
+    # NEW: UMAP Visualization
+    if config.get('umap_visualization', {}).get('enabled', False):
+        print("\n  Generating UMAP visualizations...")
+        try:
+            from spatial_quantification.visualization.umap_plotter import UMAPPlotter
+            umap_plotter = UMAPPlotter(output_dir / 'umap_visualization', config)
+            umap_plotter.generate_all_plots(adata)
+        except Exception as e:
+            print(f"  ⚠ Could not generate UMAP plots: {e}")
+            import traceback
+            traceback.print_exc()
+
     # =========================================================================
     # STEP 5: Generate Plots
     # =========================================================================
