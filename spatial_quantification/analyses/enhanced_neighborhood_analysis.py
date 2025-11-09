@@ -49,17 +49,31 @@ class EnhancedNeighborhoodAnalysis:
         self.tumor_structures = tumor_structures or {}
         self.tumor_config = config.get('tumor_definition', {})
 
-        # Markers to analyze
-        self.markers_config = [
-            {'name': 'pERK', 'pos_col': 'is_pERK_positive_tumor', 'neg_col': 'is_pERK_negative_tumor'},
-            {'name': 'NINJA', 'pos_col': 'is_AGFP_positive_tumor', 'neg_col': 'is_AGFP_negative_tumor'}
-        ]
+        # Markers to analyze - read from config
+        enh_config = config.get('enhanced_neighborhoods', {})
+        marker_configs = enh_config.get('markers', [])
 
-        # Cell types for neighborhood analysis
-        self.cell_types = [
-            'is_Tumor', 'is_pERK_positive_tumor', 'is_AGFP_positive_tumor', 'is_Ki67_positive_tumor',
-            'is_CD45_positive', 'is_CD3_positive', 'is_CD8_T_cells', 'is_CD4_T_cells'
-        ]
+        # Use config if available, otherwise default
+        if marker_configs:
+            self.markers_config = marker_configs
+        else:
+            # Default markers
+            self.markers_config = [
+                {'name': 'pERK', 'pos_col': 'is_pERK_positive_tumor', 'neg_col': 'is_pERK_negative_tumor'},
+                {'name': 'NINJA', 'pos_col': 'is_AGFP_positive_tumor', 'neg_col': 'is_AGFP_negative_tumor'}
+            ]
+
+        # Cell types for neighborhood analysis - read from config
+        cell_type_list = enh_config.get('cell_types', [])
+
+        if cell_type_list:
+            self.cell_types = [f'is_{ct}' if not ct.startswith('is_') else ct for ct in cell_type_list]
+        else:
+            # Default cell types
+            self.cell_types = [
+                'is_Tumor', 'is_pERK_positive_tumor', 'is_AGFP_positive_tumor', 'is_Ki67_positive_tumor',
+                'is_CD45_positive', 'is_CD3_positive', 'is_CD8_T_cells', 'is_CD4_T_cells'
+            ]
 
         # Neighborhood radius
         self.neighborhood_radius = 50  # μm
@@ -469,15 +483,23 @@ class EnhancedNeighborhoodAnalysis:
                         break
 
             if per_cell_results:
-                # Aggregate per sample/tumor/marker status
+                # Save INDIVIDUAL cell data (not aggregated)
                 df = pd.DataFrame(per_cell_results)
 
-                # Calculate mean composition per marker status
-                agg_df = df.groupby(['sample_id', 'tumor_id', 'marker', 'cell_marker_status',
-                                    'timepoint', 'group', 'main_group']).mean().reset_index()
+                # Add cell index for tracking
+                df['cell_index'] = range(len(df))
 
-                self.results[f'{marker_name}_per_cell_neighborhoods'] = agg_df
-                print(f"      ✓ Calculated per-cell neighborhoods (aggregated from {len(per_cell_results)} cells)")
+                self.results[f'{marker_name}_per_cell_neighborhoods_individual'] = df
+                print(f"      ✓ Calculated per-cell neighborhoods for {len(per_cell_results)} individual cells")
+
+                # Also save aggregated summary for quick overview
+                agg_df = df.groupby(['sample_id', 'tumor_id', 'marker', 'cell_marker_status',
+                                    'timepoint', 'group', 'main_group']).agg({
+                    'n_neighbors': 'mean',
+                    **{col: 'mean' for col in df.columns if col.startswith('neighbor_')}
+                }).reset_index()
+
+                self.results[f'{marker_name}_per_cell_neighborhoods_summary'] = agg_df
 
     def _save_results(self):
         """Save all results to files."""

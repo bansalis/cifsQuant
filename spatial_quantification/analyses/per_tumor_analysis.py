@@ -188,12 +188,19 @@ class PerTumorAnalysis:
 
     def _calculate_marker_percentages(self):
         """Calculate marker percentages per tumor structure."""
-        # Markers to analyze
-        markers = [
-            {'name': 'pERK', 'phenotype': 'pERK_positive_tumor'},
-            {'name': 'NINJA', 'phenotype': 'AGFP_positive_tumor'},
-            {'name': 'Ki67', 'phenotype': 'Ki67_positive_tumor'}
-        ]
+        # Markers to analyze - read from config
+        per_tumor_config = self.config.get('per_tumor_analysis', {})
+        marker_configs = per_tumor_config.get('markers', [])
+
+        if marker_configs:
+            markers = marker_configs
+        else:
+            # Default markers
+            markers = [
+                {'name': 'pERK', 'phenotype': 'pERK_positive_tumor'},
+                {'name': 'NINJA', 'phenotype': 'AGFP_positive_tumor'},
+                {'name': 'Ki67', 'phenotype': 'Ki67_positive_tumor'}
+            ]
 
         marker_results = []
 
