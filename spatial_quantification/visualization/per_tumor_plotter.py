@@ -44,6 +44,7 @@ class PerTumorPlotter:
             'KPT': '#E41A1C', 'KPNT': '#377EB8'
         })
         self.show_stats = plotting_config.get('show_stats', True)
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
         # Set style
         sns.set_style('whitegrid')
@@ -113,7 +114,7 @@ class PerTumorPlotter:
 
             ax.set_xticks([i + width/2 for i in range(len(timepoints))])
             ax.set_xticklabels([str(tp) for tp in timepoints])
-            ax.set_xlabel('Time (weeks)', fontsize=12, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
             ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
             ax.set_title('Distribution Across Tumors', fontsize=13, fontweight='bold')
 
@@ -153,7 +154,7 @@ class PerTumorPlotter:
             ax.fill_between(tp_values, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Time (weeks)', fontsize=12, fontweight='bold')
+        ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
         ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
         ax.set_title('Temporal Trend (mean ± SEM)', fontsize=13, fontweight='bold')
         ax.legend(frameon=True, loc='best', fontsize=11)
@@ -230,7 +231,7 @@ class PerTumorPlotter:
                 ax.fill_between(tp_values, means - sems, means + sems,
                                alpha=0.2, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
             ax.set_ylabel(f'% {marker}+ per tumor', fontsize=11, fontweight='bold')
             ax.set_title(f'{marker}+ Tumor Cells', fontsize=12, fontweight='bold')
             if idx == 0:
@@ -303,7 +304,7 @@ class PerTumorPlotter:
                 ax.fill_between(tp_values, means - sems, means + sems,
                                alpha=0.2, color=color)
 
-            ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
+            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
             ax.set_ylabel(ylabel, fontsize=11, fontweight='bold')
             ax.set_title(title, fontsize=12, fontweight='bold')
             if idx == 0:
