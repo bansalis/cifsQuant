@@ -218,6 +218,19 @@ phenotypes:
     color: '#FCCDE5'
 
 # ============================================================================
+# ANALYSIS 0: PER-TUMOR ANALYSIS (NEW)
+# ============================================================================
+per_tumor_analysis:
+  enabled: true
+  generate_plots: true
+
+  # This analysis provides:
+  # - Number of tumor cells per individual tumor structure
+  # - Percent pERK+, NINJA+, Ki67+ per tumor (instead of per sample)
+  # - Growth-normalized pERK metrics (adjusted by Ki67+ proliferation rate)
+  # - Per-tumor infiltration metrics
+
+# ============================================================================
 # ANALYSIS 1: POPULATION DYNAMICS OVER TIME
 # ============================================================================
 population_dynamics:
@@ -444,6 +457,46 @@ advanced_analyses:
 
   # spatial_interaction_networks:
   #   enabled: false
+
+# ============================================================================
+# ANALYSIS 6: COEXPRESSION ANALYSIS (NEW)
+# ============================================================================
+coexpression_analysis:
+  enabled: true
+
+  # Analyze coexpression patterns of tumor markers
+  # Provides:
+  # - Pairwise coexpression rates (pERK+NINJA, pERK+Ki67, NINJA+Ki67)
+  # - Triple coexpression (all three markers)
+  # - Temporal dynamics
+  # - Jaccard similarity indices
+
+# ============================================================================
+# ANALYSIS 7: ENHANCED NEIGHBORHOODS (NEW)
+# ============================================================================
+enhanced_neighborhoods:
+  enabled: true
+
+  # Focus on marker-specific regional analysis
+  # Provides:
+  # - Identification of distinct pERK+/- and NINJA+/- regions
+  # - Two-step infiltration: % immune in region + distance/depth
+  # - Neighborhood composition within marker+ vs marker- regions
+  # - Per-cell neighborhood comparison (pERK+ vs pERK- cells)
+
+  neighborhood_radius: 50  # μm
+
+# ============================================================================
+# ANALYSIS 8: PSEUDOTIME ANALYSIS (NEW)
+# ============================================================================
+pseudotime_analysis:
+  enabled: true
+
+  # Infer differentiation trajectories from marker expression
+  # Provides:
+  # - Pseudotime ordering of tumor cells
+  # - Marker dynamics along trajectory
+  # - PCA-based dimensionality reduction
 
 # ============================================================================
 # VISUALIZATION SETTINGS
