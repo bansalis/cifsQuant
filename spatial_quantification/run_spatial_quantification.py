@@ -30,7 +30,8 @@ from spatial_quantification.analyses import (
     InfiltrationAnalysisOptimized,
     NeighborhoodAnalysis,
     NeighborhoodAnalysisOptimized,
-    AdvancedAnalysis
+    AdvancedAnalysis,
+    TumorMicroenvironmentAnalysis
 )
 # Import new analyses
 try:
@@ -245,6 +246,26 @@ def main():
             enh_plotter.generate_all_plots(all_results['enhanced_neighborhoods'])
         except Exception as e:
             print(f"  ⚠ Could not generate enhanced neighborhood plots: {e}")
+
+    # NEW: Tumor Microenvironment Analysis (per-phenotype immune composition)
+    if config.get('tumor_microenvironment', {}).get('enabled', False):
+        print("\n  Running tumor microenvironment analysis...")
+        tumor_microenv = TumorMicroenvironmentAnalysis(
+            adata, config, output_dir, tumor_structures=tumor_structures
+        )
+        all_results['tumor_microenvironment'] = tumor_microenv.run()
+
+        # Generate comprehensive plots
+        if config.get('tumor_microenvironment', {}).get('generate_plots', True):
+            print("\n  Generating tumor microenvironment visualizations...")
+            try:
+                from spatial_quantification.visualization.tumor_microenvironment_plotter import TumorMicroenvironmentPlotter
+                tm_plotter = TumorMicroenvironmentPlotter(output_dir / 'tumor_microenvironment', config)
+                tm_plotter.generate_all_plots(all_results['tumor_microenvironment'])
+            except Exception as e:
+                print(f"  ⚠ Could not generate tumor microenvironment plots: {e}")
+                import traceback
+                traceback.print_exc()
 
     # NEW: Pseudotime Analysis
     if HAS_NEW_ANALYSES and config.get('pseudotime_analysis', {}).get('enabled', False):

@@ -224,6 +224,12 @@ phenotypes:
     negative: ['CD3']
     color: '#FCCDE5'
 
+  B_cells:
+    description: "B220+ B cells"
+    positive: ['B220']
+    negative: []
+    color: '#8DD3C7'
+
 # ============================================================================
 # ANALYSIS 0: PER-TUMOR ANALYSIS (NEW)
 # ============================================================================
@@ -530,7 +536,45 @@ enhanced_neighborhoods:
     - CD4_T_cells
 
 # ============================================================================
-# ANALYSIS 8: PSEUDOTIME ANALYSIS (NEW)
+# ANALYSIS 8: TUMOR MICROENVIRONMENT (NEW)
+# ============================================================================
+tumor_microenvironment:
+  enabled: true
+  generate_plots: true
+
+  # Analyze immune microenvironment around tumor cell phenotypes
+  # For each tumor sub-phenotype (pERK+, pERK-, etc.):
+  # - Calculate immune cell composition in local vicinity
+  # - Multiple distance bins: cell contact, close proximity, distal proximity
+  # - Generate stacked column plots (percentages and counts)
+  # - Statistical tests between phenotypes, timepoints, and groups
+  # - Enrichment/depletion analysis adjusting for overall infiltration
+
+  # Distance bins for proximity analysis (in microns)
+  distance_bins:
+    contact: 10      # Cell-cell contact distance
+    close: 30        # Close proximity
+    distal: 100      # Distal proximity
+
+  # Tumor phenotypes to analyze
+  tumor_phenotypes:
+    - name: 'pERK'
+      phenotype: 'pERK_positive_tumor'
+    - name: 'NINJA'
+      phenotype: 'AGFP_positive_tumor'
+    - name: 'Ki67'
+      phenotype: 'Ki67_positive_tumor'
+
+  # Immune populations to quantify in microenvironment
+  immune_populations:
+    - 'CD8_T_cells'
+    - 'CD4_T_cells'
+    - 'CD3_positive'
+    - 'CD45_positive'
+    - 'Non_T_immune'
+
+# ============================================================================
+# ANALYSIS 9: PSEUDOTIME ANALYSIS (NEW)
 # ============================================================================
 pseudotime_analysis:
   enabled: true
