@@ -59,7 +59,7 @@ def calculate_statistics(data: pd.DataFrame,
     timepoint_col : str
         Column for timepoint (used if per_timepoint=True)
     test_method : str
-        Statistical test to use ('mannwhitneyu', 't-test', 'kruskal')
+        Statistical test to use ('mannwhitneyu', 'mann_whitney', 't-test', 'kruskal')
     per_timepoint : bool
         If True, perform tests per timepoint; otherwise across all data
 
@@ -89,8 +89,8 @@ def calculate_statistics(data: pd.DataFrame,
             if len(g1_values) < 2 or len(g2_values) < 2:
                 continue
 
-            # Perform test
-            if test_method == 'mannwhitneyu':
+            # Perform test (support both naming conventions)
+            if test_method in ('mannwhitneyu', 'mann_whitney'):
                 stat, pval = stats.mannwhitneyu(g1_values, g2_values, alternative='two-sided')
             elif test_method == 't-test':
                 stat, pval = stats.ttest_ind(g1_values, g2_values)
@@ -114,7 +114,8 @@ def calculate_statistics(data: pd.DataFrame,
         g2_values = data[data[group_col] == group2][value_col].dropna()
 
         if len(g1_values) >= 2 and len(g2_values) >= 2:
-            if test_method == 'mannwhitneyu':
+            # Perform test (support both naming conventions)
+            if test_method in ('mannwhitneyu', 'mann_whitney'):
                 stat, pval = stats.mannwhitneyu(g1_values, g2_values, alternative='two-sided')
             elif test_method == 't-test':
                 stat, pval = stats.ttest_ind(g1_values, g2_values)
