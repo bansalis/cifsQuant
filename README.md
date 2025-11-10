@@ -39,6 +39,22 @@ Multi-level spatial analysis pipeline for cyclic immunofluorescence data using M
 
 ## Pipeline Workflow
 
+### Stage 0 (Optional): Sample Partitioning Preprocessor
+
+For experiments with multiple samples/conditions on the same slide, use the partitioning preprocessor to split them before running the pipeline:
+
+```bash
+# Install partitioning dependencies
+pip install -r requirements_partition.txt
+
+# Partition a sample (interactive)
+python scripts/partition_samples.py --sample_name JL216
+
+# This will create partitions like JL216A/, JL216B/ in rawdata/
+```
+
+**See [SAMPLE_PARTITIONING_README.md](SAMPLE_PARTITIONING_README.md) for detailed instructions.**
+
 ### Stage 1: Image Segmentation (MCMICRO/Cellpose)
 
 Run the tiling and segmentation pipeline on raw images:
