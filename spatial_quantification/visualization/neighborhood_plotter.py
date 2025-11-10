@@ -151,7 +151,7 @@ class NeighborhoodPlotter:
                 ax.fill_between(timepoints, means - sems, means + sems,
                                alpha=0.2, color=color)
 
-            ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+            ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
             ax.set_ylabel('Fraction of Tissue', fontsize=12, fontweight='bold')
             ax.set_title(f'Neighborhood Evolution - {group}',
                         fontsize=14, fontweight='bold')
@@ -216,7 +216,7 @@ class NeighborhoodPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Timepoint (days)', fontsize=11, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=11, fontweight='bold')
         ax.set_ylabel('Fraction of Tissue', fontsize=11, fontweight='bold')
         ax.set_title('Temporal Evolution', fontsize=12, fontweight='bold')
         ax.legend(loc='best')
@@ -252,7 +252,7 @@ class NeighborhoodPlotter:
                 ax.set_xticks([i + width/2 for i in range(len(timepoints))])
                 ax.set_xticklabels([str(tp) for tp in timepoints])
 
-        ax.set_xlabel('Timepoint (days)', fontsize=11, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=11, fontweight='bold')
         ax.set_ylabel('Fraction of Tissue', fontsize=11, fontweight='bold')
         ax.set_title('Distribution per Timepoint', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='y')
@@ -284,7 +284,7 @@ class NeighborhoodPlotter:
                 ax.set_xticks([i + width/2 for i in range(len(timepoints))])
                 ax.set_xticklabels([str(tp) for tp in timepoints])
 
-        ax.set_xlabel('Timepoint (days)', fontsize=11, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=11, fontweight='bold')
         ax.set_ylabel('Fraction of Tissue', fontsize=11, fontweight='bold')
         ax.set_title('Violin Plots', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='y')
@@ -309,7 +309,7 @@ class NeighborhoodPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Timepoint (days)', fontsize=11, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=11, fontweight='bold')
         ax.set_ylabel('Cell Count', fontsize=11, fontweight='bold')
         ax.set_title('Cell Count Evolution', fontsize=12, fontweight='bold')
         ax.legend(loc='best')
@@ -386,7 +386,7 @@ class NeighborhoodPlotter:
                     ax2.plot(summary.index, summary.values, '-o', color=color,
                            label=f'NH-{nh_type}', linewidth=2)
 
-                ax2.set_xlabel('Timepoint (days)', fontsize=11, fontweight='bold')
+                ax2.set_xlabel('Timepoint', fontsize=11, fontweight='bold')
                 ax2.set_ylabel('Fraction of Tissue', fontsize=11, fontweight='bold')
                 ax2.set_title('Temporal Evolution', fontsize=12, fontweight='bold')
                 ax2.legend(loc='best', ncol=2, fontsize=8)

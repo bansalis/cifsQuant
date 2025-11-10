@@ -9,7 +9,15 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, List
+import warnings
 from ..stats.plot_stats import add_significance_bars, perform_pairwise_tests, get_significance_symbol
+
+try:
+    from .plot_utils import detect_plot_type, create_dual_plots, calculate_statistics
+    HAS_PLOT_UTILS = True
+except ImportError:
+    HAS_PLOT_UTILS = False
+    warnings.warn("Plot utilities not available")
 
 
 class PerTumorPlotter:
