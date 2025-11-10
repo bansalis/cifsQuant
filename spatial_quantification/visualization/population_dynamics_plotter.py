@@ -1,6 +1,6 @@
 """
 Enhanced plotting for Population Dynamics
-Multiple plot types with statistical tests
+Multiple plot types with statistical tests and adaptive plotting
 """
 
 import matplotlib.pyplot as plt
@@ -12,6 +12,13 @@ from scipy import stats
 from typing import Dict, List, Optional
 import warnings
 from ..stats.plot_stats import add_significance_bars, perform_pairwise_tests
+
+try:
+    from .plot_utils import detect_plot_type, create_dual_plots, calculate_statistics
+    HAS_PLOT_UTILS = True
+except ImportError:
+    HAS_PLOT_UTILS = False
+    warnings.warn("Plot utilities not available")
 
 
 class PopulationDynamicsPlotter:
@@ -45,7 +52,7 @@ class PopulationDynamicsPlotter:
 
         # Get plotting settings from config
         plotting_config = config.get('plotting', {})
-        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (days)')
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
         self.show_stats = plotting_config.get('show_stats', True)
         self.stat_method = plotting_config.get('stat_method', 'mann_whitney')
         self.fdr_correction = plotting_config.get('fdr_correction', True)
@@ -426,7 +433,7 @@ class PopulationDynamicsPlotter:
                                alpha=0.2, color=color)
 
             ax.set_title(pop.replace('_', ' '), fontsize=11, fontweight='bold')
-            ax.set_xlabel('Time (days)', fontsize=10)
+            ax.set_xlabel(self.timepoint_label, fontsize=10)
             ax.set_ylabel(value_col.replace('_', ' ').title(), fontsize=10)
             if idx == 0:
                 ax.legend(frameon=False, fontsize=9)
@@ -443,3 +450,38 @@ class PopulationDynamicsPlotter:
         plot_path = self.plots_dir / f'all_populations_{value_col}_overview.png'
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
+
+    def plot_population_adaptive(self, data: pd.DataFrame,
+                                population: str,
+                                value_col: str = 'count',
+                                group_col: str = 'main_group',
+                                ylabel: str = None):
+        """
+        Create adaptive plots (line or box depending on timepoints).
+
+        Generates dual versions with and without stats.
+        """
+        if not HAS_PLOT_UTILS:
+            # Fallback to comprehensive plotting
+            self.plot_population_over_time(data, population, value_col, group_col)
+            return
+
+        if ylabel is None:
+            ylabel = value_col.replace('_', ' ').title()
+
+        # Create dual plots
+        output_base = str(self.plots_dir / f'{population}_{value_col}_adaptive')
+        create_dual_plots(
+            data,
+            value_col=value_col,
+            group_col=group_col,
+            timepoint_col='timepoint',
+            group_colors=self.group_colors,
+            title_base=f'{population}: {ylabel}',
+            ylabel=ylabel,
+            xlabel='',
+            test_method=self.stat_method,
+            output_path_base=output_base
+        )
+
+        print(f"    ✓ Saved {population} {value_col} adaptive plots (with and without stats)")

@@ -258,7 +258,7 @@ def plot_with_stats(data: pd.DataFrame,
                                ha='center', va='top', fontsize=10, fontweight='bold')
 
         if not xlabel:
-            xlabel = 'Time (weeks)'
+            xlabel = 'Timepoint'
         ax.set_xlabel(xlabel, fontsize=11, fontweight='bold')
 
     else:
@@ -319,8 +319,9 @@ def plot_with_stats(data: pd.DataFrame,
                        ha='center', va='bottom', fontsize=12, fontweight='bold')
 
         if not xlabel:
-            xlabel = 'Group'
-        ax.set_xlabel(xlabel, fontsize=11, fontweight='bold')
+            xlabel = ''  # No label for single timepoint boxplots
+        if xlabel:
+            ax.set_xlabel(xlabel, fontsize=11, fontweight='bold')
 
     ax.set_ylabel(ylabel, fontsize=11, fontweight='bold')
     ax.set_title(title, fontsize=12, fontweight='bold')

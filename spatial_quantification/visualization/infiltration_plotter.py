@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Dict, List
 import warnings
 
+try:
+    from .plot_utils import detect_plot_type, create_dual_plots, calculate_statistics
+    HAS_PLOT_UTILS = True
+except ImportError:
+    HAS_PLOT_UTILS = False
+    warnings.warn("Plot utilities not available")
+
 
 class InfiltrationPlotter:
     """
