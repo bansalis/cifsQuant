@@ -1,6 +1,6 @@
 """
 Coexpression Analysis
-Analyze coexpression patterns of tumor markers (pERK, NINJA, Ki67)
+Analyze coexpression patterns of tumor markers (configurable)
 """
 
 import pandas as pd
@@ -11,6 +11,21 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from itertools import combinations
 import warnings
+import sys
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+try:
+    from spatial_quantification.visualization.plot_utils import (
+        detect_plot_type,
+        plot_with_stats,
+        create_dual_plots
+    )
+    HAS_PLOT_UTILS = True
+except ImportError:
+    HAS_PLOT_UTILS = False
+    warnings.warn("Plot utilities not available - using basic plots")
 
 
 class CoexpressionAnalysis:
@@ -215,7 +230,7 @@ class CoexpressionAnalysis:
             print(f"    ✓ Calculated pairwise coexpression for {len(results)} samples")
 
     def _calculate_triple_coexpression(self):
-        """Calculate triple coexpression (all three markers)."""
+        """Calculate triple/multi-marker coexpression (all markers)."""
         tumor_col = 'is_Tumor'
 
         if tumor_col not in self.adata.obs.columns:
@@ -224,6 +239,10 @@ class CoexpressionAnalysis:
         results = []
 
         marker_names = list(self.markers.keys())
+        n_markers = len(marker_names)
+
+        # If we have exactly 3 markers, use the original approach with all combinations
+        # If we have more or fewer, we'll calculate multi-marker positive and individual counts
 
         for sample in self.adata.obs['sample_id'].unique():
             sample_mask = self.adata.obs['sample_id'] == sample
@@ -245,60 +264,58 @@ class CoexpressionAnalysis:
                 'main_group': tumor_data['main_group'].iloc[0] if 'main_group' in tumor_data.columns else ''
             }
 
-            # All three markers
+            # Check all markers are present
             all_cols_present = all(self.markers[m] in tumor_data.columns for m in marker_names)
 
             if all_cols_present:
-                # Triple positive
-                triple_pos = (tumor_data[self.markers['pERK']] &
-                             tumor_data[self.markers['NINJA']] &
-                             tumor_data[self.markers['Ki67']]).sum()
+                # Calculate multi-marker positive (all markers positive)
+                multi_pos_mask = pd.Series(True, index=tumor_data.index)
+                for marker_name in marker_names:
+                    multi_pos_mask &= tumor_data[self.markers[marker_name]]
 
-                # All possible combinations
-                perk_only = (tumor_data[self.markers['pERK']] &
-                            ~tumor_data[self.markers['NINJA']] &
-                            ~tumor_data[self.markers['Ki67']]).sum()
+                multi_pos = multi_pos_mask.sum()
 
-                ninja_only = (~tumor_data[self.markers['pERK']] &
-                             tumor_data[self.markers['NINJA']] &
-                             ~tumor_data[self.markers['Ki67']]).sum()
+                result[f'all_{n_markers}_positive_count'] = int(multi_pos)
+                result[f'all_{n_markers}_positive_percent'] = multi_pos / n_tumor_cells * 100
 
-                ki67_only = (~tumor_data[self.markers['pERK']] &
-                            ~tumor_data[self.markers['NINJA']] &
-                            tumor_data[self.markers['Ki67']]).sum()
+                # Calculate individual marker-only counts
+                for marker_name in marker_names:
+                    only_mask = tumor_data[self.markers[marker_name]].copy()
+                    # Exclude other markers
+                    for other_marker in marker_names:
+                        if other_marker != marker_name:
+                            only_mask &= ~tumor_data[self.markers[other_marker]]
 
-                perk_ninja = (tumor_data[self.markers['pERK']] &
-                             tumor_data[self.markers['NINJA']] &
-                             ~tumor_data[self.markers['Ki67']]).sum()
+                    only_count = only_mask.sum()
+                    result[f'{marker_name}_only_count'] = int(only_count)
 
-                perk_ki67 = (tumor_data[self.markers['pERK']] &
-                            ~tumor_data[self.markers['NINJA']] &
-                            tumor_data[self.markers['Ki67']]).sum()
+                # Calculate pairwise combinations (if n_markers >= 2)
+                if n_markers >= 2:
+                    for i, m1 in enumerate(marker_names):
+                        for m2 in marker_names[i+1:]:
+                            # Both m1 and m2, but no others
+                            pair_mask = tumor_data[self.markers[m1]] & tumor_data[self.markers[m2]]
+                            for other_marker in marker_names:
+                                if other_marker != m1 and other_marker != m2:
+                                    pair_mask &= ~tumor_data[self.markers[other_marker]]
 
-                ninja_ki67 = (~tumor_data[self.markers['pERK']] &
-                             tumor_data[self.markers['NINJA']] &
-                             tumor_data[self.markers['Ki67']]).sum()
+                            pair_count = pair_mask.sum()
+                            result[f'{m1}_{m2}_only_count'] = int(pair_count)
 
-                none = (~tumor_data[self.markers['pERK']] &
-                       ~tumor_data[self.markers['NINJA']] &
-                       ~tumor_data[self.markers['Ki67']]).sum()
+                # Calculate all negative (none of the markers)
+                none_mask = pd.Series(True, index=tumor_data.index)
+                for marker_name in marker_names:
+                    none_mask &= ~tumor_data[self.markers[marker_name]]
 
-                result['triple_positive_count'] = int(triple_pos)
-                result['triple_positive_percent'] = triple_pos / n_tumor_cells * 100
-                result['pERK_only_count'] = int(perk_only)
-                result['NINJA_only_count'] = int(ninja_only)
-                result['Ki67_only_count'] = int(ki67_only)
-                result['pERK_NINJA_only_count'] = int(perk_ninja)
-                result['pERK_Ki67_only_count'] = int(perk_ki67)
-                result['NINJA_Ki67_only_count'] = int(ninja_ki67)
-                result['triple_negative_count'] = int(none)
+                none_count = none_mask.sum()
+                result['all_negative_count'] = int(none_count)
 
             results.append(result)
 
         if results:
             df = pd.DataFrame(results)
-            self.results['triple_coexpression'] = df
-            print(f"    ✓ Calculated triple coexpression for {len(results)} samples")
+            self.results['multi_marker_coexpression'] = df
+            print(f"    ✓ Calculated multi-marker coexpression for {len(results)} samples ({n_markers} markers)")
 
     def _calculate_per_tumor_coexpression(self):
         """Calculate coexpression per tumor structure."""
@@ -324,104 +341,155 @@ class CoexpressionAnalysis:
         if 'pairwise_coexpression' in self.results:
             self._plot_pairwise()
 
-        # Plot 3: Triple coexpression pie charts
-        if 'triple_coexpression' in self.results:
-            self._plot_triple_expression()
+        # Plot 3: Multi-marker coexpression patterns
+        if 'multi_marker_coexpression' in self.results:
+            self._plot_multi_marker_expression()
 
         # Plot 4: Coexpression heatmap
         if 'pairwise_coexpression' in self.results:
             self._plot_coexpression_heatmap()
 
     def _plot_single_markers(self):
-        """Plot single marker frequencies over time."""
+        """Plot single marker frequencies with adaptive plot type and stats."""
         df = self.results['single_marker_frequencies']
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        marker_names = list(self.markers.keys())
 
-        groups = sorted(df['main_group'].unique())
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
-        markers_plot = ['pERK', 'NINJA', 'Ki67']
-        linestyles = ['-', '--', ':']
-
-        for group in groups:
-            group_data = df[df['main_group'] == group]
-
-            for marker, ls in zip(markers_plot, linestyles):
+        if HAS_PLOT_UTILS:
+            # Use adaptive plotting for each marker
+            for marker in marker_names:
                 col = f'{marker}_percent'
-                if col not in group_data.columns:
+                if col not in df.columns:
                     continue
 
-                summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
-                timepoints = summary.index.values
-                means = summary['mean'].values
-                sems = summary['sem'].values
+                output_base = str(self.plots_dir / f'single_marker_{marker}_frequency')
+                create_dual_plots(
+                    df,
+                    value_col=col,
+                    group_col='main_group',
+                    timepoint_col='timepoint',
+                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    title_base=f'{marker} Frequency',
+                    ylabel='% of Tumor Cells',
+                    xlabel='Time (weeks)',
+                    output_path_base=output_base
+                )
+            print(f"    ✓ Saved single marker plots (with and without stats)")
+        else:
+            # Fallback to basic plotting
+            fig, ax = plt.subplots(figsize=(10, 6))
 
-                color = colors.get(group, '#000000')
-                label = f'{group} - {marker}'
-
-                ax.plot(timepoints, means, linestyle=ls, color=color, linewidth=2,
-                       marker='o', markersize=6, label=label)
-                ax.fill_between(timepoints, means - sems, means + sems,
-                               alpha=0.15, color=color)
-
-        ax.set_xlabel('Time (weeks)', fontsize=12, fontweight='bold')
-        ax.set_ylabel('% of Tumor Cells', fontsize=12, fontweight='bold')
-        ax.set_title('Single Marker Frequencies', fontsize=14, fontweight='bold')
-        ax.legend(frameon=True, loc='best', fontsize=9)
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(self.plots_dir / 'single_marker_frequencies.png', dpi=300, bbox_inches='tight')
-        plt.close()
-
-    def _plot_pairwise(self):
-        """Plot pairwise coexpression over time."""
-        df = self.results['pairwise_coexpression']
-
-        pairs = [('pERK', 'NINJA'), ('pERK', 'Ki67'), ('NINJA', 'Ki67')]
-
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-        groups = sorted(df['main_group'].unique())
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
-
-        for idx, (m1, m2) in enumerate(pairs):
-            ax = axes[idx]
-            col = f'{m1}_and_{m2}_percent_of_tumor'
-
-            if col not in df.columns:
-                continue
+            groups = sorted(df['main_group'].unique())
+            colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
+            linestyles = ['-', '--', ':', '-.']
 
             for group in groups:
                 group_data = df[df['main_group'] == group]
 
-                summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
-                timepoints = summary.index.values
-                means = summary['mean'].values
-                sems = summary['sem'].values
+                for marker, ls in zip(marker_names, linestyles):
+                    col = f'{marker}_percent'
+                    if col not in group_data.columns:
+                        continue
 
-                color = colors.get(group, '#000000')
+                    summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
+                    timepoints = summary.index.values
+                    means = summary['mean'].values
+                    sems = summary['sem'].values
 
-                ax.plot(timepoints, means, '-o', color=color, linewidth=2.5,
-                       markersize=8, label=group)
-                ax.fill_between(timepoints, means - sems, means + sems,
-                               alpha=0.2, color=color)
+                    color = colors.get(group, '#000000')
+                    label = f'{group} - {marker}'
 
-            ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
-            ax.set_ylabel('% of Tumor Cells', fontsize=11, fontweight='bold')
-            ax.set_title(f'{m1}+ AND {m2}+', fontsize=12, fontweight='bold')
-            if idx == 0:
-                ax.legend(frameon=True, loc='best')
+                    ax.plot(timepoints, means, linestyle=ls, color=color, linewidth=2,
+                           marker='o', markersize=6, label=label)
+                    ax.fill_between(timepoints, means - sems, means + sems,
+                                   alpha=0.15, color=color)
+
+            ax.set_xlabel('Time (weeks)', fontsize=12, fontweight='bold')
+            ax.set_ylabel('% of Tumor Cells', fontsize=12, fontweight='bold')
+            ax.set_title('Single Marker Frequencies', fontsize=14, fontweight='bold')
+            ax.legend(frameon=True, loc='best', fontsize=9)
             ax.grid(True, alpha=0.3)
 
-        plt.suptitle('Pairwise Coexpression', fontsize=16, fontweight='bold')
-        plt.tight_layout()
-        plt.savefig(self.plots_dir / 'pairwise_coexpression.png', dpi=300, bbox_inches='tight')
-        plt.close()
+            plt.tight_layout()
+            plt.savefig(self.plots_dir / 'single_marker_frequencies.png', dpi=300, bbox_inches='tight')
+            plt.close()
 
-    def _plot_triple_expression(self):
-        """Plot triple coexpression patterns."""
-        df = self.results['triple_coexpression']
+    def _plot_pairwise(self):
+        """Plot pairwise coexpression with adaptive plot type and stats."""
+        df = self.results['pairwise_coexpression']
+
+        marker_names = list(self.markers.keys())
+        pairs = list(combinations(marker_names, 2))
+
+        if HAS_PLOT_UTILS:
+            # Use adaptive plotting for each pair
+            for m1, m2 in pairs:
+                col = f'{m1}_and_{m2}_percent_of_tumor'
+
+                if col not in df.columns:
+                    continue
+
+                output_base = str(self.plots_dir / f'pairwise_{m1}_and_{m2}')
+                create_dual_plots(
+                    df,
+                    value_col=col,
+                    group_col='main_group',
+                    timepoint_col='timepoint',
+                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    title_base=f'{m1}+ AND {m2}+ Coexpression',
+                    ylabel='% of Tumor Cells',
+                    xlabel='Time (weeks)',
+                    output_path_base=output_base
+                )
+            print(f"    ✓ Saved pairwise coexpression plots (with and without stats)")
+        else:
+            # Fallback to basic plotting
+            n_pairs = len(pairs)
+            fig, axes = plt.subplots(1, n_pairs, figsize=(6*n_pairs, 5))
+
+            if n_pairs == 1:
+                axes = [axes]
+
+            groups = sorted(df['main_group'].unique())
+            colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
+
+            for idx, (m1, m2) in enumerate(pairs):
+                ax = axes[idx]
+                col = f'{m1}_and_{m2}_percent_of_tumor'
+
+                if col not in df.columns:
+                    continue
+
+                for group in groups:
+                    group_data = df[df['main_group'] == group]
+
+                    summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
+                    timepoints = summary.index.values
+                    means = summary['mean'].values
+                    sems = summary['sem'].values
+
+                    color = colors.get(group, '#000000')
+
+                    ax.plot(timepoints, means, '-o', color=color, linewidth=2.5,
+                           markersize=8, label=group)
+                    ax.fill_between(timepoints, means - sems, means + sems,
+                                   alpha=0.2, color=color)
+
+                ax.set_xlabel('Time (weeks)', fontsize=11, fontweight='bold')
+                ax.set_ylabel('% of Tumor Cells', fontsize=11, fontweight='bold')
+                ax.set_title(f'{m1}+ AND {m2}+', fontsize=12, fontweight='bold')
+                if idx == 0:
+                    ax.legend(frameon=True, loc='best')
+                ax.grid(True, alpha=0.3)
+
+            plt.suptitle('Pairwise Coexpression', fontsize=16, fontweight='bold')
+            plt.tight_layout()
+            plt.savefig(self.plots_dir / 'pairwise_coexpression.png', dpi=300, bbox_inches='tight')
+            plt.close()
+
+    def _plot_multi_marker_expression(self):
+        """Plot multi-marker coexpression patterns."""
+        df = self.results['multi_marker_coexpression']
 
         # Average across all samples per group/timepoint
         groups = sorted(df['main_group'].unique())

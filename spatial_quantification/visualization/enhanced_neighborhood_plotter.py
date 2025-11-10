@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Dict, List
 import warnings
 
+from .plot_utils import (
+    detect_plot_type,
+    plot_with_stats,
+    create_dual_plots,
+    calculate_statistics
+)
+
 
 class EnhancedNeighborhoodPlotter:
     """
@@ -63,130 +70,112 @@ class EnhancedNeighborhoodPlotter:
             Marker name (pERK or NINJA)
         """
         if regional_infiltration_df is None or len(regional_infiltration_df) == 0:
+            print(f"    ⚠ No data for {marker} regional infiltration")
             return
 
-        immune_pops = regional_infiltration_df['immune_population'].unique()
-        n_pops = len(immune_pops)
+        # Detect immune populations from columns
+        immune_cols = [col for col in regional_infiltration_df.columns
+                      if col.endswith('_in_pos_region_percent')]
+        if not immune_cols:
+            print(f"    ⚠ No immune population columns found for {marker}")
+            return
 
-        fig, axes = plt.subplots(n_pops, 2, figsize=(14, 5*n_pops))
+        immune_pops = [col.replace('_in_pos_region_percent', '') for col in immune_cols]
 
-        if n_pops == 1:
-            axes = axes.reshape(1, -1)
+        # Create plots for each immune population
+        for immune_pop in immune_pops:
+            # Prepare data for marker+ region
+            pos_col = f'{immune_pop}_in_pos_region_percent'
+            neg_col = f'{immune_pop}_in_neg_region_percent'
 
-        groups = sorted(regional_infiltration_df['main_group'].unique())
+            if pos_col not in regional_infiltration_df.columns or neg_col not in regional_infiltration_df.columns:
+                continue
 
-        for pop_idx, immune_pop in enumerate(immune_pops):
-            pop_data = regional_infiltration_df[
-                regional_infiltration_df['immune_population'] == immune_pop
-            ]
+            # Create data for plotting (both marker+ and marker- in same dataframe)
+            plot_data_list = []
 
-            # Panel 1: Percent in region
-            ax = axes[pop_idx, 0]
+            for idx, row in regional_infiltration_df.iterrows():
+                # Marker+ region
+                plot_data_list.append({
+                    'sample_id': row['sample_id'],
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', ''),
+                    'region_type': f'{marker}+',
+                    'percent_in_region': row[pos_col]
+                })
 
-            # Aggregate by sample
-            agg_data = pop_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
-                f'{immune_pop}_in_pos_region_percent': 'mean',
-                f'{immune_pop}_in_neg_region_percent': 'mean'
-            }).reset_index()
+                # Marker- region
+                plot_data_list.append({
+                    'sample_id': row['sample_id'],
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', ''),
+                    'region_type': f'{marker}-',
+                    'percent_in_region': row[neg_col]
+                })
 
-            for group in groups:
-                group_data = agg_data[agg_data['main_group'] == group]
+            plot_data = pd.DataFrame(plot_data_list)
 
-                if len(group_data) == 0:
-                    continue
+            # Create dual plots (with and without stats) for percent in region
+            output_base = str(self.plots_dir / f'{marker}_{immune_pop}_percent_in_region')
+            create_dual_plots(
+                plot_data,
+                value_col='percent_in_region',
+                group_col='region_type',
+                timepoint_col='timepoint',
+                group_colors={f'{marker}+': self.group_colors.get('KPT', '#E41A1C'),
+                            f'{marker}-': '#999999'},
+                title_base=f'{immune_pop}: % in {marker}+ vs {marker}- Regions',
+                ylabel='% Immune in Region',
+                xlabel=self.timepoint_label,
+                output_path_base=output_base
+            )
 
-                color = self.group_colors.get(group, '#000000')
+            print(f"    ✓ Saved {marker} {immune_pop} infiltration plots (with and without stats)")
 
-                # Plot marker+ region
-                col_pos = f'{immune_pop}_in_pos_region_percent'
-                summary_pos = group_data.groupby('timepoint')[col_pos].agg(['mean', 'sem'])
-                tp = summary_pos.index.values
-                means_pos = summary_pos['mean'].values
-                sems_pos = summary_pos['sem'].values
+            # Also create distance plots if distance columns exist
+            dist_pos_col = f'{immune_pop}_mean_dist_to_pos'
+            dist_neg_col = f'{immune_pop}_mean_dist_to_neg'
 
-                ax.plot(tp, means_pos, '-o', color=color, linewidth=2.5,
-                       markersize=8, label=f'{group} ({marker}+)', zorder=10)
-                ax.fill_between(tp, means_pos - sems_pos, means_pos + sems_pos,
-                               alpha=0.2, color=color)
+            if dist_pos_col in regional_infiltration_df.columns and dist_neg_col in regional_infiltration_df.columns:
+                dist_data_list = []
 
-                # Plot marker- region
-                col_neg = f'{immune_pop}_in_neg_region_percent'
-                summary_neg = group_data.groupby('timepoint')[col_neg].agg(['mean', 'sem'])
-                means_neg = summary_neg['mean'].values
-                sems_neg = summary_neg['sem'].values
+                for idx, row in regional_infiltration_df.iterrows():
+                    if not pd.isna(row[dist_pos_col]):
+                        dist_data_list.append({
+                            'sample_id': row['sample_id'],
+                            'timepoint': row.get('timepoint', 1),
+                            'main_group': row.get('main_group', ''),
+                            'region_type': f'{marker}+',
+                            'distance': row[dist_pos_col]
+                        })
 
-                ax.plot(tp, means_neg, '--s', color=color, linewidth=2,
-                       markersize=6, label=f'{group} ({marker}-)', zorder=9, alpha=0.7)
-                ax.fill_between(tp, means_neg - sems_neg, means_neg + sems_neg,
-                               alpha=0.1, color=color)
+                    if not pd.isna(row[dist_neg_col]):
+                        dist_data_list.append({
+                            'sample_id': row['sample_id'],
+                            'timepoint': row.get('timepoint', 1),
+                            'main_group': row.get('main_group', ''),
+                            'region_type': f'{marker}-',
+                            'distance': row[dist_neg_col]
+                        })
 
-            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
-            ax.set_ylabel('% Immune in Region', fontsize=11, fontweight='bold')
-            ax.set_title(f'{immune_pop}: % in {marker}+ vs {marker}- Regions',
-                        fontsize=12, fontweight='bold')
-            ax.legend(frameon=True, loc='best', fontsize=9)
-            ax.grid(True, alpha=0.3)
+                if dist_data_list:
+                    dist_data = pd.DataFrame(dist_data_list)
 
-            # Panel 2: Mean distance
-            ax = axes[pop_idx, 1]
+                    output_base = str(self.plots_dir / f'{marker}_{immune_pop}_distance_to_region')
+                    create_dual_plots(
+                        dist_data,
+                        value_col='distance',
+                        group_col='region_type',
+                        timepoint_col='timepoint',
+                        group_colors={f'{marker}+': self.group_colors.get('KPT', '#E41A1C'),
+                                    f'{marker}-': '#999999'},
+                        title_base=f'{immune_pop}: Distance to {marker}+ vs {marker}- Regions',
+                        ylabel='Mean Distance (μm)',
+                        xlabel=self.timepoint_label,
+                        output_path_base=output_base
+                    )
 
-            agg_data = pop_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
-                f'{immune_pop}_mean_dist_to_pos': 'mean',
-                f'{immune_pop}_mean_dist_to_neg': 'mean'
-            }).reset_index()
-
-            for group in groups:
-                group_data = agg_data[agg_data['main_group'] == group]
-
-                if len(group_data) == 0:
-                    continue
-
-                color = self.group_colors.get(group, '#000000')
-
-                # Plot distance to marker+ region
-                col_pos = f'{immune_pop}_mean_dist_to_pos'
-                plot_data_pos = group_data[~group_data[col_pos].isna()]
-                if len(plot_data_pos) > 0:
-                    summary_pos = plot_data_pos.groupby('timepoint')[col_pos].agg(['mean', 'sem'])
-                    tp = summary_pos.index.values
-                    means_pos = summary_pos['mean'].values
-                    sems_pos = summary_pos['sem'].values
-
-                    ax.plot(tp, means_pos, '-o', color=color, linewidth=2.5,
-                           markersize=8, label=f'{group} (to {marker}+)', zorder=10)
-                    ax.fill_between(tp, means_pos - sems_pos, means_pos + sems_pos,
-                                   alpha=0.2, color=color)
-
-                # Plot distance to marker- region
-                col_neg = f'{immune_pop}_mean_dist_to_neg'
-                plot_data_neg = group_data[~group_data[col_neg].isna()]
-                if len(plot_data_neg) > 0:
-                    summary_neg = plot_data_neg.groupby('timepoint')[col_neg].agg(['mean', 'sem'])
-                    tp = summary_neg.index.values
-                    means_neg = summary_neg['mean'].values
-                    sems_neg = summary_neg['sem'].values
-
-                    ax.plot(tp, means_neg, '--s', color=color, linewidth=2,
-                           markersize=6, label=f'{group} (to {marker}-)', zorder=9, alpha=0.7)
-                    ax.fill_between(tp, means_neg - sems_neg, means_neg + sems_neg,
-                                   alpha=0.1, color=color)
-
-            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
-            ax.set_ylabel('Mean Distance (μm)', fontsize=11, fontweight='bold')
-            ax.set_title(f'{immune_pop}: Distance to {marker}+ vs {marker}- Regions',
-                        fontsize=12, fontweight='bold')
-            ax.legend(frameon=True, loc='best', fontsize=9)
-            ax.grid(True, alpha=0.3)
-
-        plt.suptitle(f'{marker} Regional Infiltration Analysis',
-                    fontsize=16, fontweight='bold')
-        plt.tight_layout()
-
-        plot_path = self.plots_dir / f'{marker}_regional_infiltration.png'
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-        print(f"    ✓ Saved {marker} regional infiltration plot: {plot_path.name}")
+                    print(f"    ✓ Saved {marker} {immune_pop} distance plots (with and without stats)")
 
     def plot_regional_neighborhoods(self, regional_neighborhoods_df: pd.DataFrame, marker: str):
         """
@@ -200,6 +189,7 @@ class EnhancedNeighborhoodPlotter:
             Marker name
         """
         if regional_neighborhoods_df is None or len(regional_neighborhoods_df) == 0:
+            print(f"    ⚠ No data for {marker} regional neighborhoods")
             return
 
         # Get cell type columns
@@ -207,6 +197,7 @@ class EnhancedNeighborhoodPlotter:
                          if col.startswith('pos_region_') and col.endswith('_fraction')]
 
         if not cell_type_cols:
+            print(f"    ⚠ No cell type columns found for {marker} regional neighborhoods")
             return
 
         # Extract cell type names
@@ -220,89 +211,54 @@ class EnhancedNeighborhoodPlotter:
         if not available_key_types:
             available_key_types = cell_types[:4]  # Take first 4
 
-        n_types = len(available_key_types)
-        groups = sorted(regional_neighborhoods_df['main_group'].unique())
-
-        fig, axes = plt.subplots(2, n_types, figsize=(6*n_types, 10))
-
-        if n_types == 1:
-            axes = axes.reshape(-1, 1)
-
-        for type_idx, cell_type in enumerate(available_key_types):
+        # Create plots for each cell type
+        for cell_type in available_key_types:
             col_pos = f'pos_region_{cell_type}_fraction'
             col_neg = f'neg_region_{cell_type}_fraction'
 
-            # Panel 1: Marker+ region
-            ax = axes[0, type_idx]
+            if col_pos not in regional_neighborhoods_df.columns or col_neg not in regional_neighborhoods_df.columns:
+                continue
 
-            for group in groups:
-                group_data = regional_neighborhoods_df[
-                    regional_neighborhoods_df['main_group'] == group
-                ]
+            # Prepare data for plotting
+            plot_data_list = []
 
-                if len(group_data) == 0 or col_pos not in group_data.columns:
-                    continue
+            for idx, row in regional_neighborhoods_df.iterrows():
+                # Marker+ region
+                plot_data_list.append({
+                    'sample_id': row['sample_id'],
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', ''),
+                    'region_type': f'{marker}+',
+                    'fraction': row[col_pos] * 100  # Convert to percent
+                })
 
-                summary = group_data.groupby('timepoint')[col_pos].agg(['mean', 'sem'])
-                tp = summary.index.values
-                means = summary['mean'].values
-                sems = summary['sem'].values
+                # Marker- region
+                plot_data_list.append({
+                    'sample_id': row['sample_id'],
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', ''),
+                    'region_type': f'{marker}-',
+                    'fraction': row[col_neg] * 100  # Convert to percent
+                })
 
-                color = self.group_colors.get(group, '#000000')
+            plot_data = pd.DataFrame(plot_data_list)
 
-                ax.plot(tp, means * 100, '-o', color=color, linewidth=2.5,
-                       markersize=8, label=group, zorder=10)
-                ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
-                               alpha=0.2, color=color)
+            # Create dual plots (with and without stats)
+            output_base = str(self.plots_dir / f'{marker}_{cell_type}_neighborhood_composition')
+            create_dual_plots(
+                plot_data,
+                value_col='fraction',
+                group_col='region_type',
+                timepoint_col='timepoint',
+                group_colors={f'{marker}+': self.group_colors.get('KPT', '#E41A1C'),
+                            f'{marker}-': '#999999'},
+                title_base=f'{cell_type}: Neighborhood Composition in {marker}+ vs {marker}- Regions',
+                ylabel='% of Neighborhood',
+                xlabel=self.timepoint_label,
+                output_path_base=output_base
+            )
 
-            ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
-            ax.set_ylabel('% of Neighborhood', fontsize=10, fontweight='bold')
-            ax.set_title(f'{cell_type}\nin {marker}+ Regions',
-                        fontsize=11, fontweight='bold')
-            if type_idx == 0:
-                ax.legend(frameon=True, loc='best', fontsize=9)
-            ax.grid(True, alpha=0.3)
-
-            # Panel 2: Marker- region
-            ax = axes[1, type_idx]
-
-            for group in groups:
-                group_data = regional_neighborhoods_df[
-                    regional_neighborhoods_df['main_group'] == group
-                ]
-
-                if len(group_data) == 0 or col_neg not in group_data.columns:
-                    continue
-
-                summary = group_data.groupby('timepoint')[col_neg].agg(['mean', 'sem'])
-                tp = summary.index.values
-                means = summary['mean'].values
-                sems = summary['sem'].values
-
-                color = self.group_colors.get(group, '#000000')
-
-                ax.plot(tp, means * 100, '-o', color=color, linewidth=2.5,
-                       markersize=8, label=group, zorder=10)
-                ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
-                               alpha=0.2, color=color)
-
-            ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
-            ax.set_ylabel('% of Neighborhood', fontsize=10, fontweight='bold')
-            ax.set_title(f'{cell_type}\nin {marker}- Regions',
-                        fontsize=11, fontweight='bold')
-            if type_idx == 0:
-                ax.legend(frameon=True, loc='best', fontsize=9)
-            ax.grid(True, alpha=0.3)
-
-        plt.suptitle(f'{marker}: Neighborhood Composition Comparison',
-                    fontsize=16, fontweight='bold')
-        plt.tight_layout()
-
-        plot_path = self.plots_dir / f'{marker}_regional_neighborhoods.png'
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-        print(f"    ✓ Saved {marker} regional neighborhoods plot: {plot_path.name}")
+        print(f"    ✓ Saved {marker} regional neighborhood plots (with and without stats)")
 
     def plot_per_cell_neighborhoods(self, per_cell_df: pd.DataFrame, marker: str):
         """
@@ -311,11 +267,12 @@ class EnhancedNeighborhoodPlotter:
         Parameters
         ----------
         per_cell_df : pd.DataFrame
-            Per-cell neighborhood data
+            Per-cell neighborhood data (summary or individual)
         marker : str
             Marker name
         """
         if per_cell_df is None or len(per_cell_df) == 0:
+            print(f"    ⚠ No data for {marker} per-cell neighborhoods")
             return
 
         # Get cell type columns
@@ -323,6 +280,7 @@ class EnhancedNeighborhoodPlotter:
                         if col.startswith('neighbor_') and col.endswith('_fraction')]
 
         if not neighbor_cols:
+            print(f"    ⚠ No neighbor columns found for {marker} per-cell neighborhoods")
             return
 
         cell_types = [col.replace('neighbor_', '').replace('_fraction', '')
@@ -335,69 +293,48 @@ class EnhancedNeighborhoodPlotter:
         if not available_key_types:
             available_key_types = cell_types[:4]
 
-        n_types = len(available_key_types)
-        groups = sorted(per_cell_df['main_group'].unique())
-
-        fig, axes = plt.subplots(1, n_types, figsize=(6*n_types, 5))
-
-        if n_types == 1:
-            axes = [axes]
-
-        for type_idx, cell_type in enumerate(available_key_types):
-            ax = axes[type_idx]
+        # Create plots for each cell type
+        for cell_type in available_key_types:
             col = f'neighbor_{cell_type}_fraction'
 
-            for group in groups:
-                group_data = per_cell_df[per_cell_df['main_group'] == group]
+            if col not in per_cell_df.columns:
+                continue
 
-                if len(group_data) == 0 or col not in group_data.columns:
-                    continue
+            # Prepare data for plotting
+            plot_data_list = []
 
-                color = self.group_colors.get(group, '#000000')
+            for idx, row in per_cell_df.iterrows():
+                marker_status = row.get('cell_marker_status', 'unknown')
 
-                # Plot marker+ cells
-                pos_data = group_data[group_data['cell_marker_status'] == 'positive']
-                if len(pos_data) > 0:
-                    summary_pos = pos_data.groupby('timepoint')[col].agg(['mean', 'sem'])
-                    tp = summary_pos.index.values
-                    means = summary_pos['mean'].values
-                    sems = summary_pos['sem'].values
+                plot_data_list.append({
+                    'sample_id': row.get('sample_id', ''),
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', ''),
+                    'marker_status': f'{marker}+' if marker_status == 'positive' else f'{marker}-',
+                    'fraction': row[col] * 100  # Convert to percent
+                })
 
-                    ax.plot(tp, means * 100, '-o', color=color, linewidth=2.5,
-                           markersize=8, label=f'{group} ({marker}+)', zorder=10)
-                    ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
-                                   alpha=0.2, color=color)
+            plot_data = pd.DataFrame(plot_data_list)
 
-                # Plot marker- cells
-                neg_data = group_data[group_data['cell_marker_status'] == 'negative']
-                if len(neg_data) > 0:
-                    summary_neg = neg_data.groupby('timepoint')[col].agg(['mean', 'sem'])
-                    tp = summary_neg.index.values
-                    means = summary_neg['mean'].values
-                    sems = summary_neg['sem'].values
+            if len(plot_data) == 0:
+                continue
 
-                    ax.plot(tp, means * 100, '--s', color=color, linewidth=2,
-                           markersize=6, label=f'{group} ({marker}-)', zorder=9, alpha=0.7)
-                    ax.fill_between(tp, (means - sems) * 100, (means + sems) * 100,
-                                   alpha=0.1, color=color)
+            # Create dual plots (with and without stats)
+            output_base = str(self.plots_dir / f'{marker}_{cell_type}_per_cell_neighborhood')
+            create_dual_plots(
+                plot_data,
+                value_col='fraction',
+                group_col='marker_status',
+                timepoint_col='timepoint',
+                group_colors={f'{marker}+': self.group_colors.get('KPT', '#E41A1C'),
+                            f'{marker}-': '#999999'},
+                title_base=f'{cell_type}: Per-Cell Neighborhood ({marker}+ vs {marker}- cells)',
+                ylabel='% of Local Neighborhood',
+                xlabel=self.timepoint_label,
+                output_path_base=output_base
+            )
 
-            ax.set_xlabel(self.timepoint_label, fontsize=10, fontweight='bold')
-            ax.set_ylabel('% of Neighborhood', fontsize=10, fontweight='bold')
-            ax.set_title(f'{cell_type} in\nLocal Neighborhood',
-                        fontsize=11, fontweight='bold')
-            if type_idx == 0:
-                ax.legend(frameon=True, loc='best', fontsize=8)
-            ax.grid(True, alpha=0.3)
-
-        plt.suptitle(f'{marker}: Per-Cell Neighborhood Comparison',
-                    fontsize=16, fontweight='bold')
-        plt.tight_layout()
-
-        plot_path = self.plots_dir / f'{marker}_per_cell_neighborhoods.png'
-        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-        print(f"    ✓ Saved {marker} per-cell neighborhoods plot: {plot_path.name}")
+        print(f"    ✓ Saved {marker} per-cell neighborhood plots (with and without stats)")
 
     def generate_all_plots(self, results: Dict):
         """
