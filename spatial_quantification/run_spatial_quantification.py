@@ -227,7 +227,7 @@ def main():
 
     # NEW: Coexpression Analysis
     if HAS_NEW_ANALYSES and config.get('coexpression_analysis', {}).get('enabled', False):
-        coexpression = CoexpressionAnalysis(adata, config, output_dir)
+        coexpression = CoexpressionAnalysis(adata, config, output_dir, tumor_structures=tumor_structures)
         all_results['coexpression_analysis'] = coexpression.run()
 
     # NEW: Enhanced Neighborhood Analysis (marker-specific regions)

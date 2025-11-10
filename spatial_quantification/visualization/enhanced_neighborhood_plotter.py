@@ -336,6 +336,317 @@ class EnhancedNeighborhoodPlotter:
 
         print(f"    ✓ Saved {marker} per-cell neighborhood plots (with and without stats)")
 
+    def plot_comprehensive_immune_composition(self, regional_infiltration_df: pd.DataFrame, marker: str):
+        """
+        Create comprehensive immune composition plots for marker+ vs marker- regions.
+
+        Two versions:
+        1. Simple: marker+ vs marker- only
+        2. Detailed: marker+ vs marker- separated by group (KPT/KPNT)
+        """
+        if regional_infiltration_df is None or len(regional_infiltration_df) == 0:
+            return
+
+        # Detect immune populations
+        immune_cols = [col for col in regional_infiltration_df.columns
+                      if col.endswith('_in_pos_region_percent')]
+        if not immune_cols:
+            return
+
+        immune_pops = [col.replace('_in_pos_region_percent', '') for col in immune_cols]
+
+        # Version 1: Simple comparison (marker+ vs marker-)
+        self._plot_immune_composition_simple(regional_infiltration_df, marker, immune_pops)
+
+        # Version 2: Detailed comparison (marker+/- x KPT/KPNT)
+        self._plot_immune_composition_detailed(regional_infiltration_df, marker, immune_pops)
+
+        # Heatmap of immune composition
+        self._plot_immune_composition_heatmap(regional_infiltration_df, marker, immune_pops)
+
+    def _plot_immune_composition_simple(self, df: pd.DataFrame, marker: str, immune_pops: List[str]):
+        """Side-by-side boxplots: marker+ vs marker- for all immune populations."""
+
+        # Prepare data for all immune populations
+        plot_data_list = []
+
+        for immune_pop in immune_pops:
+            pos_col = f'{immune_pop}_in_pos_region_percent'
+            neg_col = f'{immune_pop}_in_neg_region_percent'
+
+            if pos_col not in df.columns or neg_col not in df.columns:
+                continue
+
+            for idx, row in df.iterrows():
+                # Marker+ region
+                plot_data_list.append({
+                    'immune_population': immune_pop,
+                    'region_type': f'{marker}+',
+                    'percent': row[pos_col],
+                    'sample_id': row['sample_id'],
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', '')
+                })
+
+                # Marker- region
+                plot_data_list.append({
+                    'immune_population': immune_pop,
+                    'region_type': f'{marker}-',
+                    'percent': row[neg_col],
+                    'sample_id': row['sample_id'],
+                    'timepoint': row.get('timepoint', 1),
+                    'main_group': row.get('main_group', '')
+                })
+
+        if not plot_data_list:
+            return
+
+        plot_df = pd.DataFrame(plot_data_list)
+
+        # Create subplots for each immune population
+        n_pops = len(immune_pops)
+        fig, axes = plt.subplots(1, n_pops, figsize=(5*n_pops, 6))
+
+        if n_pops == 1:
+            axes = [axes]
+
+        for idx, immune_pop in enumerate(immune_pops):
+            ax = axes[idx]
+            pop_data = plot_df[plot_df['immune_population'] == immune_pop]
+
+            # Create boxplot
+            region_types = [f'{marker}+', f'{marker}-']
+            positions = [0, 1]
+            box_data = []
+            colors = []
+
+            for region_type in region_types:
+                data = pop_data[pop_data['region_type'] == region_type]['percent'].dropna()
+                box_data.append(data)
+                if region_type == f'{marker}+':
+                    colors.append(self.group_colors.get('KPT', '#E41A1C'))
+                else:
+                    colors.append('#999999')
+
+            bp = ax.boxplot(box_data, positions=positions, widths=0.6,
+                           patch_artist=True, showfliers=True,
+                           boxprops=dict(linewidth=1.5),
+                           whiskerprops=dict(linewidth=1.5),
+                           capprops=dict(linewidth=1.5),
+                           medianprops=dict(linewidth=2, color='black'))
+
+            for patch, color in zip(bp['boxes'], colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+
+            # Add individual points
+            for pos, region_type, color in zip(positions, region_types, colors):
+                data = pop_data[pop_data['region_type'] == region_type]['percent'].dropna()
+                x = np.random.normal(pos, 0.04, size=len(data))
+                ax.scatter(x, data, alpha=0.4, s=30, color=color, zorder=5)
+
+            # Add statistics
+            from scipy import stats
+            if len(box_data[0]) >= 2 and len(box_data[1]) >= 2:
+                stat, pval = stats.mannwhitneyu(box_data[0], box_data[1], alternative='two-sided')
+                if pval < 0.001:
+                    sig = '***'
+                elif pval < 0.01:
+                    sig = '**'
+                elif pval < 0.05:
+                    sig = '*'
+                else:
+                    sig = 'ns'
+
+                y_max = max([d.max() for d in box_data])
+                y_range = y_max - min([d.min() for d in box_data])
+                y_bracket = y_max + y_range * 0.05
+                h = y_range * 0.02
+
+                ax.plot([0, 0, 1, 1], [y_bracket, y_bracket+h, y_bracket+h, y_bracket],
+                       lw=1.5, c='black')
+                ax.text(0.5, y_bracket+h, sig,
+                       ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+            ax.set_xticks(positions)
+            ax.set_xticklabels(region_types, fontsize=10)
+            ax.set_ylabel('% in Region', fontsize=11, fontweight='bold')
+            ax.set_title(immune_pop.replace('_', ' '), fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3, axis='y')
+
+        plt.suptitle(f'{marker}: Immune Composition ({marker}+ vs {marker}- Regions)',
+                    fontsize=14, fontweight='bold')
+        plt.tight_layout()
+
+        plot_path = self.plots_dir / f'{marker}_immune_composition_simple.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        print(f"    ✓ Saved {marker} immune composition (simple) plot")
+
+    def _plot_immune_composition_detailed(self, df: pd.DataFrame, marker: str, immune_pops: List[str]):
+        """Side-by-side boxplots: marker+/- x KPT/KPNT for all immune populations."""
+
+        if 'main_group' not in df.columns:
+            return
+
+        groups = sorted(df['main_group'].unique())
+        if len(groups) < 2:
+            return
+
+        # Prepare data
+        plot_data_list = []
+
+        for immune_pop in immune_pops:
+            pos_col = f'{immune_pop}_in_pos_region_percent'
+            neg_col = f'{immune_pop}_in_neg_region_percent'
+
+            if pos_col not in df.columns or neg_col not in df.columns:
+                continue
+
+            for idx, row in df.iterrows():
+                group = row.get('main_group', '')
+
+                # Marker+ region
+                plot_data_list.append({
+                    'immune_population': immune_pop,
+                    'category': f'{marker}+ {group}',
+                    'percent': row[pos_col],
+                    'sample_id': row['sample_id'],
+                    'region_type': f'{marker}+',
+                    'main_group': group
+                })
+
+                # Marker- region
+                plot_data_list.append({
+                    'immune_population': immune_pop,
+                    'category': f'{marker}- {group}',
+                    'percent': row[neg_col],
+                    'sample_id': row['sample_id'],
+                    'region_type': f'{marker}-',
+                    'main_group': group
+                })
+
+        if not plot_data_list:
+            return
+
+        plot_df = pd.DataFrame(plot_data_list)
+
+        # Create subplots
+        n_pops = len(immune_pops)
+        fig, axes = plt.subplots(1, n_pops, figsize=(6*n_pops, 6))
+
+        if n_pops == 1:
+            axes = [axes]
+
+        for idx, immune_pop in enumerate(immune_pops):
+            ax = axes[idx]
+            pop_data = plot_df[plot_df['immune_population'] == immune_pop]
+
+            # Categories: marker+/- x group
+            categories = []
+            for group in groups:
+                categories.append(f'{marker}+ {group}')
+            for group in groups:
+                categories.append(f'{marker}- {group}')
+
+            positions = list(range(len(categories)))
+            box_data = []
+            colors = []
+
+            for cat in categories:
+                data = pop_data[pop_data['category'] == cat]['percent'].dropna()
+                box_data.append(data)
+
+                # Color by group
+                if 'KPT' in cat:
+                    color = self.group_colors.get('KPT', '#E41A1C')
+                elif 'KPNT' in cat:
+                    color = self.group_colors.get('KPNT', '#377EB8')
+                else:
+                    color = '#999999'
+
+                # Lighter for marker- regions
+                if f'{marker}-' in cat:
+                    colors.append(color + '80')  # Add alpha
+                else:
+                    colors.append(color)
+
+            bp = ax.boxplot(box_data, positions=positions, widths=0.6,
+                           patch_artist=True, showfliers=True,
+                           boxprops=dict(linewidth=1.5),
+                           whiskerprops=dict(linewidth=1.5),
+                           capprops=dict(linewidth=1.5),
+                           medianprops=dict(linewidth=2, color='black'))
+
+            for patch, color in zip(bp['boxes'], colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+
+            # Add individual points
+            for pos, cat, color in zip(positions, categories, colors):
+                data = pop_data[pop_data['category'] == cat]['percent'].dropna()
+                x = np.random.normal(pos, 0.04, size=len(data))
+                ax.scatter(x, data, alpha=0.4, s=30, color=color, zorder=5)
+
+            ax.set_xticks(positions)
+            ax.set_xticklabels([cat.replace(f'{marker}+', '+').replace(f'{marker}-', '-')
+                               for cat in categories], rotation=45, ha='right', fontsize=9)
+            ax.set_ylabel('% in Region', fontsize=11, fontweight='bold')
+            ax.set_title(immune_pop.replace('_', ' '), fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3, axis='y')
+
+        plt.suptitle(f'{marker}: Immune Composition by Group ({marker}+/- x KPT/KPNT)',
+                    fontsize=14, fontweight='bold')
+        plt.tight_layout()
+
+        plot_path = self.plots_dir / f'{marker}_immune_composition_detailed.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        print(f"    ✓ Saved {marker} immune composition (detailed) plot")
+
+    def _plot_immune_composition_heatmap(self, df: pd.DataFrame, marker: str, immune_pops: List[str]):
+        """Heatmap of immune composition in marker+ vs marker- regions."""
+
+        # Calculate mean percentages
+        heatmap_data = []
+
+        for immune_pop in immune_pops:
+            pos_col = f'{immune_pop}_in_pos_region_percent'
+            neg_col = f'{immune_pop}_in_neg_region_percent'
+
+            if pos_col not in df.columns or neg_col not in df.columns:
+                continue
+
+            row_data = {
+                'Immune Population': immune_pop.replace('_', ' '),
+                f'{marker}+ Region': df[pos_col].mean(),
+                f'{marker}- Region': df[neg_col].mean()
+            }
+            heatmap_data.append(row_data)
+
+        if not heatmap_data:
+            return
+
+        heatmap_df = pd.DataFrame(heatmap_data).set_index('Immune Population')
+
+        fig, ax = plt.subplots(figsize=(8, len(immune_pops)*0.8))
+        sns.heatmap(heatmap_df, annot=True, fmt='.1f', cmap='YlOrRd',
+                   cbar_kws={'label': '% in Region'}, ax=ax,
+                   linewidths=0.5, linecolor='gray')
+        ax.set_title(f'{marker}: Immune Composition Heatmap',
+                    fontsize=14, fontweight='bold')
+        ax.set_ylabel('')
+
+        plt.tight_layout()
+
+        plot_path = self.plots_dir / f'{marker}_immune_composition_heatmap.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        print(f"    ✓ Saved {marker} immune composition heatmap")
+
     def generate_all_plots(self, results: Dict):
         """
         Generate all enhanced neighborhood visualization plots.
@@ -366,6 +677,8 @@ class EnhancedNeighborhoodPlotter:
             key = f'{marker}_regional_infiltration'
             if key in results:
                 self.plot_regional_infiltration(results[key], marker)
+                # Add comprehensive immune composition plots
+                self.plot_comprehensive_immune_composition(results[key], marker)
             else:
                 print(f"    ⚠ {key} not found in results")
 
