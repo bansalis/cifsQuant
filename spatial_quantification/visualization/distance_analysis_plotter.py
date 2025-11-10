@@ -10,7 +10,15 @@ import numpy as np
 from pathlib import Path
 from scipy import stats
 from typing import Dict, List, Optional
+import warnings
 from ..stats.plot_stats import add_significance_bars, perform_pairwise_tests, get_significance_symbol
+
+try:
+    from .plot_utils import detect_plot_type, create_dual_plots, calculate_statistics
+    HAS_PLOT_UTILS = True
+except ImportError:
+    HAS_PLOT_UTILS = False
+    warnings.warn("Plot utilities not available")
 
 
 class DistanceAnalysisPlotter:
@@ -34,7 +42,7 @@ class DistanceAnalysisPlotter:
 
         # Get plotting config
         plotting_config = config.get('plotting', {})
-        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (days)')
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
         self.show_stats = plotting_config.get('show_stats', True)
         self.stat_method = plotting_config.get('stat_method', 'mann_whitney')
         self.fdr_correction = plotting_config.get('fdr_correction', True)
@@ -129,7 +137,7 @@ class DistanceAnalysisPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
         ax.set_ylabel('Mean Distance (μm)', fontsize=12, fontweight='bold')
         ax.set_title('Distance Over Time', fontsize=13, fontweight='bold')
         ax.legend(frameon=True, loc='best')
@@ -202,7 +210,7 @@ class DistanceAnalysisPlotter:
             ax.set_xticks([i + width/2 for i in range(len(timepoints))])
             ax.set_xticklabels([str(tp) for tp in timepoints])
 
-        ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
         ax.set_ylabel('Distance (μm)', fontsize=12, fontweight='bold')
         ax.set_title('Box Plots by Timepoint', fontsize=13, fontweight='bold')
 
@@ -244,7 +252,7 @@ class DistanceAnalysisPlotter:
             ax.set_xticks([i + width/2 for i in range(len(timepoints))])
             ax.set_xticklabels([str(tp) for tp in timepoints])
 
-        ax.set_xlabel('Timepoint (days)', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Timepoint', fontsize=12, fontweight='bold')
         ax.set_ylabel('Distance (μm)', fontsize=12, fontweight='bold')
         ax.set_title('Violin Plots by Timepoint', fontsize=13, fontweight='bold')
 
@@ -280,7 +288,7 @@ class DistanceAnalysisPlotter:
             ax.fill_between(timepoints, means - sems, means + sems,
                            alpha=0.2, color=color)
 
-        ax.set_xlabel('Time (days)', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Time (weeks)', fontsize=14, fontweight='bold')
         ax.set_ylabel('Distance (μm)', fontsize=14, fontweight='bold')
         ax.legend(frameon=False, loc='best', fontsize=12)
         ax.spines['top'].set_visible(False)
