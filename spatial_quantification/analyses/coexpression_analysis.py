@@ -39,7 +39,7 @@ class CoexpressionAnalysis:
     - Group comparisons
     """
 
-    def __init__(self, adata, config: Dict, output_dir: Path):
+    def __init__(self, adata, config: Dict, output_dir: Path, tumor_structures: Dict = None):
         """
         Initialize coexpression analysis.
 
@@ -51,6 +51,8 @@ class CoexpressionAnalysis:
             Configuration dictionary
         output_dir : Path
             Output directory
+        tumor_structures : dict, optional
+            Pre-computed tumor structures from PerTumorAnalysis
         """
         self.adata = adata
         self.config = config
@@ -58,6 +60,10 @@ class CoexpressionAnalysis:
         self.plots_dir = self.output_dir / 'plots'
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.plots_dir.mkdir(parents=True, exist_ok=True)
+
+        # Tumor structures
+        self.tumor_structures = tumor_structures
+        self.tumor_config = config.get('tumor_definition', {})
 
         # Markers to analyze - read from config
         coexp_config = config.get('coexpression_analysis', {})
@@ -318,10 +324,190 @@ class CoexpressionAnalysis:
             print(f"    ✓ Calculated multi-marker coexpression for {len(results)} samples ({n_markers} markers)")
 
     def _calculate_per_tumor_coexpression(self):
-        """Calculate coexpression per tumor structure."""
-        # This requires tumor structures - check if available
-        # For now, we'll skip if not implemented
-        print("    ⚠ Per-tumor coexpression requires tumor structure detection (skipped for now)")
+        """Calculate coexpression per tumor structure (each tumor gets one data point)."""
+        if not self.tumor_structures:
+            print("    ⚠ Tumor structures not available - detecting now...")
+            self._detect_tumor_structures()
+
+        if not self.tumor_structures:
+            print("    ⚠ Could not detect tumor structures - skipping per-tumor analysis")
+            return
+
+        tumor_col = 'is_Tumor'
+        marker_names = list(self.markers.keys())
+        n_markers = len(marker_names)
+
+        # Per-tumor single marker frequencies
+        single_marker_results = []
+        # Per-tumor pairwise coexpression
+        pairwise_results = []
+        # Per-tumor multi-marker coexpression
+        multi_marker_results = []
+
+        for sample, structure_labels in self.tumor_structures.items():
+            sample_mask = self.adata.obs['sample_id'] == sample
+            sample_data = self.adata.obs[sample_mask]
+
+            unique_structures = set(structure_labels) - {-1}  # Exclude noise
+
+            for structure_id in unique_structures:
+                structure_mask = structure_labels == structure_id
+                tumor_data = sample_data[structure_mask]
+
+                if len(tumor_data) == 0:
+                    continue
+
+                n_tumor_cells = len(tumor_data)
+
+                base_result = {
+                    'sample_id': sample,
+                    'tumor_id': int(structure_id),
+                    'n_tumor_cells': n_tumor_cells,
+                    'timepoint': tumor_data['timepoint'].iloc[0] if 'timepoint' in tumor_data.columns else np.nan,
+                    'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else '',
+                    'main_group': tumor_data['main_group'].iloc[0] if 'main_group' in tumor_data.columns else ''
+                }
+
+                # Single marker frequencies per tumor
+                single_result = base_result.copy()
+                for marker_name, marker_col in self.markers.items():
+                    if marker_col in tumor_data.columns:
+                        n_positive = tumor_data[marker_col].sum()
+                        freq = n_positive / n_tumor_cells * 100 if n_tumor_cells > 0 else 0
+                        single_result[f'{marker_name}_count'] = int(n_positive)
+                        single_result[f'{marker_name}_percent'] = freq
+                single_marker_results.append(single_result)
+
+                # Pairwise coexpression per tumor
+                pairwise_result = base_result.copy()
+                marker_pairs = list(combinations(marker_names, 2))
+                for marker1, marker2 in marker_pairs:
+                    col1 = self.markers[marker1]
+                    col2 = self.markers[marker2]
+
+                    if col1 in tumor_data.columns and col2 in tumor_data.columns:
+                        both_pos = (tumor_data[col1] & tumor_data[col2]).sum()
+                        either_pos = (tumor_data[col1] | tumor_data[col2]).sum()
+
+                        percent_both = both_pos / n_tumor_cells * 100 if n_tumor_cells > 0 else 0
+
+                        marker1_pos = tumor_data[col1].sum()
+                        percent_of_marker1 = both_pos / marker1_pos * 100 if marker1_pos > 0 else 0
+
+                        marker2_pos = tumor_data[col2].sum()
+                        percent_of_marker2 = both_pos / marker2_pos * 100 if marker2_pos > 0 else 0
+
+                        jaccard = both_pos / either_pos if either_pos > 0 else 0
+
+                        pairwise_result[f'{marker1}_and_{marker2}_count'] = int(both_pos)
+                        pairwise_result[f'{marker1}_and_{marker2}_percent_of_tumor'] = percent_both
+                        pairwise_result[f'{marker1}_and_{marker2}_percent_of_{marker1}'] = percent_of_marker1
+                        pairwise_result[f'{marker1}_and_{marker2}_percent_of_{marker2}'] = percent_of_marker2
+                        pairwise_result[f'{marker1}_and_{marker2}_jaccard'] = jaccard
+                pairwise_results.append(pairwise_result)
+
+                # Multi-marker coexpression per tumor
+                multi_result = base_result.copy()
+                all_cols_present = all(self.markers[m] in tumor_data.columns for m in marker_names)
+
+                if all_cols_present:
+                    # All markers positive
+                    multi_pos_mask = pd.Series(True, index=tumor_data.index)
+                    for marker_name in marker_names:
+                        multi_pos_mask &= tumor_data[self.markers[marker_name]]
+                    multi_pos = multi_pos_mask.sum()
+                    multi_result[f'all_{n_markers}_positive_count'] = int(multi_pos)
+                    multi_result[f'all_{n_markers}_positive_percent'] = multi_pos / n_tumor_cells * 100
+
+                    # Individual marker-only counts
+                    for marker_name in marker_names:
+                        only_mask = tumor_data[self.markers[marker_name]].copy()
+                        for other_marker in marker_names:
+                            if other_marker != marker_name:
+                                only_mask &= ~tumor_data[self.markers[other_marker]]
+                        only_count = only_mask.sum()
+                        multi_result[f'{marker_name}_only_count'] = int(only_count)
+
+                    # Pairwise combinations
+                    if n_markers >= 2:
+                        for i, m1 in enumerate(marker_names):
+                            for m2 in marker_names[i+1:]:
+                                pair_mask = tumor_data[self.markers[m1]] & tumor_data[self.markers[m2]]
+                                for other_marker in marker_names:
+                                    if other_marker != m1 and other_marker != m2:
+                                        pair_mask &= ~tumor_data[self.markers[other_marker]]
+                                pair_count = pair_mask.sum()
+                                multi_result[f'{m1}_{m2}_only_count'] = int(pair_count)
+
+                    # All negative
+                    none_mask = pd.Series(True, index=tumor_data.index)
+                    for marker_name in marker_names:
+                        none_mask &= ~tumor_data[self.markers[marker_name]]
+                    none_count = none_mask.sum()
+                    multi_result['all_negative_count'] = int(none_count)
+
+                multi_marker_results.append(multi_result)
+
+        # Save results
+        if single_marker_results:
+            df = pd.DataFrame(single_marker_results)
+            self.results['per_tumor_single_marker_frequencies'] = df
+            print(f"    ✓ Calculated single marker frequencies for {len(single_marker_results)} tumors")
+
+        if pairwise_results:
+            df = pd.DataFrame(pairwise_results)
+            self.results['per_tumor_pairwise_coexpression'] = df
+            print(f"    ✓ Calculated pairwise coexpression for {len(pairwise_results)} tumors")
+
+        if multi_marker_results:
+            df = pd.DataFrame(multi_marker_results)
+            self.results['per_tumor_multi_marker_coexpression'] = df
+            print(f"    ✓ Calculated multi-marker coexpression for {len(multi_marker_results)} tumors")
+
+    def _detect_tumor_structures(self):
+        """Detect tumor structures using DBSCAN if not provided."""
+        from sklearn.cluster import DBSCAN
+
+        tumor_def = self.tumor_config
+        tumor_pheno = tumor_def.get('base_phenotype', 'Tumor')
+        tumor_col = f'is_{tumor_pheno}'
+
+        if tumor_col not in self.adata.obs.columns:
+            print(f"    ⚠ Tumor phenotype '{tumor_pheno}' not found")
+            return
+
+        struct_config = tumor_def.get('structure_detection', {})
+        eps = struct_config.get('eps', 800)
+        min_samples = struct_config.get('min_samples', 250)
+        min_cluster_size = struct_config.get('min_cluster_size', 250)
+
+        self.tumor_structures = {}
+
+        for sample in self.adata.obs['sample_id'].unique():
+            sample_mask = self.adata.obs['sample_id'] == sample
+            sample_data = self.adata.obs[sample_mask]
+            sample_coords = self.adata.obsm['spatial'][sample_mask.values]
+
+            tumor_mask = sample_data[tumor_col].values
+            if tumor_mask.sum() < min_samples:
+                continue
+
+            tumor_coords = sample_coords[tumor_mask]
+            clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(tumor_coords)
+            labels = clustering.labels_
+
+            valid_labels = [label for label in set(labels) - {-1}
+                          if (labels == label).sum() >= min_cluster_size]
+
+            structure_labels = np.full(len(sample_data), -1)
+            tumor_indices = np.where(tumor_mask)[0]
+            for label in valid_labels:
+                cluster_mask = labels == label
+                structure_labels[tumor_indices[cluster_mask]] = label
+
+            self.tumor_structures[sample] = structure_labels
+
+        print(f"    ✓ Detected tumor structures for {len(self.tumor_structures)} samples")
 
     def _save_results(self):
         """Save all results to files."""
@@ -333,21 +519,137 @@ class CoexpressionAnalysis:
 
     def _generate_plots(self):
         """Generate visualization plots."""
-        # Plot 1: Single marker frequencies over time
-        if 'single_marker_frequencies' in self.results:
+        # Prioritize per-tumor plots if available
+        if 'per_tumor_single_marker_frequencies' in self.results:
+            self._plot_per_tumor_single_markers()
+        elif 'single_marker_frequencies' in self.results:
             self._plot_single_markers()
 
-        # Plot 2: Pairwise coexpression over time
-        if 'pairwise_coexpression' in self.results:
+        if 'per_tumor_pairwise_coexpression' in self.results:
+            self._plot_per_tumor_pairwise()
+        elif 'pairwise_coexpression' in self.results:
             self._plot_pairwise()
 
-        # Plot 3: Multi-marker coexpression patterns
-        if 'multi_marker_coexpression' in self.results:
+        if 'per_tumor_multi_marker_coexpression' in self.results:
+            self._plot_per_tumor_multi_marker()
+        elif 'multi_marker_coexpression' in self.results:
             self._plot_multi_marker_expression()
 
-        # Plot 4: Coexpression heatmap
-        if 'pairwise_coexpression' in self.results:
+        # Heatmap
+        if 'per_tumor_pairwise_coexpression' in self.results:
+            self._plot_per_tumor_coexpression_heatmap()
+        elif 'pairwise_coexpression' in self.results:
             self._plot_coexpression_heatmap()
+
+    def _plot_per_tumor_single_markers(self):
+        """Plot per-tumor single marker frequencies."""
+        df = self.results['per_tumor_single_marker_frequencies']
+        marker_names = list(self.markers.keys())
+
+        if HAS_PLOT_UTILS:
+            for marker in marker_names:
+                col = f'{marker}_percent'
+                if col not in df.columns:
+                    continue
+
+                output_base = str(self.plots_dir / f'per_tumor_{marker}_frequency')
+                create_dual_plots(
+                    df,
+                    value_col=col,
+                    group_col='main_group',
+                    timepoint_col='timepoint',
+                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    title_base=f'{marker} Frequency (per tumor)',
+                    ylabel='% of Tumor Cells',
+                    xlabel='',
+                    output_path_base=output_base
+                )
+            print(f"    ✓ Saved per-tumor single marker plots (with and without stats)")
+
+    def _plot_per_tumor_pairwise(self):
+        """Plot per-tumor pairwise coexpression."""
+        df = self.results['per_tumor_pairwise_coexpression']
+        marker_names = list(self.markers.keys())
+        pairs = list(combinations(marker_names, 2))
+
+        if HAS_PLOT_UTILS:
+            for m1, m2 in pairs:
+                col = f'{m1}_and_{m2}_percent_of_tumor'
+                if col not in df.columns:
+                    continue
+
+                output_base = str(self.plots_dir / f'per_tumor_{m1}_and_{m2}')
+                create_dual_plots(
+                    df,
+                    value_col=col,
+                    group_col='main_group',
+                    timepoint_col='timepoint',
+                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    title_base=f'{m1}+ AND {m2}+ (per tumor)',
+                    ylabel='% of Tumor Cells',
+                    xlabel='',
+                    output_path_base=output_base
+                )
+            print(f"    ✓ Saved per-tumor pairwise plots (with and without stats)")
+
+    def _plot_per_tumor_multi_marker(self):
+        """Plot per-tumor multi-marker coexpression."""
+        df = self.results['per_tumor_multi_marker_coexpression']
+        marker_names = list(self.markers.keys())
+        n_markers = len(marker_names)
+
+        if HAS_PLOT_UTILS:
+            # Plot all N positive
+            col = f'all_{n_markers}_positive_percent'
+            if col in df.columns:
+                output_base = str(self.plots_dir / f'per_tumor_all_{n_markers}_positive')
+                create_dual_plots(
+                    df,
+                    value_col=col,
+                    group_col='main_group',
+                    timepoint_col='timepoint',
+                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    title_base=f'All {n_markers} Markers Positive (per tumor)',
+                    ylabel='% of Tumor Cells',
+                    xlabel='',
+                    output_path_base=output_base
+                )
+            print(f"    ✓ Saved per-tumor multi-marker plots (with and without stats)")
+
+    def _plot_per_tumor_coexpression_heatmap(self):
+        """Plot heatmap of per-tumor coexpression patterns."""
+        df = self.results['per_tumor_pairwise_coexpression']
+        marker_names = list(self.markers.keys())
+        pairs = list(combinations(marker_names, 2))
+
+        # Calculate average Jaccard index per group
+        heatmap_data = []
+        groups = sorted(df['main_group'].unique())
+
+        for group in groups:
+            group_data = df[df['main_group'] == group]
+            row = {'group': group}
+            for m1, m2 in pairs:
+                col = f'{m1}_and_{m2}_jaccard'
+                if col in group_data.columns:
+                    row[f'{m1}+{m2}'] = group_data[col].mean()
+            heatmap_data.append(row)
+
+        if not heatmap_data:
+            return
+
+        heatmap_df = pd.DataFrame(heatmap_data).set_index('group')
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        sns.heatmap(heatmap_df, annot=True, fmt='.3f', cmap='YlOrRd',
+                   cbar_kws={'label': 'Jaccard Index'}, ax=ax)
+        ax.set_title('Per-Tumor Coexpression Similarity', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Group', fontsize=12, fontweight='bold')
+
+        plt.tight_layout()
+        plt.savefig(self.plots_dir / 'per_tumor_coexpression_heatmap.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"    ✓ Saved per-tumor coexpression heatmap")
 
     def _plot_single_markers(self):
         """Plot single marker frequencies with adaptive plot type and stats."""
