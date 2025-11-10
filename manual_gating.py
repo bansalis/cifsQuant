@@ -1204,52 +1204,106 @@ def auto_suggest_gates(adata):
 
 def gmm_gating(adata):
     """
-    2-component GMM gating following UniFORM paper.
+    Enhanced 2-component GMM gating with BIC-based quality assessment.
     Applied to normalized intensity data (NOT log-transformed).
+
+    Returns:
+    --------
+    gates : dict
+        Dictionary of gate values per marker
+    gate_metadata : dict
+        Dictionary containing BIC, std_from_neg, and marker_quality per marker
     """
     from sklearn.mixture import GaussianMixture
-    
+
     print("\n" + "="*70)
-    print("GMM-BASED GATING (auto-calculated)")
+    print("ENHANCED GMM-BASED GATING (auto-calculated)")
     print("="*70)
-    
+
     gates = {}
-    
+    gate_metadata = {}
+
     for marker in adata.var_names:
         marker_idx = adata.var_names.get_loc(marker)
-        
+
         # Global GMM across all samples (on aligned intensity scale)
         all_vals = adata.layers['aligned'][:, marker_idx]  # Use aligned, not log
         pos_vals = all_vals[all_vals > 0].reshape(-1, 1)
-        
+
         if len(pos_vals) < 1000:
             gates[marker] = np.percentile(pos_vals, 50)
+            gate_metadata[marker] = {
+                'gmm_bic': np.nan,
+                'std_from_neg': np.nan,
+                'marker_quality': 'insufficient_data'
+            }
             print(f"  {marker:8s}: insufficient data, using median={gates[marker]:.1f}")
             continue
-        
+
+        # Fit 1-component GMM (null model)
+        gmm1 = GaussianMixture(n_components=1, random_state=42, max_iter=200)
+        gmm1.fit(pos_vals)
+        bic1 = gmm1.bic(pos_vals)
+
         # Fit 2-component GMM
-        gmm = GaussianMixture(n_components=2, random_state=42, max_iter=200)
-        gmm.fit(pos_vals)
-        
+        gmm2 = GaussianMixture(n_components=2, random_state=42, max_iter=200)
+        gmm2.fit(pos_vals)
+        bic2 = gmm2.bic(pos_vals)
+
+        # Calculate BIC difference (positive = 2-component is better)
+        bic_diff = bic1 - bic2
+
         # Sort components by mean (low=negative, high=positive)
-        means = gmm.means_.flatten()
-        stds = np.sqrt(gmm.covariances_.flatten())
+        means = gmm2.means_.flatten()
+        stds = np.sqrt(gmm2.covariances_.flatten())
         order = np.argsort(means)
-        
-        # Threshold = midpoint between means
-        gate = float((means[order[0]] + means[order[1]]) / 2)
+
+        mean_neg = means[order[0]]
+        mean_pos = means[order[1]]
+        std_neg = stds[order[0]]
+        std_pos = stds[order[1]]
+
+        # Calculate separation in standard deviations
+        std_from_neg = (mean_pos - mean_neg) / std_neg
+
+        # Classify marker quality based on BIC
+        if bic_diff > 10:  # Strong evidence for 2 components
+            marker_quality = 'bimodal'
+            # Threshold = midpoint between means
+            gate = float((mean_neg + mean_pos) / 2)
+        elif bic_diff < -10:  # Strong evidence for 1 component (rare marker)
+            marker_quality = 'rare'
+            # Use conservative 99th percentile for rare markers
+            gate = float(np.percentile(pos_vals, 99))
+        else:  # Weak/ambiguous fit (possibly artifact)
+            marker_quality = 'artifact'
+            # Use 95th percentile for artifacts
+            gate = float(np.percentile(pos_vals, 95))
+
         gates[marker] = gate
-        
+        gate_metadata[marker] = {
+            'gmm_bic': float(bic_diff),
+            'std_from_neg': float(std_from_neg),
+            'marker_quality': marker_quality,
+            'mean_neg': float(mean_neg),
+            'mean_pos': float(mean_pos),
+            'std_neg': float(std_neg),
+            'std_pos': float(std_pos)
+        }
+
         # Calculate positive percentage
         pos_pct = (all_vals > gate).mean() * 100
-        
+
         print(f"  {marker:8s}: gate={gate:8.1f} | "
-              f"neg_μ={means[order[0]]:7.1f} (σ={stds[order[0]]:.1f}) | "
-              f"pos_μ={means[order[1]]:7.1f} (σ={stds[order[1]]:.1f}) | "
-              f"{pos_pct:5.1f}% positive")
-    
+              f"BIC_diff={bic_diff:7.1f} | "
+              f"quality={marker_quality:10s} | "
+              f"sep={std_from_neg:5.1f}σ | "
+              f"{pos_pct:5.1f}% pos")
+        print(f"             neg_μ={mean_neg:7.1f} (σ={std_neg:.1f}) | "
+              f"pos_μ={mean_pos:7.1f} (σ={std_pos:.1f})")
+
     print("="*70)
-    return gates
+    return gates, gate_metadata
 
 def density_based_gating(adata):
     """
@@ -1792,6 +1846,157 @@ def create_diagnostic_plots(adata, gates, output_dir):
     
     print(f"✓ Diagnostics saved to {plots_dir}")
 
+def create_tile_intensity_heatmaps(adata, output_dir):
+    """
+    Create diagnostic heatmaps showing per-tile-per-channel median intensities
+    before and after correction.
+
+    Parameters:
+    -----------
+    adata : AnnData
+        Data with tile_metrics_before and tile_metrics_after in uns
+    output_dir : Path
+        Output directory
+    """
+    if 'tile_metrics_before' not in adata.uns or 'tile_metrics_after' not in adata.uns:
+        print("⚠️  Tile metrics not found in adata.uns, skipping heatmap")
+        return
+
+    print("\n" + "="*70)
+    print("CREATING TILE INTENSITY HEATMAPS")
+    print("="*70)
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True, parents=True)
+
+    tile_metrics_before = adata.uns['tile_metrics_before']
+    tile_metrics_after = adata.uns['tile_metrics_after']
+    markers = adata.var_names.tolist()
+
+    for sample in adata.obs['sample_id'].unique():
+        if sample not in tile_metrics_before or sample not in tile_metrics_after:
+            continue
+
+        # Build matrices: rows = tiles, cols = markers
+        tiles_before = tile_metrics_before[sample]
+        tiles_after = tile_metrics_after[sample]
+
+        tile_ids = sorted(tiles_before.keys())
+        n_tiles = len(tile_ids)
+        n_markers = len(markers)
+
+        matrix_before = np.zeros((n_tiles, n_markers))
+        matrix_after = np.zeros((n_tiles, n_markers))
+
+        for i, tile_id in enumerate(tile_ids):
+            matrix_before[i, :] = tiles_before[tile_id]
+            matrix_after[i, :] = tiles_after[tile_id]
+
+        # Replace NaNs with 0 for visualization
+        matrix_before = np.nan_to_num(matrix_before, nan=0)
+        matrix_after = np.nan_to_num(matrix_after, nan=0)
+
+        # Create side-by-side heatmaps
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, max(6, n_tiles * 0.3)))
+
+        # Before correction
+        sns.heatmap(matrix_before, ax=ax1, cmap='viridis',
+                   xticklabels=markers, yticklabels=tile_ids,
+                   cbar_kws={'label': 'Median Intensity'})
+        ax1.set_title(f'{sample} - Before Correction')
+        ax1.set_xlabel('Marker')
+        ax1.set_ylabel('Tile ID')
+
+        # After correction
+        sns.heatmap(matrix_after, ax=ax2, cmap='viridis',
+                   xticklabels=markers, yticklabels=tile_ids,
+                   cbar_kws={'label': 'Median Intensity'})
+        ax2.set_title(f'{sample} - After Correction')
+        ax2.set_xlabel('Marker')
+        ax2.set_ylabel('Tile ID')
+
+        plt.tight_layout()
+        plt.savefig(output_dir / f'tile_heatmap_{sample}.png', dpi=300, bbox_inches='tight')
+        plt.close()
+
+        print(f"  Saved: tile_heatmap_{sample}.png")
+
+    print("="*70)
+
+
+def save_correlation_matrices(adata, output_dir):
+    """
+    Save cross-channel correlation matrices as supplementary QC.
+
+    Parameters:
+    -----------
+    adata : AnnData
+        Data with correlation_matrices in uns
+    output_dir : Path
+        Output directory
+    """
+    if 'correlation_matrices' not in adata.uns:
+        print("⚠️  Correlation matrices not found in adata.uns, skipping")
+        return
+
+    print("\n" + "="*70)
+    print("SAVING CORRELATION MATRICES")
+    print("="*70)
+
+    output_dir = Path(output_dir)
+    qc_dir = output_dir / 'correlation_qc'
+    qc_dir.mkdir(exist_ok=True, parents=True)
+
+    correlation_matrices = adata.uns['correlation_matrices']
+    markers = adata.var_names.tolist()
+
+    # Save individual tile correlation matrices
+    for (sample, tile_id), corr_matrix in correlation_matrices.items():
+        fig, ax = plt.subplots(figsize=(8, 7))
+
+        sns.heatmap(corr_matrix, ax=ax, cmap='coolwarm', center=0,
+                   vmin=-1, vmax=1,
+                   xticklabels=markers, yticklabels=markers,
+                   cbar_kws={'label': 'Pearson Correlation'},
+                   annot=True, fmt='.2f')
+
+        ax.set_title(f'{sample} - Tile {tile_id}\nCross-Channel Correlation')
+
+        plt.tight_layout()
+        plt.savefig(qc_dir / f'corr_{sample}_tile_{tile_id}.png', dpi=150, bbox_inches='tight')
+        plt.close()
+
+    print(f"  Saved {len(correlation_matrices)} correlation matrices to {qc_dir}")
+
+    # Create summary plot: average correlation per sample
+    sample_avg_corr = {}
+    for (sample, tile_id), corr_matrix in correlation_matrices.items():
+        if sample not in sample_avg_corr:
+            sample_avg_corr[sample] = []
+        # Get off-diagonal correlations
+        mask = ~np.eye(corr_matrix.shape[0], dtype=bool)
+        sample_avg_corr[sample].extend(corr_matrix[mask])
+
+    # Plot distribution of correlations per sample
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for sample, correlations in sample_avg_corr.items():
+        ax.hist(correlations, bins=30, alpha=0.5, label=sample)
+
+    ax.axvline(x=0.7, color='red', linestyle='--', label='Artifact Threshold (0.7)')
+    ax.set_xlabel('Pearson Correlation')
+    ax.set_ylabel('Frequency')
+    ax.set_title('Distribution of Cross-Channel Correlations')
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(output_dir / 'correlation_distribution.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print(f"  Saved: correlation_distribution.png")
+    print("="*70)
+
+
 def finalize_gates_with_override(gmm_gates):
     """Use manual gates where specified, otherwise use GMM gates"""
     final_gates = {}
@@ -2214,12 +2419,312 @@ def assign_tiles_fast(adata, tile_size):
     
     print("✓ Tile assignment complete")
 
+def detect_multichannel_artifacts(adata, correlation_threshold=0.7, min_channels=3):
+    """
+    Detect tiles with multi-channel bright spots using Pearson correlation.
+
+    Parameters:
+    -----------
+    adata : AnnData
+        Input data with tile_id in obs
+    correlation_threshold : float
+        Correlation threshold to flag correlated channels (default: 0.7)
+    min_channels : int
+        Minimum number of channels that must be correlated (default: 3)
+
+    Returns:
+    --------
+    artifact_tiles : dict
+        Dictionary mapping sample_id -> set of flagged tile_ids
+    correlation_matrices : dict
+        Dictionary mapping (sample_id, tile_id) -> correlation matrix
+    """
+    from scipy.stats import pearsonr
+    from itertools import combinations
+
+    print("\n" + "="*70)
+    print("MULTI-CHANNEL ARTIFACT DETECTION")
+    print("="*70)
+
+    artifact_tiles = {}
+    correlation_matrices = {}
+
+    for sample in adata.obs['sample_id'].unique():
+        sample_mask = adata.obs['sample_id'] == sample
+        sample_data = adata[sample_mask]
+
+        if 'tile_id' not in sample_data.obs.columns:
+            print(f"  {sample}: No tile information, skipping")
+            continue
+
+        artifact_tiles[sample] = set()
+
+        for tile_id in sample_data.obs['tile_id'].unique():
+            tile_mask = sample_data.obs['tile_id'] == tile_id
+            tile_data = sample_data[tile_mask].X
+
+            if tile_data.shape[0] < 10:  # Skip tiles with too few cells
+                continue
+
+            # Calculate correlation matrix across all channels
+            n_markers = tile_data.shape[1]
+            corr_matrix = np.zeros((n_markers, n_markers))
+
+            for i in range(n_markers):
+                for j in range(i+1, n_markers):
+                    vals_i = tile_data[:, i]
+                    vals_j = tile_data[:, j]
+
+                    # Only use positive values
+                    mask = (vals_i > 0) & (vals_j > 0)
+                    if mask.sum() < 10:
+                        corr_matrix[i, j] = corr_matrix[j, i] = 0
+                        continue
+
+                    corr, _ = pearsonr(vals_i[mask], vals_j[mask])
+                    corr_matrix[i, j] = corr_matrix[j, i] = corr
+
+            # Set diagonal to 1
+            np.fill_diagonal(corr_matrix, 1.0)
+
+            # Store correlation matrix
+            correlation_matrices[(sample, tile_id)] = corr_matrix
+
+            # Count number of channel pairs with high correlation
+            high_corr_pairs = 0
+            correlated_channels = set()
+
+            for i, j in combinations(range(n_markers), 2):
+                if corr_matrix[i, j] > correlation_threshold:
+                    high_corr_pairs += 1
+                    correlated_channels.add(i)
+                    correlated_channels.add(j)
+
+            # Flag if ≥3 channels show high correlation
+            if len(correlated_channels) >= min_channels:
+                artifact_tiles[sample].add(tile_id)
+
+        if len(artifact_tiles[sample]) > 0:
+            n_total = sample_data.obs['tile_id'].nunique()
+            pct = len(artifact_tiles[sample]) / n_total * 100
+            print(f"  {sample}: {len(artifact_tiles[sample])}/{n_total} tiles flagged ({pct:.1f}%)")
+        else:
+            print(f"  {sample}: No artifact tiles detected")
+
+    print("="*70)
+    return artifact_tiles, correlation_matrices
+
+
+def correct_artifact_tiles(adata, artifact_tiles):
+    """
+    Apply additional normalization to flagged artifact tiles.
+
+    Parameters:
+    -----------
+    adata : AnnData
+        Input data
+    artifact_tiles : dict
+        Dictionary mapping sample_id -> set of flagged tile_ids
+
+    Returns:
+    --------
+    adata : AnnData
+        Data with corrected tiles
+    """
+    print("\n" + "="*70)
+    print("CORRECTING ARTIFACT TILES")
+    print("="*70)
+
+    for sample in adata.obs['sample_id'].unique():
+        if sample not in artifact_tiles or len(artifact_tiles[sample]) == 0:
+            continue
+
+        sample_mask = adata.obs['sample_id'] == sample
+
+        # Calculate median intensity for non-artifact tiles
+        non_artifact_mask = sample_mask & ~adata.obs['tile_id'].isin(artifact_tiles[sample])
+
+        if non_artifact_mask.sum() < 100:
+            print(f"  {sample}: Insufficient non-artifact cells, skipping")
+            continue
+
+        for marker_idx in range(adata.X.shape[1]):
+            # Get reference median from non-artifact tiles
+            ref_vals = adata.X[non_artifact_mask, marker_idx]
+            ref_vals = ref_vals[ref_vals > 0]
+            if len(ref_vals) < 100:
+                continue
+            ref_median = np.median(ref_vals)
+
+            # Correct each artifact tile
+            for tile_id in artifact_tiles[sample]:
+                tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                tile_vals = adata.X[tile_mask, marker_idx]
+                tile_vals_pos = tile_vals[tile_vals > 0]
+
+                if len(tile_vals_pos) < 10:
+                    continue
+
+                tile_median = np.median(tile_vals_pos)
+
+                if tile_median > 0:
+                    correction_factor = ref_median / tile_median
+                    adata.X[tile_mask, marker_idx] *= correction_factor
+
+        print(f"  {sample}: Corrected {len(artifact_tiles[sample])} artifact tiles")
+
+    print("="*70)
+    return adata
+
+
+def detect_outlier_tiles_mad(adata, mad_threshold=2.0, min_channels=3):
+    """
+    Detect outlier tiles using Median Absolute Deviation (MAD).
+
+    Parameters:
+    -----------
+    adata : AnnData
+        Input data with tile_id in obs
+    mad_threshold : float
+        MAD threshold for outlier detection (default: 2.0)
+    min_channels : int
+        Minimum number of channels with outliers to flag tile (default: 3)
+
+    Returns:
+    --------
+    outlier_tiles : dict
+        Dictionary mapping sample_id -> dict of {tile_id: correction_factors}
+    tile_metrics : dict
+        Dictionary with per-tile median intensities before correction
+    """
+    from scipy.stats import median_abs_deviation
+
+    print("\n" + "="*70)
+    print("OUTLIER TILE DETECTION (MAD-based)")
+    print("="*70)
+
+    outlier_tiles = {}
+    tile_metrics = {}
+
+    for sample in adata.obs['sample_id'].unique():
+        sample_mask = adata.obs['sample_id'] == sample
+        sample_data = adata[sample_mask]
+
+        if 'tile_id' not in sample_data.obs.columns:
+            print(f"  {sample}: No tile information, skipping")
+            continue
+
+        outlier_tiles[sample] = {}
+        tile_metrics[sample] = {}
+
+        # Calculate per-tile median intensities for all markers
+        tile_medians = {}
+        for tile_id in sample_data.obs['tile_id'].unique():
+            tile_mask = sample_data.obs['tile_id'] == tile_id
+            tile_data = sample_data[tile_mask].X
+
+            tile_medians[tile_id] = []
+            for marker_idx in range(tile_data.shape[1]):
+                vals = tile_data[:, marker_idx]
+                pos_vals = vals[vals > 0]
+                if len(pos_vals) > 10:
+                    tile_medians[tile_id].append(np.median(pos_vals))
+                else:
+                    tile_medians[tile_id].append(np.nan)
+
+        tile_metrics[sample] = tile_medians
+
+        # Calculate sample-wide median and MAD for each marker
+        for marker_idx in range(sample_data.X.shape[1]):
+            marker_medians = [tile_medians[tid][marker_idx]
+                            for tid in tile_medians.keys()
+                            if not np.isnan(tile_medians[tid][marker_idx])]
+
+            if len(marker_medians) < 3:
+                continue
+
+            sample_median = np.median(marker_medians)
+            sample_mad = median_abs_deviation(marker_medians)
+
+            if sample_mad == 0:
+                continue
+
+            # Detect outlier tiles for this marker
+            for tile_id, medians in tile_medians.items():
+                if np.isnan(medians[marker_idx]):
+                    continue
+
+                deviation = np.abs(medians[marker_idx] - sample_median) / sample_mad
+
+                if deviation > mad_threshold:
+                    if tile_id not in outlier_tiles[sample]:
+                        outlier_tiles[sample][tile_id] = {}
+                    outlier_tiles[sample][tile_id][marker_idx] = sample_median / medians[marker_idx]
+
+        # Only flag tiles with outliers in ≥min_channels
+        tiles_to_remove = []
+        for tile_id, corrections in outlier_tiles[sample].items():
+            if len(corrections) < min_channels:
+                tiles_to_remove.append(tile_id)
+
+        for tile_id in tiles_to_remove:
+            del outlier_tiles[sample][tile_id]
+
+        if len(outlier_tiles[sample]) > 0:
+            n_total = sample_data.obs['tile_id'].nunique()
+            pct = len(outlier_tiles[sample]) / n_total * 100
+            print(f"  {sample}: {len(outlier_tiles[sample])}/{n_total} tiles flagged ({pct:.1f}%)")
+        else:
+            print(f"  {sample}: No outlier tiles detected")
+
+    print("="*70)
+    return outlier_tiles, tile_metrics
+
+
+def correct_outlier_tiles(adata, outlier_tiles):
+    """
+    Apply MAD-based corrections to outlier tiles.
+
+    Parameters:
+    -----------
+    adata : AnnData
+        Input data
+    outlier_tiles : dict
+        Dictionary mapping sample_id -> {tile_id: {marker_idx: correction_factor}}
+
+    Returns:
+    --------
+    adata : AnnData
+        Data with corrected tiles
+    """
+    print("\n" + "="*70)
+    print("CORRECTING OUTLIER TILES")
+    print("="*70)
+
+    for sample in adata.obs['sample_id'].unique():
+        if sample not in outlier_tiles or len(outlier_tiles[sample]) == 0:
+            continue
+
+        sample_mask = adata.obs['sample_id'] == sample
+
+        for tile_id, corrections in outlier_tiles[sample].items():
+            tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+
+            for marker_idx, correction_factor in corrections.items():
+                adata.X[tile_mask, marker_idx] *= correction_factor
+
+        print(f"  {sample}: Corrected {len(outlier_tiles[sample])} outlier tiles")
+
+    print("="*70)
+    return adata
+
+
 def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                                       config_file='tile_config.json',
                                       skip_within_tile=False, skip_cross_sample=False):
     """
-    Hierarchical UniFORM with optimized parallelization.
-    
+    Hierarchical UniFORM with optimized parallelization and artifact detection.
+
     Parameters:
     -----------
     skip_within_tile : bool
@@ -2228,7 +2733,7 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
     from scipy.interpolate import PchipInterpolator
     from joblib import Parallel, delayed, parallel_backend
     import time
-    
+
     # Manual skip list for Level 2 normalization
     SKIP_LEVEL2 = {
         'TOM': ['GUEST43', 'GUEST45', 'GUEST46', 'GUEST47'],  # Late-stage samples
@@ -2239,14 +2744,17 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
 
     print("\n=== HIERARCHICAL UNIFORM NORMALIZATION ===")
     print(f"Using {n_jobs} parallel jobs (multiprocessing backend)")
-    
+
     adata.layers['raw'] = adata.X.copy()
-    
+
     # Load or detect tile size
     if autodetect_tiles:
         tile_size = load_or_detect_tile_config(adata, config_file)
         assign_tiles_fast(adata, tile_size)
-    
+
+    # Store raw tile medians before any correction for diagnostics
+    adata.uns['tile_metrics_before'] = {}
+
     # Count tiles
     if 'tile_id' in adata.obs.columns:
         total_tiles = 0
@@ -2259,10 +2767,24 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
             tile_stats.append((sample, n_tiles, n_cells))
             print(f"  {sample}: {n_tiles} tiles, {n_cells:,} cells")
         print(f"  TOTAL: {total_tiles} tiles")
-        
+
         if skip_within_tile:
             print("  ⚠️  Skipping within-tile normalization (--skip_within_tile)")
-    
+
+        # ====================================================================
+        # MULTI-CHANNEL ARTIFACT DETECTION (before normalization)
+        # ====================================================================
+        artifact_tiles, correlation_matrices = detect_multichannel_artifacts(adata)
+        adata.uns['artifact_tiles'] = artifact_tiles
+        adata.uns['correlation_matrices'] = correlation_matrices
+
+        # ====================================================================
+        # OUTLIER TILE DETECTION (before normalization)
+        # ====================================================================
+        outlier_tiles, tile_metrics_before = detect_outlier_tiles_mad(adata)
+        adata.uns['outlier_tiles'] = outlier_tiles
+        adata.uns['tile_metrics_before'] = tile_metrics_before
+
     landmarks_pct = [5, 10, 25, 40, 50, 60, 75, 90, 95, 99]#[5, 25, 50, 75, 95]
     
     for marker_idx, marker in enumerate(adata.var_names):
@@ -2454,12 +2976,28 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         
         print(f"    Asinh: cofactor={cofactor:.0f}")
 
+    # ====================================================================
+    # APPLY CORRECTIONS FOR ARTIFACTS AND OUTLIERS
+    # ====================================================================
+    if 'tile_id' in adata.obs.columns:
+        # Apply artifact corrections
+        if 'artifact_tiles' in adata.uns:
+            adata = correct_artifact_tiles(adata, adata.uns['artifact_tiles'])
+
+        # Apply outlier corrections
+        if 'outlier_tiles' in adata.uns:
+            adata = correct_outlier_tiles(adata, adata.uns['outlier_tiles'])
+
+        # Store final tile metrics for diagnostics
+        _, tile_metrics_after = detect_outlier_tiles_mad(adata, mad_threshold=999)  # Just to get metrics
+        adata.uns['tile_metrics_after'] = tile_metrics_after
+
     adata.layers['aligned'] = adata.X.copy()
-    
+
     print("\n" + "="*70)
     print("HIERARCHICAL NORMALIZATION COMPLETE")
     print("="*70)
-    
+
     return adata
 
 """
@@ -2671,36 +3209,74 @@ def main():
     print("\n" + "="*70)
     print("GATING WORKFLOW")
     print("="*70)
-    
+
     # Visualize tile correction
     visualize_tile_artifacts(adata, output_dir)
-    
-    # Density-based gating
-    density_gates = density_based_gating(adata)
-    gates = finalize_gates_with_override(density_gates)
-    
+
+    # Enhanced GMM-based gating with BIC and quality assessment
+    gmm_gates, gate_metadata = gmm_gating(adata)
+    gates = finalize_gates_with_override(gmm_gates)
+
+    # Save enhanced gate metadata to CSV
+    metadata_rows = []
+    for marker in gates.keys():
+        row = {
+            'marker': marker,
+            'gate_value': gates[marker],
+            'std_from_neg': gate_metadata[marker].get('std_from_neg', np.nan),
+            'gmm_bic': gate_metadata[marker].get('gmm_bic', np.nan),
+            'marker_quality': gate_metadata[marker].get('marker_quality', 'unknown'),
+        }
+        # Add tile correlation flag if available
+        if 'artifact_tiles' in adata.uns:
+            artifact_tiles = adata.uns['artifact_tiles']
+            total_tiles = 0
+            flagged_tiles = 0
+            for sample, tiles in artifact_tiles.items():
+                sample_mask = adata.obs['sample_id'] == sample
+                if 'tile_id' in adata.obs.columns:
+                    total_tiles += adata.obs.loc[sample_mask, 'tile_id'].nunique()
+                    flagged_tiles += len(tiles)
+            row['tile_correlation_flag'] = f"{flagged_tiles}/{total_tiles}"
+        else:
+            row['tile_correlation_flag'] = 'N/A'
+
+        metadata_rows.append(row)
+
+    metadata_df = pd.DataFrame(metadata_rows)
+    metadata_df.to_csv(output_dir / 'gate_thresholds_enhanced.csv', index=False)
+    print(f"\n✓ Saved enhanced gate metadata to: gate_thresholds_enhanced.csv")
+
     # Diagnostic plots
     create_diagnostic_plots(adata, gates, output_dir)
-    
+
+    # New diagnostic plots for tile artifacts and correlations
+    create_tile_intensity_heatmaps(adata, output_dir)
+    save_correlation_matrices(adata, output_dir)
+
     # Save gates
     with open(output_dir / 'gates.json', 'w') as f:
         json.dump({k: float(v) for k, v in gates.items()}, f, indent=2)
-    
+
     # Apply gates
     adata = apply_gates(adata, gates)
-    
+
     # Validation plots
     create_validation_plots(adata, gates, output_dir)
     create_per_sample_histograms(adata, gates, output_dir)
     create_spatial_triple_panel(adata, gates, output_dir)
-    
+
     # Save final gated data
     adata.write(output_dir / 'gated_data.h5ad')
-    
+
     print(f"\n✅ Complete! Output: {output_dir}")
     print(f"   - normalized_data.h5ad: Checkpoint (reuse with --skip_normalization)")
     print(f"   - gated_data.h5ad: Final output")
     print(f"   - gates.json: Gate values")
+    print(f"   - gate_thresholds_enhanced.csv: Enhanced gate metadata with BIC and quality")
+    print(f"   - tile_heatmap_*.png: Per-sample tile intensity heatmaps (before/after)")
+    print(f"   - correlation_qc/: Cross-channel correlation matrices")
+    print(f"   - correlation_distribution.png: Overall correlation distribution")
 
 if __name__ == '__main__':
     main()
