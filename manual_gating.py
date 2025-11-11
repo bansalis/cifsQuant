@@ -2840,14 +2840,29 @@ def correct_globally_bright_tiles(adata, bright_tiles):
     return adata
 
 
-def detect_dim_markers(adata, dim_threshold_percentile=25):
+def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
     """
-    Identify dim/rare markers that need special normalization.
+    Identify markers that need aggressive tile normalization.
 
-    Returns marker indices and names that are considered dim.
+    Targets RARE markers with tile artifacts, not just low intensity.
+
+    Criteria:
+    - Low % positive (<5% by default) indicating rare marker
+    - High tile-to-tile variation (CV > 0.3) indicating artifacts
+    - Low absolute median intensity (<50) for truly dim signals
+
+    Parameters:
+    ----------
+    rare_threshold_pct : float
+        Maximum % positive to consider marker "rare" (default: 5%)
+    min_tile_cv : float
+        Minimum CV of tile medians to indicate artifacts (default: 0.3)
+
+    Returns marker indices that need special normalization.
     """
     print("\n" + "="*70)
-    print("DIM MARKER DETECTION")
+    print("RARE MARKER WITH TILE ARTIFACT DETECTION")
+    print(f"  Criteria: <{rare_threshold_pct}% positive OR median<50 with tile_CV>{min_tile_cv}")
     print("="*70)
 
     dim_markers = []
@@ -2858,34 +2873,54 @@ def detect_dim_markers(adata, dim_threshold_percentile=25):
         pos_vals = vals[vals > 0]
 
         if len(pos_vals) < 100:
-            marker_stats.append((marker, 0, 0))
-            dim_markers.append(marker_idx)
+            marker_stats.append((marker, 0, 0, np.nan, False))
             continue
 
         median_intensity = np.median(pos_vals)
-        pct_positive = (vals > np.percentile(pos_vals, 95) * 0.1).sum() / len(vals) * 100
 
-        marker_stats.append((marker, median_intensity, pct_positive))
+        # Estimate % positive using 95th percentile as rough threshold
+        rough_threshold = np.percentile(pos_vals, 95)
+        pct_positive = (vals > rough_threshold * 0.1).sum() / len(vals) * 100
 
-    # Determine dim threshold
-    median_intensities = [s[1] for s in marker_stats if s[1] > 0]
-    if len(median_intensities) == 0:
-        print("  No valid markers found")
-        return []
+        # Calculate tile-to-tile variation (if tiles exist)
+        tile_cv = np.nan
+        has_tile_artifacts = False
 
-    intensity_threshold = np.percentile(median_intensities, dim_threshold_percentile)
+        if 'tile_id' in adata.obs.columns:
+            tile_medians = []
+            for tile_id in adata.obs['tile_id'].unique():
+                tile_mask = adata.obs['tile_id'] == tile_id
+                tile_vals = vals[tile_mask]
+                tile_pos = tile_vals[tile_vals > 0]
+                if len(tile_pos) > 10:
+                    tile_medians.append(np.median(tile_pos))
 
-    for marker_idx, (marker, med_int, pct_pos) in enumerate(marker_stats):
-        if med_int > 0 and med_int < intensity_threshold:
+            if len(tile_medians) > 2:
+                tile_cv = np.std(tile_medians) / (np.mean(tile_medians) + 0.01)
+                has_tile_artifacts = tile_cv > min_tile_cv
+
+        marker_stats.append((marker, median_intensity, pct_positive, tile_cv, has_tile_artifacts))
+
+        # Decision logic: Flag if RARE or (DIM + ARTIFACTS)
+        is_rare = pct_positive < rare_threshold_pct
+        is_dim = median_intensity < 50
+
+        if is_rare or (is_dim and has_tile_artifacts):
             dim_markers.append(marker_idx)
 
     if len(dim_markers) > 0:
-        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} dim markers:")
+        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} markers needing aggressive tile correction:")
         for idx in dim_markers:
-            marker, med_int, pct_pos = marker_stats[idx]
-            print(f"    {marker}: median={med_int:.0f}, {pct_pos:.1f}% positive")
+            marker, med_int, pct_pos, tile_cv, artifacts = marker_stats[idx]
+            tile_str = f"tile_CV={tile_cv:.2f}" if not np.isnan(tile_cv) else "no_tiles"
+            reason = []
+            if pct_pos < rare_threshold_pct:
+                reason.append("RARE")
+            if med_int < 50 and artifacts:
+                reason.append("DIM+ARTIFACTS")
+            print(f"    {marker}: median={med_int:.0f}, {pct_pos:.1f}% pos, {tile_str} [{', '.join(reason)}]")
     else:
-        print("  No dim markers detected")
+        print("  No markers need aggressive tile correction")
 
     print("="*70)
     return dim_markers
