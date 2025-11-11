@@ -2561,10 +2561,10 @@ def detect_globally_bright_tiles(adata, mad_threshold=3.5, ratio_threshold=1.5, 
                 if deviation > mad_threshold and ratio > ratio_threshold:
                     elevated_channels.append(marker_idx)
 
-                    # Store correction factor
+                    # Store correction factor (convert marker_idx to string for HDF5 compatibility)
                     if tile_id not in bright_tiles[sample]:
                         bright_tiles[sample][tile_id] = {}
-                    bright_tiles[sample][tile_id][marker_idx] = sample_median / tile_med
+                    bright_tiles[sample][tile_id][str(marker_idx)] = sample_median / tile_med
 
             # Only keep tile if MAJORITY of channels are elevated
             if len(elevated_channels) > 0:
@@ -2598,7 +2598,8 @@ def correct_globally_bright_tiles(adata, bright_tiles):
     adata : AnnData
         Input data
     bright_tiles : dict
-        Dictionary mapping sample_id -> {tile_id: {marker_idx: correction_factor}}
+        Dictionary mapping sample_id -> {tile_id: {marker_idx_str: correction_factor}}
+        Note: marker_idx is stored as string for HDF5 compatibility
 
     Returns:
     --------
@@ -2618,7 +2619,9 @@ def correct_globally_bright_tiles(adata, bright_tiles):
         for tile_id, corrections in bright_tiles[sample].items():
             tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
 
-            for marker_idx, correction_factor in corrections.items():
+            for marker_idx_str, correction_factor in corrections.items():
+                # Convert marker_idx back to int (was stored as string for HDF5 compatibility)
+                marker_idx = int(marker_idx_str)
                 adata.X[tile_mask, marker_idx] *= correction_factor
 
         print(f"  {sample}: Corrected {len(bright_tiles[sample])} globally bright tiles")
