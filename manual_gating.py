@@ -35,13 +35,13 @@ from scipy.signal import argrelextrema
 # ============================================================================
 
 MARKERS = {
-    'Channel_2': 'TOM', 
-    'Channel_3': 'CD45',
-    'Channel_4': 'AGFP',
-    'Channel_6': 'PERK',
-    'Channel_7': 'CD8B',
-    'Channel_8': 'KI67',
-    'Channel_10': 'CD3'
+    'R1.0.1_CY3': 'TOM',
+    'R1.0.4_CY5_CD45': 'CD45',
+    'R1.0.4_CY7_AGFP': 'AGFP',
+    'R2.0.4_CY3_PERK': 'PERK',
+    'R4.0.4_CY5_CD8A': 'CD8B',  # Note: CSV has CD8A
+    'R6.0.4_CY7_KI67': 'KI67',
+    'R3.0.4_CY3_CD3E': 'CD3'  # Note: CSV has CD3E
 }
 
 # GATE VALUES (normalized 0-1 scale)
