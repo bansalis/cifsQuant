@@ -47,10 +47,15 @@ For experiments with multiple samples/conditions on the same slide, use the part
 # Install partitioning dependencies
 pip install -r requirements_partition.txt
 
-# Partition a sample (interactive)
-python scripts/partition_samples.py --sample_name JL216
+# Partition one or more samples (interactive, batch mode)
+python scripts/partition_samples.py --sample_names JL216 JL217 JL218
 
-# This will create partitions like JL216A/, JL216B/ in rawdata/
+# This will:
+# 1. Generate coordinate grids for all samples
+# 2. Collect partition boundaries for each sample
+# 3. Show summary of all partitions
+# 4. Create partitions like JL216A/, JL216B/ in rawdata/
+# 5. Rename channel files to match (e.g., JL216A_*.ome.tif)
 ```
 
 **See [SAMPLE_PARTITIONING_README.md](SAMPLE_PARTITIONING_README.md) for detailed instructions.**
