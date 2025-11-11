@@ -2840,14 +2840,29 @@ def correct_globally_bright_tiles(adata, bright_tiles):
     return adata
 
 
-def detect_dim_markers(adata, dim_threshold_percentile=25):
+def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
     """
-    Identify dim/rare markers that need special normalization.
+    Identify markers that need aggressive tile normalization.
 
-    Returns marker indices and names that are considered dim.
+    Targets RARE markers with tile artifacts, not just low intensity.
+
+    Criteria:
+    - Low % positive (<5% by default) indicating rare marker
+    - High tile-to-tile variation (CV > 0.3) indicating artifacts
+    - Low absolute median intensity (<50) for truly dim signals
+
+    Parameters:
+    ----------
+    rare_threshold_pct : float
+        Maximum % positive to consider marker "rare" (default: 5%)
+    min_tile_cv : float
+        Minimum CV of tile medians to indicate artifacts (default: 0.3)
+
+    Returns marker indices that need special normalization.
     """
     print("\n" + "="*70)
-    print("DIM MARKER DETECTION")
+    print("RARE MARKER WITH TILE ARTIFACT DETECTION")
+    print(f"  Criteria: <{rare_threshold_pct}% positive OR median<50 with tile_CV>{min_tile_cv}")
     print("="*70)
 
     dim_markers = []
@@ -2858,34 +2873,54 @@ def detect_dim_markers(adata, dim_threshold_percentile=25):
         pos_vals = vals[vals > 0]
 
         if len(pos_vals) < 100:
-            marker_stats.append((marker, 0, 0))
-            dim_markers.append(marker_idx)
+            marker_stats.append((marker, 0, 0, np.nan, False))
             continue
 
         median_intensity = np.median(pos_vals)
-        pct_positive = (vals > np.percentile(pos_vals, 95) * 0.1).sum() / len(vals) * 100
 
-        marker_stats.append((marker, median_intensity, pct_positive))
+        # Estimate % positive using 95th percentile as rough threshold
+        rough_threshold = np.percentile(pos_vals, 95)
+        pct_positive = (vals > rough_threshold * 0.1).sum() / len(vals) * 100
 
-    # Determine dim threshold
-    median_intensities = [s[1] for s in marker_stats if s[1] > 0]
-    if len(median_intensities) == 0:
-        print("  No valid markers found")
-        return []
+        # Calculate tile-to-tile variation (if tiles exist)
+        tile_cv = np.nan
+        has_tile_artifacts = False
 
-    intensity_threshold = np.percentile(median_intensities, dim_threshold_percentile)
+        if 'tile_id' in adata.obs.columns:
+            tile_medians = []
+            for tile_id in adata.obs['tile_id'].unique():
+                tile_mask = adata.obs['tile_id'] == tile_id
+                tile_vals = vals[tile_mask]
+                tile_pos = tile_vals[tile_vals > 0]
+                if len(tile_pos) > 10:
+                    tile_medians.append(np.median(tile_pos))
 
-    for marker_idx, (marker, med_int, pct_pos) in enumerate(marker_stats):
-        if med_int > 0 and med_int < intensity_threshold:
+            if len(tile_medians) > 2:
+                tile_cv = np.std(tile_medians) / (np.mean(tile_medians) + 0.01)
+                has_tile_artifacts = tile_cv > min_tile_cv
+
+        marker_stats.append((marker, median_intensity, pct_positive, tile_cv, has_tile_artifacts))
+
+        # Decision logic: Flag if RARE or (DIM + ARTIFACTS)
+        is_rare = pct_positive < rare_threshold_pct
+        is_dim = median_intensity < 50
+
+        if is_rare or (is_dim and has_tile_artifacts):
             dim_markers.append(marker_idx)
 
     if len(dim_markers) > 0:
-        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} dim markers:")
+        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} markers needing aggressive tile correction:")
         for idx in dim_markers:
-            marker, med_int, pct_pos = marker_stats[idx]
-            print(f"    {marker}: median={med_int:.0f}, {pct_pos:.1f}% positive")
+            marker, med_int, pct_pos, tile_cv, artifacts = marker_stats[idx]
+            tile_str = f"tile_CV={tile_cv:.2f}" if not np.isnan(tile_cv) else "no_tiles"
+            reason = []
+            if pct_pos < rare_threshold_pct:
+                reason.append("RARE")
+            if med_int < 50 and artifacts:
+                reason.append("DIM+ARTIFACTS")
+            print(f"    {marker}: median={med_int:.0f}, {pct_pos:.1f}% pos, {tile_str} [{', '.join(reason)}]")
     else:
-        print("  No dim markers detected")
+        print("  No markers need aggressive tile correction")
 
     print("="*70)
     return dim_markers
@@ -2962,200 +2997,169 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         print('='*70)
         
         # ====================================================================
-        # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)
+        # LEVEL 1: WITHIN-TILE NORMALIZATION (per UniFORM)
+        # Rescale each tile to [0,1] using 1st-99th percentile
         # ====================================================================
         is_dim_marker = marker_idx in dim_marker_indices
         if is_dim_marker:
-            print("  Level 1: STRONG tile correction (dim marker)...")
+            print("  Level 1: Per-tile rescaling (1st-99th, dim marker)...")
+            p_low, p_high = 5, 98  # More conservative for dim markers
         else:
-            print("  Level 1: Background-anchored tile correction...")
+            print("  Level 1: Per-tile rescaling (1st-99th)...")
+            p_low, p_high = 1, 99
+
         start_time = time.time()
 
-        def process_sample_tiles(sample, sample_mask, marker_idx, X_data, obs_data, is_dim):
-            """Process all tiles for one sample"""
-            tiles = obs_data.loc[sample_mask, 'tile_id'].unique()
+        if not skip_within_tile and 'tile_id' in adata.obs.columns:
+            for sample in adata.obs['sample_id'].unique():
+                sample_mask = adata.obs['sample_id'] == sample
 
-            sample_vals = X_data[sample_mask, marker_idx]
-            pos_sample_vals = sample_vals[sample_vals > 0]
-            if len(pos_sample_vals) < 100:
-                return None
-
-            # For dim markers: use median for stronger correction
-            # For normal markers: use 5th percentile
-            if is_dim:
-                global_ref = np.median(pos_sample_vals)
-                tile_percentile = 50  # median
-                print(f"      {sample}: Using median (stronger correction)")
-            else:
-                global_ref = np.percentile(pos_sample_vals, 5)
-                tile_percentile = 5
-
-            corrections = {}
-            for tile_id in tiles:
-                tile_mask = sample_mask & (obs_data['tile_id'] == tile_id)
-                vals = X_data[tile_mask, marker_idx]
-
-                pos_vals_tile = vals[vals > 0]
-                if len(pos_vals_tile) < 10:
-                    continue
-                tile_ref = np.percentile(pos_vals_tile, tile_percentile)
-
-                if tile_ref > 0:
-                    corrections[tile_id] = global_ref / tile_ref
-
-            return sample, corrections
-        if not skip_within_tile:
-            # Parallel processing across samples
-            sample_masks = {sample: adata.obs['sample_id'] == sample
-                        for sample in adata.obs['sample_id'].unique()}
-
-            results = Parallel(n_jobs=n_jobs, backend='threading')(
-                delayed(process_sample_tiles)(sample, mask, marker_idx, adata.X, adata.obs, is_dim_marker)
-                for sample, mask in sample_masks.items()
-            )
-            
-            # Apply corrections
-            for result in results:
-                if result is None:
-                    continue
-                sample, corrections = result
-                sample_mask = sample_masks[sample]
-                
-                for tile_id, factor in corrections.items():
+                for tile_id in adata.obs.loc[sample_mask, 'tile_id'].unique():
                     tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
-                    adata.X[tile_mask, marker_idx] *= factor
-        
+                    vals = adata.X[tile_mask, marker_idx]
+
+                    pos_vals = vals[vals > 0]
+                    if len(pos_vals) < 10:
+                        continue
+
+                    # UniFORM: Rescale to [0,1] using percentiles
+                    p1 = np.percentile(pos_vals, p_low)
+                    p99 = np.percentile(pos_vals, p_high)
+
+                    if p99 > p1:
+                        vals_rescaled = (vals - p1) / (p99 - p1)
+                        vals_rescaled = np.clip(vals_rescaled, 0, 1)
+                        adata.X[tile_mask, marker_idx] = vals_rescaled
+
         elapsed = time.time() - start_time
         print(f"    ✓ Level 1 complete in {elapsed:.1f}s")
         
         # ====================================================================
-        # LEVEL 2: ACROSS TILES WITHIN SAMPLE (fast, serial is fine)
+        # LEVEL 2: CROSS-TILE WITHIN-SAMPLE ALIGNMENT (per UniFORM)
+        # Align all tiles within each sample using negative peak + quantile mapping
+        # This is THE KEY STEP for removing tile artifacts
         # ====================================================================
-        print("\n  Level 2: Across tiles within sample...")
+        print("\n  Level 2: Cross-tile within-sample alignment (UniFORM)...")
         start_time = time.time()
+
+        if 'tile_id' in adata.obs.columns:
+            for sample in adata.obs['sample_id'].unique():
+                sample_mask = adata.obs['sample_id'] == sample
+                tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
+
+                if len(tiles) < 2:
+                    print(f"    {sample}: Only 1 tile, skipping")
+                    continue
+
+                # Collect landmarks from each tile
+                tile_landmarks = {}
+                for tile_id in tiles:
+                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    tile_vals = adata.X[tile_mask, marker_idx]
+                    pos_vals = tile_vals[tile_vals > 0]
+
+                    if len(pos_vals) < 100:
+                        continue
+
+                    # Calculate landmarks (percentiles) for this tile
+                    tile_landmarks[tile_id] = np.percentile(pos_vals, landmarks_pct)
+
+                if len(tile_landmarks) < 2:
+                    print(f"    {sample}: Insufficient tile data")
+                    continue
+
+                # Reference = median of all tile landmarks
+                reference_landmarks = np.median(list(tile_landmarks.values()), axis=0)
+
+                # Align each tile to the reference
+                n_aligned = 0
+                for tile_id, src_landmarks in tile_landmarks.items():
+                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    vals = adata.X[tile_mask, marker_idx].copy()
+
+                    # Extend landmarks for interpolation
+                    src_extended = np.concatenate([[0], src_landmarks, [1.5]])
+                    ref_extended = np.concatenate([[0], reference_landmarks, [1.5]])
+
+                    # Ensure monotonic
+                    for i in range(1, len(src_extended)):
+                        if src_extended[i] <= src_extended[i-1]:
+                            src_extended[i] = src_extended[i-1] + 0.001
+
+                    try:
+                        # Quantile mapping via spline interpolation
+                        spline = PchipInterpolator(src_extended, ref_extended, extrapolate=True)
+                        vals_aligned = spline(vals)
+                        vals_aligned = np.clip(vals_aligned, 0, 1)
+                        adata.X[tile_mask, marker_idx] = vals_aligned
+                        n_aligned += 1
+                    except Exception as e:
+                        print(f"      {sample} tile {tile_id}: Failed - {e}")
+
+                print(f"    {sample}: Aligned {n_aligned}/{len(tiles)} tiles")
+
+        elapsed = time.time() - start_time
+        print(f"    ✓ Level 2 complete in {elapsed:.1f}s")
         
-        # Check manual skip list
-        skip_samples = SKIP_LEVEL2.get(marker, [])
-        if skip_samples:
-            print(f"    Manual skip enabled for: {skip_samples}")
-        
-        sample_references = {}
-        
-        for sample in adata.obs['sample_id'].unique():
-            # Skip if in manual list
-            if sample in skip_samples:
-                print(f"    {sample}: SKIPPED (manual override)")
+    # ====================================================================
+    # LEVEL 3: CROSS-SAMPLE ALIGNMENT (per UniFORM)
+    # Align samples to each other using same quantile mapping approach
+    # Since all markers are common, we can use all of them
+    # ====================================================================
+    if not skip_cross_sample:
+        print("\n" + "="*70)
+        print("LEVEL 3: CROSS-SAMPLE ALIGNMENT")
+        print("="*70)
+
+        for marker_idx, marker in enumerate(adata.var_names):
+            print(f"\n  {marker} ({marker_idx+1}/{len(adata.var_names)})")
+
+            # Collect landmarks from each sample
+            sample_landmarks = {}
+            for sample in adata.obs['sample_id'].unique():
+                sample_mask = adata.obs['sample_id'] == sample
+                vals = adata.X[sample_mask, marker_idx]
+                pos_vals = vals[vals > 0]
+
+                if len(pos_vals) < 1000:
+                    continue
+
+                sample_landmarks[sample] = np.percentile(pos_vals, landmarks_pct)
+
+            if len(sample_landmarks) < 2:
+                print(f"    Only 1 sample, skipping")
                 continue
-            
-            sample_mask = adata.obs['sample_id'] == sample
-            vals = adata.X[sample_mask, marker_idx]
-            pos_vals = vals[vals > 0]
-            
-            if len(pos_vals) >= 1000:
-                sample_landmarks = np.percentile(pos_vals, landmarks_pct)
-                sample_references[sample] = sample_landmarks
-        
-        if len(sample_references) < 2:
-            print("    Only 1 sample, skipping")
-        else:
-            global_sample_ref = np.median(list(sample_references.values()), axis=0)
-            
-            for sample, src_lm in sample_references.items():
+
+            # Reference = median across all samples
+            reference_landmarks = np.median(list(sample_landmarks.values()), axis=0)
+
+            # Align each sample to reference
+            for sample, src_landmarks in sample_landmarks.items():
                 sample_mask = adata.obs['sample_id'] == sample
                 vals = adata.X[sample_mask, marker_idx].copy()
-                
-                src_extended = np.concatenate([[0], src_lm, [src_lm[-1] * 1.5]])
-                ref_extended = np.concatenate([[0], global_sample_ref, [global_sample_ref[-1] * 1.5]])
-                
+
+                # Extend landmarks
+                src_extended = np.concatenate([[0], src_landmarks, [1.5]])
+                ref_extended = np.concatenate([[0], reference_landmarks, [1.5]])
+
+                # Ensure monotonic
                 for i in range(1, len(src_extended)):
                     if src_extended[i] <= src_extended[i-1]:
-                        src_extended[i] = src_extended[i-1] * 1.001
-                
+                        src_extended[i] = src_extended[i-1] + 0.001
+
                 try:
-                    spline = PchipInterpolator(src_extended, ref_extended, 
-                                              extrapolate=True)
-                    vals_norm = spline(vals)
-                    vals_norm = np.maximum(vals_norm, 0)
-                    adata.X[sample_mask, marker_idx] = vals_norm
-                    
-                    before = np.median(vals[vals > 0])
-                    after = np.median(vals_norm[vals_norm > 0])
-                    print(f"      {sample}: {before:.0f} → {after:.0f}")
+                    spline = PchipInterpolator(src_extended, ref_extended, extrapolate=True)
+                    vals_aligned = spline(vals)
+                    vals_aligned = np.clip(vals_aligned, 0, 1)
+                    adata.X[sample_mask, marker_idx] = vals_aligned
+
+                    before = np.median(vals[vals > 0]) if (vals > 0).sum() > 0 else 0
+                    after = np.median(vals_aligned[vals_aligned > 0]) if (vals_aligned > 0).sum() > 0 else 0
+                    print(f"    {sample}: {before:.3f} → {after:.3f}")
                 except Exception as e:
-                    print(f"      {sample}: FAILED - {e}")
-            
-            elapsed = time.time() - start_time
-            print(f"    ✓ Level 2 complete in {elapsed:.1f}s")
-        
-        # Measure dynamic range
-        vals = adata.X[:, marker_idx]
-        pos_vals = vals[vals > 0]
-        p5 = np.percentile(pos_vals, 5)
-        p95 = np.percentile(pos_vals, 95)
-        dynamic_range = p95 / (p5 + 1)
+                    print(f"    {sample}: Failed - {e}")
 
-        # Adaptive percentiles
-        if dynamic_range > 50:  # TOM, CD8B
-            top_pct = 99.7
-            landmarks_weight = [1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1, 1, 1]  # Weight extremes
-        elif dynamic_range > 20:  # CD45, KI67
-            top_pct = 99.3
-            landmarks_weight = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-        else:  # PERK, AGFP
-            top_pct = 99.0
-            landmarks_weight = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-
-        print(f"    Dynamic range: {dynamic_range:.1f}x → using p{top_pct:.1f}")
-
-        # ====================================================================
-        # LEVEL 3: FINAL SCALING
-        # ====================================================================
-        print("\n  Level 3: Final 0-1 scaling...")
-        
-        vals = adata.X[:, marker_idx]
-        pos_vals = vals[vals > 0]
-        
-        if len(pos_vals) > 100:
-            # Contrast enhancement with background removal
-            p10 = np.percentile(pos_vals, 10)  # New "zero point"
-            p_top = np.percentile(pos_vals, top_pct)  # From Fix 2
-
-            if p_top > p10:
-                # Subtract background, then scale
-                vals_bg_removed = vals - p10
-                vals_bg_removed = np.maximum(vals_bg_removed, 0)
-                
-                # Scale to 0-1
-                vals_scaled = vals_bg_removed / (p_top - p10)
-                vals_scaled = np.clip(vals_scaled, 0, 1)
-                
-                # GAMMA correction for middle-range boost
-                gamma = 0.8 if dynamic_range > 50 else 0.9  # <1 = boost mid-range
-                vals_gamma = np.power(vals_scaled, gamma)
-                
-                adata.X[:, marker_idx] = vals_gamma
-                
-                print(f"    Contrast: p10={p10:.0f}→0, p{top_pct:.1f}={p_top:.0f}→1, γ={gamma}")
-    
-
-    # Marker-specific asinh (OPTIONAL - only if still too compressed)
-    if dynamic_range > 30:
-        # Calculate marker-specific cofactor
-        cofactor = max(50, p5)  # 5th percentile of positives
-        
-        # Convert back to intensity scale
-        vals_intensity = adata.X[:, marker_idx] * (p_top - p10) + p10
-        
-        # Asinh transform
-        vals_asinh = np.arcsinh(vals_intensity / cofactor)
-        
-        # Renormalize to 0-1
-        vals_asinh = vals_asinh / np.percentile(vals_asinh[vals_asinh > 0], 99.5)
-        vals_asinh = np.clip(vals_asinh, 0, 1)
-        
-        adata.X[:, marker_idx] = vals_asinh
-        
-        print(f"    Asinh: cofactor={cofactor:.0f}")
+        print("\n" + "="*70)
 
     # ====================================================================
     # APPLY CORRECTIONS FOR GLOBALLY BRIGHT TILES
