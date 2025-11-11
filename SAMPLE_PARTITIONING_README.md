@@ -60,26 +60,32 @@ Place your pre-partition samples in `rawdata_prepartition/`:
 
 ```bash
 mkdir -p rawdata_prepartition/JL216
-# Copy your original sample files to rawdata_prepartition/JL216/
+mkdir -p rawdata_prepartition/JL217
+# Copy your original sample files to each directory
 ```
 
 ### Step 2: Run the Partitioning Script
 
 ```bash
-python scripts/partition_samples.py --sample_name JL216
+# Single sample
+python scripts/partition_samples.py --sample_names JL216
+
+# Multiple samples (batch mode - recommended!)
+python scripts/partition_samples.py --sample_names JL216 JL217 JL218
 ```
 
 ### Step 3: Interactive Partitioning
 
 The script will:
 
-1. **Generate a coordinate grid image**
-   - Opens the DAPI channel
-   - Creates a PNG with coordinate overlays
-   - Saves to `partition_visualizations/JL216/JL216_coordinate_grid.png`
+1. **For each sample: Generate coordinate grid images**
+   - Opens the DAPI channel for each sample
+   - Creates PNGs with coordinate overlays
+   - Saves to `partition_visualizations/<SAMPLE>/<SAMPLE>_coordinate_grid.png`
 
-2. **Prompt you for partition information**
+2. **For each sample: Prompt for partition information**
    ```
+   === Sample JL216 ===
    How many partitions do you want to create? 2
 
    --- Partition 1/2 (will be saved as JL216A) ---
@@ -95,20 +101,32 @@ The script will:
      X maximum (6000 to 12000): 12000
      Y minimum (0 to 8000): 0
      Y maximum (0 to 8000): 8000
+
+   === Sample JL217 ===
+   [... repeat for all samples ...]
    ```
 
-3. **Show partition summary and ask for confirmation**
+3. **Show partition summary for ALL samples and ask for confirmation**
    ```
-   Partition Summary:
-     JL216A: x=[0:6000], y=[0:8000], size=6000x8000
-     JL216B: x=[6000:12000], y=[0:8000], size=6000x8000
+   PARTITION SUMMARY - All Samples
 
-   Proceed with partitioning? (yes/no): yes
+   JL216 (45 channels):
+     • JL216A: x=[0:6000], y=[0:8000], size=6000x8000
+     • JL216B: x=[6000:12000], y=[0:8000], size=6000x8000
+
+   JL217 (45 channels):
+     • JL217A: x=[0:5000], y=[0:7000], size=5000x7000
+     • JL217B: x=[5000:10000], y=[0:7000], size=5000x7000
+
+   Total partitions to create: 4
+
+   Proceed with partitioning all samples? (yes/no): yes
    ```
 
-4. **Process all channels**
+4. **Process all channels for all partitions**
    - Applies the same bounds to every channel file
-   - Saves partitioned channels to `rawdata/JL216A/` and `rawdata/JL216B/`
+   - **Renames channel files** to match partition name (e.g., `JL216A_1.0.1_R000_Cy3_AF_I.ome.tif`)
+   - Saves partitioned channels to `rawdata/JL216A/`, `rawdata/JL216B/`, etc.
    - Creates metadata files documenting the partition parameters
 
 ### Step 4: Run the Pipeline
@@ -123,31 +141,47 @@ bash run_mcmicro_tiled.sh
 bash run_mcmicro_tiled.sh
 ```
 
+## Key Features
+
+### Batch Processing
+The script supports processing multiple samples in one run:
+- Define partitions for all samples first
+- Review a complete summary before any files are created
+- Process everything at once for efficiency
+
+### Automatic Filename Renaming
+Channel files are automatically renamed to match the partition:
+- Original: `JL98_1.0.1_R000_Cy3_AF_I.ome.tif`
+- Partition A: `JL98A_1.0.1_R000_Cy3_AF_I.ome.tif`
+- Partition B: `JL98B_1.0.1_R000_Cy3_AF_I.ome.tif`
+
+This ensures consistency across all downstream analysis.
+
 ## Advanced Usage
 
-### Custom Directories
+### Batch Mode (Recommended)
+
+Process multiple samples at once:
 
 ```bash
-# Use custom source directory
+# All samples in one command
 python scripts/partition_samples.py \
-    --sample_name JL216 \
-    --source_dir /path/to/custom_rawdata \
-    --output_dir /path/to/output
+    --sample_names JL216 JL217 JL218 JL219
 
-# Custom visualization directory
+# With custom directories
 python scripts/partition_samples.py \
-    --sample_name JL216 \
+    --sample_names JL216 JL217 JL218 \
+    --source_dir /path/to/custom_rawdata \
+    --output_dir /path/to/output \
     --visualization_dir /path/to/visualizations
 ```
 
-### Multiple Samples
+### Single Sample Mode
 
-Process multiple samples in a batch:
+Process one sample at a time:
 
 ```bash
-for sample in JL216 JL217 JL218; do
-    python scripts/partition_samples.py --sample_name $sample
-done
+python scripts/partition_samples.py --sample_names JL216
 ```
 
 ## Understanding the Coordinate System

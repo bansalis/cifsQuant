@@ -7,8 +7,14 @@ before running the main mcmicro pipeline. It creates coordinate-based
 partitions that are saved as separate samples in rawdata/.
 
 Usage:
-    python scripts/partition_samples.py --sample_name JL216
-    python scripts/partition_samples.py --sample_name JL216 --source_dir custom_rawdata
+    # Single sample
+    python scripts/partition_samples.py --sample_names JL216
+
+    # Multiple samples (batch mode)
+    python scripts/partition_samples.py --sample_names JL216 JL217 JL218
+
+    # Custom source directory
+    python scripts/partition_samples.py --sample_names JL216 --source_dir custom_rawdata
 """
 
 import argparse
@@ -19,6 +25,7 @@ from pathlib import Path
 import json
 from typing import List, Dict, Tuple
 import shutil
+import re
 
 def find_dapi_channel(sample_dir: Path) -> Path:
     """Find the DAPI channel file in the sample directory."""
@@ -174,8 +181,9 @@ def get_partition_info(sample_name: str, image_width: int, image_height: int) ->
 
     return partitions
 
-def partition_channel_file(source_file: Path, partition: Dict, output_dir: Path):
-    """Partition a single channel file and save to output directory."""
+def partition_channel_file(source_file: Path, partition: Dict, output_dir: Path,
+                          original_sample_name: str):
+    """Partition a single channel file and save to output directory with renamed filename."""
     # Read the image
     image_data = tifffile.imread(source_file)
 
@@ -185,8 +193,15 @@ def partition_channel_file(source_file: Path, partition: Dict, output_dir: Path)
         partition['x_min']:partition['x_max']
     ]
 
-    # Generate output filename (replace original sample name with partitioned name)
-    output_filename = source_file.name
+    # Replace original sample name with partition name in filename
+    # e.g., JL98_1.0.1_R000_Cy3_AF_I.ome.tif -> JL98A_1.0.1_R000_Cy3_AF_I.ome.tif
+    output_filename = source_file.name.replace(original_sample_name, partition['name'], 1)
+
+    # Fallback: if the sample name doesn't appear at the start, try to handle it
+    if output_filename == source_file.name:
+        # Try to replace the first occurrence of the pattern
+        output_filename = re.sub(f'^{re.escape(original_sample_name)}',
+                                partition['name'], source_file.name)
 
     # Save the partitioned image
     output_path = output_dir / output_filename
@@ -264,11 +279,11 @@ def create_partition_visualization(dapi_data: np.ndarray, partitions: List[Dict]
     print(f"   ✓ Saved partition visualization to: {output_path}")
     plt.close()
 
-def partition_sample(sample_name: str, source_dir: Path, output_dir: Path,
-                    visualization_dir: Path):
-    """Main function to partition a sample."""
+def collect_sample_partitions(sample_name: str, source_dir: Path,
+                             visualization_dir: Path) -> Dict:
+    """Collect partition information for a single sample."""
     print(f"\n{'='*70}")
-    print(f"🔬 Processing Sample: {sample_name}")
+    print(f"🔬 Collecting Partitions for Sample: {sample_name}")
     print(f"{'='*70}")
 
     # Setup paths
@@ -302,84 +317,134 @@ def partition_sample(sample_name: str, source_dir: Path, output_dir: Path,
     partition_vis_path = vis_dir / f"{sample_name}_partitions.png"
     create_partition_visualization(dapi_data, partitions, partition_vis_path, sample_name)
 
-    # Confirm with user
-    print(f"\n📋 Partition Summary:")
-    for p in partitions:
-        print(f"   {p['name']}: x=[{p['x_min']}:{p['x_max']}], "
-              f"y=[{p['y_min']}:{p['y_max']}], size={p['width']}x{p['height']}")
+    # Get all channel files
+    channel_files = sorted(sample_source_dir.glob('*.ome.tif'))
 
-    response = input(f"\nProceed with partitioning? (yes/no): ").strip().lower()
+    return {
+        'sample_name': sample_name,
+        'source_dir': sample_source_dir,
+        'partitions': partitions,
+        'channel_files': channel_files,
+        'dapi_data': dapi_data,
+        'image_width': image_width,
+        'image_height': image_height,
+        'vis_dir': vis_dir
+    }
+
+def process_all_partitions(sample_partitions_list: List[Dict], output_dir: Path):
+    """Process and save all partitions for all samples."""
+
+    # Show summary of all partitions
+    print(f"\n{'='*70}")
+    print(f"📋 PARTITION SUMMARY - All Samples")
+    print(f"{'='*70}")
+
+    total_partitions = 0
+    for sample_info in sample_partitions_list:
+        sample_name = sample_info['sample_name']
+        partitions = sample_info['partitions']
+        num_channels = len(sample_info['channel_files'])
+
+        print(f"\n{sample_name} ({num_channels} channels):")
+        for p in partitions:
+            print(f"   • {p['name']}: x=[{p['x_min']}:{p['x_max']}], "
+                  f"y=[{p['y_min']}:{p['y_max']}], size={p['width']}x{p['height']}")
+            total_partitions += 1
+
+    print(f"\nTotal partitions to create: {total_partitions}")
+
+    # Confirm with user
+    response = input(f"\nProceed with partitioning all samples? (yes/no): ").strip().lower()
     if response not in ['yes', 'y']:
         print("❌ Partitioning cancelled by user")
         return False
 
-    # Get all channel files
-    channel_files = sorted(sample_source_dir.glob('*.ome.tif'))
-    print(f"\n🔄 Processing {len(channel_files)} channel files...")
+    # Process each sample
+    all_metadata = []
 
-    # Process each partition
-    partition_metadata = []
+    for sample_info in sample_partitions_list:
+        sample_name = sample_info['sample_name']
+        partitions = sample_info['partitions']
+        channel_files = sample_info['channel_files']
+        vis_dir = sample_info['vis_dir']
 
-    for partition in partitions:
-        print(f"\n--- Creating partition: {partition['name']} ---")
+        print(f"\n{'='*70}")
+        print(f"🔄 Processing Sample: {sample_name}")
+        print(f"{'='*70}")
+        print(f"Processing {len(channel_files)} channel files...")
 
-        # Create output directory
-        partition_output_dir = output_dir / partition['name']
-        partition_output_dir.mkdir(parents=True, exist_ok=True)
+        # Process each partition
+        partition_metadata = []
 
-        # Process each channel
-        for i, channel_file in enumerate(channel_files, 1):
-            output_path = partition_channel_file(channel_file, partition, partition_output_dir)
-            print(f"   [{i}/{len(channel_files)}] {channel_file.name} → {output_path.name}")
+        for partition in partitions:
+            print(f"\n--- Creating partition: {partition['name']} ---")
 
-        # Save partition metadata
-        metadata = {
+            # Create output directory
+            partition_output_dir = output_dir / partition['name']
+            partition_output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Process each channel
+            for i, channel_file in enumerate(channel_files, 1):
+                output_path = partition_channel_file(
+                    channel_file, partition, partition_output_dir, sample_name
+                )
+                print(f"   [{i}/{len(channel_files)}] {channel_file.name} → {output_path.name}")
+
+            # Save partition metadata
+            metadata = {
+                'original_sample': sample_name,
+                'partition_name': partition['name'],
+                'suffix': partition['suffix'],
+                'bounds': {
+                    'x_min': partition['x_min'],
+                    'x_max': partition['x_max'],
+                    'y_min': partition['y_min'],
+                    'y_max': partition['y_max']
+                },
+                'dimensions': {
+                    'width': partition['width'],
+                    'height': partition['height']
+                },
+                'num_channels': len(channel_files)
+            }
+
+            metadata_path = partition_output_dir / 'partition_metadata.json'
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+
+            partition_metadata.append(metadata)
+            print(f"   ✓ Partition {partition['name']} complete!")
+
+        # Save overall metadata for this sample
+        overall_metadata = {
             'original_sample': sample_name,
-            'partition_name': partition['name'],
-            'suffix': partition['suffix'],
-            'bounds': {
-                'x_min': partition['x_min'],
-                'x_max': partition['x_max'],
-                'y_min': partition['y_min'],
-                'y_max': partition['y_max']
-            },
-            'dimensions': {
-                'width': partition['width'],
-                'height': partition['height']
-            },
-            'num_channels': len(channel_files)
+            'partitions': partition_metadata,
+            'total_channels': len(channel_files),
+            'original_dimensions': {
+                'width': sample_info['image_width'],
+                'height': sample_info['image_height']
+            }
         }
 
-        metadata_path = partition_output_dir / 'partition_metadata.json'
+        metadata_path = vis_dir / f"{sample_name}_partition_metadata.json"
         with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
+            json.dump(overall_metadata, f, indent=2)
 
-        partition_metadata.append(metadata)
-        print(f"   ✓ Partition {partition['name']} complete!")
+        all_metadata.append(overall_metadata)
 
-    # Save overall metadata
-    overall_metadata = {
-        'original_sample': sample_name,
-        'partitions': partition_metadata,
-        'total_channels': len(channel_files),
-        'original_dimensions': {
-            'width': image_width,
-            'height': image_height
-        }
-    }
+        print(f"\n✅ Sample {sample_name} partitioning complete!")
+        print(f"Created {len(partitions)} partitions:")
+        for p in partitions:
+            print(f"   • {p['name']}: {p['width']}x{p['height']} pixels")
 
-    metadata_path = vis_dir / f"{sample_name}_partition_metadata.json"
-    with open(metadata_path, 'w') as f:
-        json.dump(overall_metadata, f, indent=2)
-
+    # Final summary
     print(f"\n{'='*70}")
-    print(f"✅ Sample {sample_name} partitioning complete!")
+    print(f"✅ ALL SAMPLES PARTITIONING COMPLETE!")
     print(f"{'='*70}")
-    print(f"Created {len(partitions)} partitions:")
-    for p in partitions:
-        print(f"   • {p['name']}: {p['width']}x{p['height']} pixels")
+    print(f"Processed {len(sample_partitions_list)} samples:")
+    for metadata in all_metadata:
+        print(f"   • {metadata['original_sample']}: {len(metadata['partitions'])} partitions")
     print(f"\nOutput directory: {output_dir}")
-    print(f"Visualizations: {vis_dir}")
 
     return True
 
@@ -389,19 +454,26 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  python scripts/partition_samples.py --sample_name JL216
-  python scripts/partition_samples.py --sample_name JL216 --source_dir custom_rawdata
+  # Single sample
+  python scripts/partition_samples.py --sample_names JL216
+
+  # Multiple samples (batch mode)
+  python scripts/partition_samples.py --sample_names JL216 JL217 JL218
+
+  # Custom directories
+  python scripts/partition_samples.py --sample_names JL216 --source_dir custom_rawdata
 
 This will:
-  1. Generate a coordinate grid image of the DAPI channel
-  2. Prompt you to define partition boundaries
-  3. Create partitioned samples in rawdata/ (e.g., JL216A/, JL216B/)
-  4. Each partition will contain all channels with the same naming structure
+  1. For each sample, generate a coordinate grid image of the DAPI channel
+  2. Prompt you to define partition boundaries for each sample
+  3. Show a summary of ALL partitions across ALL samples
+  4. Ask for confirmation, then create all partitions at once
+  5. Each partition will have correctly renamed channel files (e.g., JL216A_*.ome.tif)
         """
     )
 
-    parser.add_argument('--sample_name', required=True,
-                       help='Name of the sample to partition (e.g., JL216)')
+    parser.add_argument('--sample_names', nargs='+', required=True,
+                       help='Names of samples to partition (e.g., JL216 JL217 JL218)')
     parser.add_argument('--source_dir', default='rawdata_prepartition',
                        help='Source directory containing pre-partition samples (default: rawdata_prepartition)')
     parser.add_argument('--output_dir', default='rawdata',
@@ -419,7 +491,7 @@ This will:
     # Verify source directory exists
     if not source_dir.exists():
         print(f"❌ Error: Source directory does not exist: {source_dir}")
-        print(f"   Please create it and place your samples inside (e.g., {source_dir}/{args.sample_name}/)")
+        print(f"   Please create it and place your samples inside")
         return 1
 
     # Create output directories
@@ -434,13 +506,28 @@ This will:
             print("⚠ Warning: scikit-image not found. Install with: pip install scikit-image")
             print("   (Required for displaying very large images)")
 
-        # Partition the sample
-        success = partition_sample(
-            args.sample_name,
-            source_dir,
-            output_dir,
-            visualization_dir
-        )
+        # Collect partition info for all samples
+        sample_partitions_list = []
+
+        for sample_name in args.sample_names:
+            try:
+                sample_info = collect_sample_partitions(
+                    sample_name, source_dir, visualization_dir
+                )
+                sample_partitions_list.append(sample_info)
+            except Exception as e:
+                print(f"\n❌ Error collecting partitions for {sample_name}: {e}")
+                import traceback
+                traceback.print_exc()
+                print("\nContinuing with remaining samples...")
+                continue
+
+        if not sample_partitions_list:
+            print("\n❌ No samples were successfully processed")
+            return 1
+
+        # Process all partitions
+        success = process_all_partitions(sample_partitions_list, output_dir)
 
         if success:
             print(f"\n🎉 Partitioning complete!")
