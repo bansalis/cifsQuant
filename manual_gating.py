@@ -36,12 +36,28 @@ from scipy.signal import argrelextrema
 
 MARKERS = {
     'R1.0.1_CY3': 'TOM',
-    'R1.0.4_CY5_CD45': 'CD45',
-    'R1.0.4_CY7_AGFP': 'AGFP',
-    'R2.0.4_CY3_PERK': 'PERK',
-    'R4.0.4_CY5_CD8A': 'CD8B',  # Note: CSV has CD8A
-    'R6.0.4_CY7_KI67': 'KI67',
-    'R3.0.4_CY3_CD3E': 'CD3'  # Note: CSV has CD3E
+  'R1.0.4_CY5_CD45': 'CD45',
+  'R1.0.4_CY7_AGFP': 'NINJA',
+  'R2.0.4_CY3_PERK': 'PERK',
+  'R2.0.4_CY5_CD4': 'CD4',
+  'R2.0.4_CY7_EPCAM': 'EPCAM',
+  'R2.0.4_FITC_B220': 'B220',
+  'R3.0.4_CY3_CD3E': 'CD3E',
+  'R3.0.4_CY5_F480': 'F480',
+  'R3.0.4_CY7_TTF1': 'TTF1',
+  'R4.0.4_CY3_PD': 'PD',
+  'R4.0.4_CY5_CD8A': 'CD8A',
+  'R4.0.4_FITC_ASMA': 'ASMA',
+  'R5.0.4_CY3_GZMB': 'GZMB',
+  'R5.0.4_CY5_KLRG1': 'KLRG1',
+  'R5.0.4_FITC_FOXP3': 'FOXP3',
+  'R6.0.4_CY3_PD1': 'PD1',
+  'R6.0.4_CY5_NAK': 'NAK',
+  'R6.0.4_CY7_KI67': 'KI67',
+  'R6.0.4_FITC_MHCII': 'MHCII',
+  'R7.0.4_CY3_BCL6': 'BCL6',
+  'R7.0.4_CY5_CC3': 'CC3',
+  'R7.0.4_FITC_CD103': 'CD103'
 }
 
 # GATE VALUES (normalized 0-1 scale)
@@ -49,13 +65,29 @@ MARKERS = {
 # Set to None to auto-calculate suggestions
 
 GATES = {
-    'TOM': None,#0.228,#0.06,      # Example: manually set
-    'CD45': None,#0.350,#0.32,
-    'AGFP': None,#0.475,#0.60,
-    'PERK': None,#0.572,#0.80,
-    'CD8B': None,#0.486,#0.60,
-    'KI67': None,#0.175,#0.20,
-    'CD3': None#0.377#0.30
+    'TOM': None,
+  'CD45': None,
+  'NINJA': None,
+  'PERK': None,
+  'CD4': None,
+  'EPCAM': None,
+  'B220': None,
+  'CD3E': None,
+  'F480': None,
+  'TTF1': None,
+  'PD': None,
+  'CD8A': None,
+  'ASMA': None,
+  'GZMB': None,
+  'KLRG1': None,
+  'FOXP3': None,
+  'PD1': None,
+  'NAK': None,
+  'KI67': None,
+  'MHCII': None,
+  'BCL6': None,
+  'CC3': None,
+  'CD103': None
 }
 
 # Advanced options
