@@ -1305,12 +1305,42 @@ def gmm_gating(adata):
             gate = float((mean_neg + mean_pos) / 2)
         elif bic_diff < -10:  # Strong evidence for 1 component (rare marker)
             marker_quality = 'rare'
-            # Use conservative 99th percentile for rare markers
-            gate = float(np.percentile(pos_vals, 99))
+            # VERY conservative for rare markers: 99.5th percentile
+            gate_percentile = float(np.percentile(pos_vals, 99.5))
+
+            # Add minimum absolute intensity floor (10% of max)
+            max_intensity = np.max(pos_vals)
+            min_gate = max_intensity * 0.10
+
+            gate = float(max(gate_percentile, min_gate))
+
         else:  # Weak/ambiguous fit (possibly artifact)
             marker_quality = 'artifact'
-            # Use 95th percentile for artifacts
-            gate = float(np.percentile(pos_vals, 95))
+            # Use 97th percentile for artifacts (more conservative than before)
+            gate = float(np.percentile(pos_vals, 97))
+
+        # Per-tile validation for rare markers
+        tile_uniformity = np.nan
+        if marker_quality == 'rare' and 'tile_id' in adata.obs.columns:
+            # Check if positive cells are uniform across tiles
+            tile_pos_pcts = []
+            for tile_id in adata.obs['tile_id'].unique():
+                tile_mask = adata.obs['tile_id'] == tile_id
+                tile_vals = all_vals[tile_mask]
+                if len(tile_vals) > 10:
+                    tile_pos_pct = (tile_vals > gate).mean() * 100
+                    tile_pos_pcts.append(tile_pos_pct)
+
+            if len(tile_pos_pcts) > 1:
+                # Calculate coefficient of variation (CV) of % positive across tiles
+                tile_uniformity = np.std(tile_pos_pcts) / (np.mean(tile_pos_pcts) + 0.01)
+
+                # If very non-uniform (CV > 2), increase gate to be more conservative
+                if tile_uniformity > 2.0:
+                    gate_adj = float(np.percentile(pos_vals, 99.9))
+                    print(f"             ⚠️  Non-uniform across tiles (CV={tile_uniformity:.2f}), "
+                          f"adjusting gate: {gate:.1f} → {gate_adj:.1f}")
+                    gate = gate_adj
 
         gates[marker] = gate
         gate_metadata[marker] = {
@@ -1320,7 +1350,8 @@ def gmm_gating(adata):
             'mean_neg': float(mean_neg),
             'mean_pos': float(mean_pos),
             'std_neg': float(std_neg),
-            'std_pos': float(std_pos)
+            'std_pos': float(std_pos),
+            'tile_uniformity': float(tile_uniformity) if not np.isnan(tile_uniformity) else np.nan
         }
 
         # Calculate positive percentage
@@ -1333,6 +1364,8 @@ def gmm_gating(adata):
               f"{pos_pct:5.1f}% pos")
         print(f"             neg_μ={mean_neg:7.1f} (σ={std_neg:.1f}) | "
               f"pos_μ={mean_pos:7.1f} (σ={std_pos:.1f})")
+        if not np.isnan(tile_uniformity):
+            print(f"             tile_uniformity_CV={tile_uniformity:.2f}")
 
     print("="*70)
     return gates, gate_metadata
@@ -1877,6 +1910,102 @@ def create_diagnostic_plots(adata, gates, output_dir):
         plt.close('all')
     
     print(f"✓ Diagnostics saved to {plots_dir}")
+
+def calculate_validation_metrics(adata, gates, output_dir):
+    """
+    Calculate and save validation metrics for normalization and gating quality.
+
+    Metrics:
+    - % positive cells per tile (should be uniform if biological)
+    - Tile boundary discontinuity score
+    - Spatial autocorrelation of intensities
+    """
+    import pandas as pd
+    from scipy.spatial import cKDTree
+    from pathlib import Path
+
+    print("\n" + "="*70)
+    print("VALIDATION METRICS")
+    print("="*70)
+
+    output_dir = Path(output_dir)
+    metrics_file = output_dir / 'validation_metrics.csv'
+
+    all_metrics = []
+
+    for marker in adata.var_names:
+        marker_idx = adata.var_names.get_loc(marker)
+        gate = gates.get(marker, np.nan)
+
+        if np.isnan(gate) or 'tile_id' not in adata.obs.columns:
+            continue
+
+        # Per-tile metrics
+        tile_metrics = []
+        for sample in adata.obs['sample_id'].unique():
+            sample_mask = adata.obs['sample_id'] == sample
+
+            for tile_id in adata.obs.loc[sample_mask, 'tile_id'].unique():
+                tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                tile_vals = adata.layers['aligned'][tile_mask, marker_idx]
+                tile_coords = adata.obsm['spatial'][tile_mask]
+
+                if len(tile_vals) < 10:
+                    continue
+
+                # % positive
+                pct_pos = (tile_vals > gate).mean() * 100
+
+                # Median intensity
+                median_int = np.median(tile_vals[tile_vals > 0]) if (tile_vals > 0).sum() > 0 else 0
+
+                tile_metrics.append({
+                    'sample': sample,
+                    'tile_id': tile_id,
+                    'pct_positive': pct_pos,
+                    'median_intensity': median_int,
+                    'n_cells': len(tile_vals)
+                })
+
+        if len(tile_metrics) == 0:
+            continue
+
+        tile_df = pd.DataFrame(tile_metrics)
+
+        # Calculate uniformity metrics
+        pct_pos_cv = tile_df['pct_positive'].std() / (tile_df['pct_positive'].mean() + 0.01)
+        median_int_cv = tile_df['median_intensity'].std() / (tile_df['median_intensity'].mean() + 0.01)
+
+        # Tile boundary discontinuity (simplified: CV of tile medians)
+        boundary_discontinuity = median_int_cv
+
+        # Spatial autocorrelation (Moran's I approximation using tile-level data)
+        # High autocorrelation = smooth, Low = patchy (bad)
+        spatial_autocorr = np.nan  # Placeholder - full calculation would be expensive
+
+        all_metrics.append({
+            'marker': marker,
+            'n_tiles': len(tile_metrics),
+            'pct_pos_cv': pct_pos_cv,
+            'median_intensity_cv': median_int_cv,
+            'boundary_discontinuity': boundary_discontinuity,
+            'spatial_autocorr': spatial_autocorr,
+            'mean_pct_pos': tile_df['pct_positive'].mean(),
+            'std_pct_pos': tile_df['pct_positive'].std()
+        })
+
+        print(f"  {marker:8s}: tile_CV={pct_pos_cv:.2f} | "
+              f"boundary_disc={boundary_discontinuity:.2f} | "
+              f"mean_pos={tile_df['pct_positive'].mean():.1f}%")
+
+    # Save metrics
+    metrics_df = pd.DataFrame(all_metrics)
+    metrics_df.to_csv(metrics_file, index=False)
+    print(f"\n✓ Saved validation metrics to: {metrics_file}")
+    print("="*70)
+
+    return metrics_df
+
 
 def create_tile_intensity_heatmaps(adata, output_dir):
     """
@@ -2424,31 +2553,112 @@ def load_or_detect_tile_config(adata, config_file='tile_config.json'):
         
         return tile_size
 
-def assign_tiles_fast(adata, tile_size):
+def assign_tiles_edge_detection(adata):
     """
-    Fast tile assignment using simple grid (no detection needed).
+    Tile assignment using edge detection to find actual microscope boundaries.
+    This replaces the simple grid approach which missed actual tile edges.
     """
-    print(f"\nAssigning tiles ({tile_size}×{tile_size})...")
-    
-    for sample in adata.obs['sample_id'].unique():
+    from scipy.ndimage import sobel, gaussian_filter
+    from scipy.signal import find_peaks
+    import time
+
+    print("\n" + "="*70)
+    print("EDGE-BASED TILE DETECTION (Finding Real Microscope Tiles)")
+    print("="*70)
+
+    start_time = time.time()
+
+    for sample_idx, sample in enumerate(adata.obs['sample_id'].unique()):
+        print(f"\n[{sample_idx+1}/{adata.obs['sample_id'].nunique()}] {sample}")
         sample_mask = adata.obs['sample_id'] == sample
         coords = adata.obsm['spatial'][sample_mask]
-        
+        n_cells = sample_mask.sum()
+
+        print(f"  Cells: {n_cells:,}")
+
         x_min, x_max = coords[:, 0].min(), coords[:, 0].max()
         y_min, y_max = coords[:, 1].min(), coords[:, 1].max()
-        
-        # Simple grid assignment
-        x_tile_ids = ((coords[:, 0] - x_min) / tile_size).astype(int)
-        y_tile_ids = ((coords[:, 1] - y_min) / tile_size).astype(int)
-        
-        tile_ids = [f"{y}_{x}" for y, x in zip(y_tile_ids, x_tile_ids)]
-        adata.obs.loc[sample_mask, 'tile_id'] = tile_ids
-        
-        n_tiles = len(np.unique(tile_ids))
-        n_cells = sample_mask.sum()
-        print(f"  {sample}: {n_tiles} tiles ({n_cells/n_tiles:.0f} cells/tile)")
-    
-    print("✓ Tile assignment complete")
+
+        print(f"  Spatial extent: {x_min:.0f}-{x_max:.0f} × {y_min:.0f}-{y_max:.0f} pixels")
+
+        # High-resolution grid for edge detection
+        grid_size = 400  # Increased for better edge detection
+        x_bins = np.linspace(x_min, x_max, grid_size)
+        y_bins = np.linspace(y_min, y_max, grid_size)
+
+        print(f"  Building intensity map ({grid_size}×{grid_size})...")
+
+        # Fast binning
+        x_indices = np.digitize(coords[:, 0], x_bins) - 1
+        y_indices = np.digitize(coords[:, 1], y_bins) - 1
+        x_indices = np.clip(x_indices, 0, grid_size-2)
+        y_indices = np.clip(y_indices, 0, grid_size-2)
+
+        intensity_map = np.zeros((grid_size-1, grid_size-1))
+
+        # Use sum of all channels for edge detection
+        sample_data = adata.X[sample_mask]
+        total_intensity = sample_data.sum(axis=1)
+
+        for i in range(grid_size-1):
+            for j in range(grid_size-1):
+                mask = (x_indices == i) & (y_indices == j)
+                if mask.sum() > 0:
+                    intensity_map[j, i] = np.median(total_intensity[mask])
+
+        # Edge detection
+        intensity_smooth = gaussian_filter(intensity_map, sigma=2.0)
+        edges_x = sobel(intensity_smooth, axis=1)
+        edges_y = sobel(intensity_smooth, axis=0)
+        edges = np.sqrt(edges_x**2 + edges_y**2)
+
+        # Find tile boundaries
+        edge_threshold = np.percentile(edges[edges > 0], 80)  # More sensitive
+        x_edge_strength = edges.sum(axis=0)
+        y_edge_strength = edges.sum(axis=1)
+
+        # Find peaks (tile boundaries)
+        min_distance = max(5, grid_size // 50)  # Adaptive distance
+        x_peaks, _ = find_peaks(x_edge_strength,
+                               height=edge_threshold * grid_size / 20,
+                               distance=min_distance)
+        y_peaks, _ = find_peaks(y_edge_strength,
+                               height=edge_threshold * grid_size / 20,
+                               distance=min_distance)
+
+        print(f"  Detected {len(x_peaks)} vertical edges, {len(y_peaks)} horizontal edges")
+
+        if len(x_peaks) > 1 and len(y_peaks) > 1:
+            x_edges = x_bins[x_peaks]
+            y_edges = y_bins[y_peaks]
+
+            avg_x_spacing = np.mean(np.diff(x_edges))
+            avg_y_spacing = np.mean(np.diff(y_edges))
+            print(f"  Microscope tile size: {avg_x_spacing:.0f} × {avg_y_spacing:.0f} pixels")
+
+            # Assign tiles based on detected edges
+            x_tile_ids = np.digitize(coords[:, 0], x_edges)
+            y_tile_ids = np.digitize(coords[:, 1], y_edges)
+            tile_ids = [f"{y}_{x}" for y, x in zip(y_tile_ids, x_tile_ids)]
+            adata.obs.loc[sample_mask, 'tile_id'] = tile_ids
+
+            n_tiles = len(np.unique(tile_ids))
+            print(f"  ✓ Assigned {n_tiles} tiles ({n_cells/n_tiles:.0f} cells/tile)")
+        else:
+            # Fallback: grid based on detected tile size or default
+            print(f"  ⚠️  Edge detection insufficient, using grid fallback")
+            tile_size = 2048  # Default
+            x_tile_ids = ((coords[:, 0] - x_min) / tile_size).astype(int)
+            y_tile_ids = ((coords[:, 1] - y_min) / tile_size).astype(int)
+            tile_ids = [f"{y}_{x}" for y, x in zip(y_tile_ids, x_tile_ids)]
+            adata.obs.loc[sample_mask, 'tile_id'] = tile_ids
+            n_tiles = len(np.unique(tile_ids))
+            print(f"  ✓ Grid fallback: {n_tiles} tiles")
+
+    elapsed = time.time() - start_time
+    print(f"\n{'='*70}")
+    print(f"TILE DETECTION COMPLETE ({elapsed:.1f}s)")
+    print("="*70)
 
 def detect_globally_bright_tiles(adata, mad_threshold=3.5, ratio_threshold=1.5, majority_fraction=0.5):
     """
@@ -2561,10 +2771,10 @@ def detect_globally_bright_tiles(adata, mad_threshold=3.5, ratio_threshold=1.5, 
                 if deviation > mad_threshold and ratio > ratio_threshold:
                     elevated_channels.append(marker_idx)
 
-                    # Store correction factor
+                    # Store correction factor (convert marker_idx to string for HDF5 compatibility)
                     if tile_id not in bright_tiles[sample]:
                         bright_tiles[sample][tile_id] = {}
-                    bright_tiles[sample][tile_id][marker_idx] = sample_median / tile_med
+                    bright_tiles[sample][tile_id][str(marker_idx)] = sample_median / tile_med
 
             # Only keep tile if MAJORITY of channels are elevated
             if len(elevated_channels) > 0:
@@ -2598,7 +2808,8 @@ def correct_globally_bright_tiles(adata, bright_tiles):
     adata : AnnData
         Input data
     bright_tiles : dict
-        Dictionary mapping sample_id -> {tile_id: {marker_idx: correction_factor}}
+        Dictionary mapping sample_id -> {tile_id: {marker_idx_str: correction_factor}}
+        Note: marker_idx is stored as string for HDF5 compatibility
 
     Returns:
     --------
@@ -2618,7 +2829,9 @@ def correct_globally_bright_tiles(adata, bright_tiles):
         for tile_id, corrections in bright_tiles[sample].items():
             tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
 
-            for marker_idx, correction_factor in corrections.items():
+            for marker_idx_str, correction_factor in corrections.items():
+                # Convert marker_idx back to int (was stored as string for HDF5 compatibility)
+                marker_idx = int(marker_idx_str)
                 adata.X[tile_mask, marker_idx] *= correction_factor
 
         print(f"  {sample}: Corrected {len(bright_tiles[sample])} globally bright tiles")
@@ -2627,11 +2840,62 @@ def correct_globally_bright_tiles(adata, bright_tiles):
     return adata
 
 
+def detect_dim_markers(adata, dim_threshold_percentile=25):
+    """
+    Identify dim/rare markers that need special normalization.
+
+    Returns marker indices and names that are considered dim.
+    """
+    print("\n" + "="*70)
+    print("DIM MARKER DETECTION")
+    print("="*70)
+
+    dim_markers = []
+    marker_stats = []
+
+    for marker_idx, marker in enumerate(adata.var_names):
+        vals = adata.X[:, marker_idx]
+        pos_vals = vals[vals > 0]
+
+        if len(pos_vals) < 100:
+            marker_stats.append((marker, 0, 0))
+            dim_markers.append(marker_idx)
+            continue
+
+        median_intensity = np.median(pos_vals)
+        pct_positive = (vals > np.percentile(pos_vals, 95) * 0.1).sum() / len(vals) * 100
+
+        marker_stats.append((marker, median_intensity, pct_positive))
+
+    # Determine dim threshold
+    median_intensities = [s[1] for s in marker_stats if s[1] > 0]
+    if len(median_intensities) == 0:
+        print("  No valid markers found")
+        return []
+
+    intensity_threshold = np.percentile(median_intensities, dim_threshold_percentile)
+
+    for marker_idx, (marker, med_int, pct_pos) in enumerate(marker_stats):
+        if med_int > 0 and med_int < intensity_threshold:
+            dim_markers.append(marker_idx)
+
+    if len(dim_markers) > 0:
+        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} dim markers:")
+        for idx in dim_markers:
+            marker, med_int, pct_pos = marker_stats[idx]
+            print(f"    {marker}: median={med_int:.0f}, {pct_pos:.1f}% positive")
+    else:
+        print("  No dim markers detected")
+
+    print("="*70)
+    return dim_markers
+
+
 def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                                       config_file='tile_config.json',
                                       skip_within_tile=False, skip_cross_sample=False):
     """
-    Hierarchical UniFORM with optimized parallelization and artifact detection.
+    Hierarchical UniFORM with edge-based tile detection and dim marker handling.
 
     Parameters:
     -----------
@@ -2655,10 +2919,12 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
 
     adata.layers['raw'] = adata.X.copy()
 
-    # Load or detect tile size
+    # Edge-based tile detection (finds actual microscope boundaries)
     if autodetect_tiles:
-        tile_size = load_or_detect_tile_config(adata, config_file)
-        assign_tiles_fast(adata, tile_size)
+        assign_tiles_edge_detection(adata)
+
+    # Detect dim markers for special handling
+    dim_marker_indices = detect_dim_markers(adata)
 
     # Store raw tile medians before any correction for diagnostics
     adata.uns['tile_metrics_before'] = {}
@@ -2698,41 +2964,53 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         # ====================================================================
         # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)
         # ====================================================================
-        print("  Level 1: Background-anchored tile correction...")
+        is_dim_marker = marker_idx in dim_marker_indices
+        if is_dim_marker:
+            print("  Level 1: STRONG tile correction (dim marker)...")
+        else:
+            print("  Level 1: Background-anchored tile correction...")
         start_time = time.time()
-        
-        def process_sample_tiles(sample, sample_mask, marker_idx, X_data, obs_data):
+
+        def process_sample_tiles(sample, sample_mask, marker_idx, X_data, obs_data, is_dim):
             """Process all tiles for one sample"""
             tiles = obs_data.loc[sample_mask, 'tile_id'].unique()
-            
-            # Global reference = 5th percentile across all tiles
+
             sample_vals = X_data[sample_mask, marker_idx]
             pos_sample_vals = sample_vals[sample_vals > 0]
             if len(pos_sample_vals) < 100:
                 return None
-            global_bg = np.percentile(pos_sample_vals, 5)
-            
+
+            # For dim markers: use median for stronger correction
+            # For normal markers: use 5th percentile
+            if is_dim:
+                global_ref = np.median(pos_sample_vals)
+                tile_percentile = 50  # median
+                print(f"      {sample}: Using median (stronger correction)")
+            else:
+                global_ref = np.percentile(pos_sample_vals, 5)
+                tile_percentile = 5
+
             corrections = {}
             for tile_id in tiles:
                 tile_mask = sample_mask & (obs_data['tile_id'] == tile_id)
                 vals = X_data[tile_mask, marker_idx]
-                
+
                 pos_vals_tile = vals[vals > 0]
                 if len(pos_vals_tile) < 10:
                     continue
-                tile_bg = np.percentile(pos_vals_tile, 5)
-                
-                if tile_bg > 0:
-                    corrections[tile_id] = global_bg / tile_bg
-            
+                tile_ref = np.percentile(pos_vals_tile, tile_percentile)
+
+                if tile_ref > 0:
+                    corrections[tile_id] = global_ref / tile_ref
+
             return sample, corrections
         if not skip_within_tile:
             # Parallel processing across samples
-            sample_masks = {sample: adata.obs['sample_id'] == sample 
+            sample_masks = {sample: adata.obs['sample_id'] == sample
                         for sample in adata.obs['sample_id'].unique()}
-            
+
             results = Parallel(n_jobs=n_jobs, backend='threading')(
-                delayed(process_sample_tiles)(sample, mask, marker_idx, adata.X, adata.obs)
+                delayed(process_sample_tiles)(sample, mask, marker_idx, adata.X, adata.obs, is_dim_marker)
                 for sample, mask in sample_masks.items()
             )
             
@@ -3153,6 +3431,9 @@ def main():
     create_tile_intensity_heatmaps(adata, output_dir)
     # Note: Correlation matrices removed in favor of simplified global brightness check
 
+    # Calculate and save validation metrics
+    validation_metrics = calculate_validation_metrics(adata, gates, output_dir)
+
     # Save gates
     with open(output_dir / 'gates.json', 'w') as f:
         json.dump({k: float(v) for k, v in gates.items()}, f, indent=2)
@@ -3173,6 +3454,7 @@ def main():
     print(f"   - gated_data.h5ad: Final output")
     print(f"   - gates.json: Gate values")
     print(f"   - gate_thresholds_enhanced.csv: Enhanced gate metadata with BIC and quality")
+    print(f"   - validation_metrics.csv: Tile uniformity and boundary discontinuity scores")
     print(f"   - tile_heatmap_*.png: Per-sample tile intensity heatmaps (before/after)")
 
 if __name__ == '__main__':
