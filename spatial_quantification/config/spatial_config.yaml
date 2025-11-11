@@ -860,26 +860,48 @@ tumor_microenvironment:
 
   # Distance bins for proximity analysis (in microns)
   distance_bins:
-    contact: 10      # Cell-cell contact distance
-    close: 30        # Close proximity
-    distal: 100      # Distal proximity
+    contact: 20      # Cell-cell contact distance
+    close: 100        # Close proximity
+    distal: 500      # Distal proximity
 
   # Tumor phenotypes to analyze
   tumor_phenotypes:
     - name: 'pERK'
       phenotype: 'pERK_positive_tumor'
     - name: 'NINJA'
-      phenotype: 'AGFP_positive_tumor'
+      phenotype: 'NINJA_positive_tumor'
     - name: 'Ki67'
       phenotype: 'Ki67_positive_tumor'
-
+    - name: 'EPCAM+'
+      phenotype: 'EPCAM_positive_tumor'
+      description: 'Epithelial tumor cells'
+    - name: 'TTF1+'
+      phenotype: 'TTF1_positive_tumor'
+      description: 'TTF1+ tumor cells (lung lineage marker)'
+    - name: 'PD-L1+'
+      phenotype: 'PD_positive_tumor'
+      description: 'PD-L1+ tumor cells (immune suppressive)'
+    - name: 'CC3+'
+      phenotype: 'CC3_positive_tumor'
+      description: 'Apoptotic tumor cells'
+    
   # Immune populations to quantify in microenvironment
   immune_populations:
-    - 'CD8_T_cells'
-    - 'CD4_T_cells'
-    - 'CD3_positive'
     - 'CD45_positive'
-    - 'Non_T_immune'
+    - 'T_cells'
+    - 'CD4_T_cells'
+    - 'CD8_T_cells'
+    - 'CD8_TRM'
+    - 'CD8_cytotoxic'
+    - 'CD8_TRM_cytotoxic'
+    - 'PD1_positive_T_cells'
+    - 'CD8_PD1_positive'
+    - 'CD4_Tregs'
+    - 'Macrophages'
+    - 'M1_like_macrophages'
+    - 'NK_cells'
+    - 'B_cells'
+    - 'CAFs'
 
 # ============================================================================
 # ANALYSIS 9: PSEUDOTIME ANALYSIS (NEW)

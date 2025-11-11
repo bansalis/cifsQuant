@@ -35,3 +35,7 @@ efficient_spatial_analysis/*
 comprehensive_spatial_analysis/*
 markers.csv
 sample_metadata.csv
+channel_names.txt
+11_11_archive_manual_gating_output/*
+11_11_archive_spatial_quantification_results/*
+models_cache/*
