@@ -3147,13 +3147,13 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         print("  Level 1: Per-tile rescaling (1st-99th)...")
         start_time = time.time()
 
-        if not skip_within_tile and 'tile_id' in obs_df.columns:
-            for sample in obs_df['sample_id'].unique():
-                sample_mask = obs_df['sample_id'] == sample
+        if not skip_within_tile and 'tile_id' in adata.obs.columns:
+            for sample in adata.obs['sample_id'].unique():
+                sample_mask = adata.obs['sample_id'] == sample
 
-                for tile_id in obs_df.loc[sample_mask, 'tile_id'].unique():
-                    tile_mask = sample_mask & (obs_df['tile_id'] == tile_id)
-                    vals = marker_data[tile_mask]
+                for tile_id in adata.obs.loc[sample_mask, 'tile_id'].unique():
+                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    vals = adata.X[tile_mask, marker_idx]
 
                     pos_vals = vals[vals > 0]
                     if len(pos_vals) < 10:
@@ -3166,60 +3166,20 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                     if p99 > p1:
                         vals_rescaled = (vals - p1) / (p99 - p1)
                         vals_rescaled = np.clip(vals_rescaled, 0, 1)
-                        marker_data[tile_mask] = vals_rescaled
+                        adata.X[tile_mask, marker_idx] = vals_rescaled
 
-        return marker_idx, marker_data
+        elapsed = time.time() - start_time
+        print(f"    ✓ Level 1 complete in {elapsed:.1f}s")
 
-    # ====================================================================
-    # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)
-    # Rescale each tile to [0,1] using 1st-99th percentile
-    # ====================================================================
-    print("\n" + "="*70)
-    print("LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)")
-    print("="*70)
-    start_time_level1 = time.time()
+        # ====================================================================
+        # LEVEL 2: CROSS-TILE WITHIN-SAMPLE ALIGNMENT (per UniFORM)
+        # Align all tiles within each sample using negative peak + quantile mapping
+        # This is THE KEY STEP for removing tile artifacts
+        # ====================================================================
+        print("\n  Level 2: Cross-tile within-sample alignment (UniFORM)...")
+        start_time = time.time()
 
-    if not skip_within_tile and 'tile_id' in adata.obs.columns:
-        # Prepare marker processing tasks
-        marker_tasks = [
-            (marker_idx, marker, adata.X, adata.obs, marker_idx in dim_marker_indices, skip_within_tile)
-            for marker_idx, marker in enumerate(adata.var_names)
-        ]
-
-        # Process markers in parallel
-        print(f"  Processing {len(adata.var_names)} markers in parallel with {n_jobs} jobs...")
-        with parallel_backend('loky', n_jobs=n_jobs):
-            results = Parallel()(
-                delayed(process_marker_level1)(*task)
-                for task in marker_tasks
-            )
-
-        # Update adata.X with results
-        for marker_idx, marker_data in results:
-            adata.X[:, marker_idx] = marker_data
-            marker = adata.var_names[marker_idx]
-            is_dim = marker_idx in dim_marker_indices
-            status = " (dim marker)" if is_dim else ""
-            print(f"  ✓ {marker}{status}")
-
-    elapsed_level1 = time.time() - start_time_level1
-    print(f"\n  ✓✓✓ Level 1 COMPLETE in {elapsed_level1:.1f}s")
-    print("="*70)
-
-    # ====================================================================
-    # LEVEL 2: CROSS-TILE WITHIN-SAMPLE ALIGNMENT (OPTIMIZED)
-    # Align all tiles within each sample using negative peak + quantile mapping
-    # This is THE KEY STEP for removing tile artifacts
-    # ====================================================================
-    print("\n" + "="*70)
-    print("LEVEL 2: CROSS-TILE ALIGNMENT (OPTIMIZED)")
-    print("="*70)
-    start_time_level2 = time.time()
-
-    if 'tile_id' in adata.obs.columns:
-        for marker_idx, marker in enumerate(adata.var_names):
-            print(f"  {marker} ({marker_idx+1}/{len(adata.var_names)})", end=' ')
-
+        if 'tile_id' in adata.obs.columns:
             for sample in adata.obs['sample_id'].unique():
                 sample_mask = adata.obs['sample_id'] == sample
                 tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
@@ -3227,7 +3187,7 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                 if len(tiles) < 2:
                     continue
 
-                # Collect landmarks from each tile (vectorized where possible)
+                # Collect landmarks from each tile
                 tile_landmarks = {}
                 for tile_id in tiles:
                     tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
@@ -3247,7 +3207,6 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                 reference_landmarks = np.median(list(tile_landmarks.values()), axis=0)
 
                 # Align each tile to the reference
-                n_aligned = 0
                 for tile_id, src_landmarks in tile_landmarks.items():
                     tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
                     vals = adata.X[tile_mask, marker_idx].copy()
@@ -3267,16 +3226,12 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                         vals_aligned = spline(vals)
                         vals_aligned = np.clip(vals_aligned, 0, 1)
                         adata.X[tile_mask, marker_idx] = vals_aligned
-                        n_aligned += 1
                     except Exception as e:
-                        pass  # Silent failure for cleaner output
+                        pass  # Silent fail on individual tiles
 
-            print("✓")
+        elapsed = time.time() - start_time
+        print(f"    ✓ Level 2 complete in {elapsed:.1f}s")
 
-    elapsed_level2 = time.time() - start_time_level2
-    print(f"\n  ✓✓✓ Level 2 COMPLETE in {elapsed_level2:.1f}s")
-    print("="*70)
-        
     # ====================================================================
     # LEVEL 3: CROSS-SAMPLE ALIGNMENT (per UniFORM)
     # Align samples to each other using same quantile mapping approach
