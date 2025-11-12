@@ -7,6 +7,7 @@ from .infiltration_analysis_optimized import InfiltrationAnalysisOptimized
 from .neighborhoods import NeighborhoodAnalysis
 from .neighborhoods_optimized import NeighborhoodAnalysisOptimized
 from .advanced import AdvancedAnalysis
+from .tumor_microenvironment_analysis import TumorMicroenvironmentAnalysis
 
 __all__ = [
     'PopulationDynamics',
@@ -15,5 +16,6 @@ __all__ = [
     'InfiltrationAnalysisOptimized',
     'NeighborhoodAnalysis',
     'NeighborhoodAnalysisOptimized',
-    'AdvancedAnalysis'
+    'AdvancedAnalysis',
+    'TumorMicroenvironmentAnalysis'
 ]
