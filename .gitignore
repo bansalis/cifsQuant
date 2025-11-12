@@ -26,8 +26,16 @@ cellpose_models/*
 manual_gating_output_v2/*
 manual_gating_output_v3/*
 tumor_spatial_analysis/*
-__pycache__/*
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
 efficient_spatial_analysis/*
 comprehensive_spatial_analysis/*
 markers.csv
 sample_metadata.csv
+channel_names.txt
+11_11_archive_manual_gating_output/*
+11_11_archive_spatial_quantification_results/*
+models_cache/*

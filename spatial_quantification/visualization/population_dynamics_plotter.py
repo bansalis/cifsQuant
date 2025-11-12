@@ -340,7 +340,39 @@ class PopulationDynamicsPlotter:
 
     def _plot_publication_version(self, data: pd.DataFrame, population: str,
                                   value_col: str, group_col: str, groups: List[str]):
-        """Clean publication-quality plot."""
+        """
+        Clean publication-quality plots (with and without stats).
+        Adaptive: uses bar plots for single timepoint, line plots for multiple timepoints.
+        """
+        if not HAS_PLOT_UTILS:
+            # Fallback to simple line plot
+            self._plot_publication_version_fallback(data, population, value_col, group_col, groups)
+            return
+
+        # Use adaptive dual plots (with and without stats)
+        ylabel = value_col.replace('_', ' ').title()
+        output_base = str(self.plots_dir / f'{population}_{value_col}_publication')
+
+        # Generate group name string for title
+        group_str = '_vs_'.join(groups)
+        title_base = f'{population}: {ylabel}'
+
+        create_dual_plots(
+            data,
+            value_col=value_col,
+            group_col=group_col,
+            timepoint_col='timepoint',
+            group_colors=self.group_colors,
+            title_base=title_base,
+            ylabel=ylabel,
+            xlabel='',
+            test_method=self.stat_method,
+            output_path_base=output_base
+        )
+
+    def _plot_publication_version_fallback(self, data: pd.DataFrame, population: str,
+                                          value_col: str, group_col: str, groups: List[str]):
+        """Fallback publication plot (line plot only)."""
         fig, ax = plt.subplots(figsize=(8, 6))
 
         for group in groups:
