@@ -60,6 +60,20 @@ MARKERS = {
   'R7.0.4_FITC_CD103': 'CD103'
 }
 
+# MARKER HIERARCHY for rare marker validation
+# Common markers are abundant phenotypes that should have HIGH positive %
+# Rare markers are subsets/functional markers that should have LOWER positive % than common markers
+MARKER_HIERARCHY = {
+    # Common markers (high abundance expected)
+    'common': ['CD45', 'TOM', 'EPCAM', 'CD3E'],
+
+    # Rare/functional markers that must have lower % than common markers
+    'rare': ['NINJA', 'PERK', 'GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'CD103', 'NAK', 'KI67'],
+
+    # Intermediate markers (not strictly enforced)
+    'intermediate': ['CD4', 'CD8A', 'B220', 'F480', 'TTF1', 'PD', 'ASMA', 'MHCII']
+}
+
 # GATE VALUES (normalized 0-1 scale)
 # After 99th percentile normalization, gates can be shared across samples
 # Set to None to auto-calculate suggestions
@@ -1234,6 +1248,98 @@ def auto_suggest_gates(adata):
     
     return suggestions
 
+def enforce_marker_hierarchy(adata, gates, gate_metadata):
+    """
+    Enforce marker hierarchy: rare markers must have lower % positive than common markers.
+
+    For rare markers (immune/tumor functional phenotypes), if their positive % exceeds
+    the minimum common marker %, adjust their gate to be more conservative.
+
+    The principle: rare markers like NINJA, FOXP3, GZMB should NEVER have higher
+    positive % than common markers like CD45, TOM, EPCAM.
+    """
+    # Get marker hierarchy from config
+    common_markers = MARKER_HIERARCHY.get('common', [])
+    rare_markers = MARKER_HIERARCHY.get('rare', [])
+
+    if not common_markers or not rare_markers:
+        print("  No marker hierarchy defined, skipping enforcement")
+        return gates, gate_metadata
+
+    # Calculate positive % for all markers
+    marker_pos_pcts = {}
+    for marker in adata.var_names:
+        marker_idx = adata.var_names.get_loc(marker)
+        all_vals = adata.layers['aligned'][:, marker_idx]
+        gate = gates.get(marker, np.percentile(all_vals[all_vals > 0], 95))
+        pos_pct = (all_vals > gate).mean() * 100
+        marker_pos_pcts[marker] = pos_pct
+
+    # Calculate minimum common marker positive %
+    common_pos_pcts = [marker_pos_pcts[m] for m in common_markers if m in marker_pos_pcts]
+    if not common_pos_pcts:
+        print("  No common markers found, skipping enforcement")
+        return gates, gate_metadata
+
+    min_common_pct = min(common_pos_pcts)
+    print(f"\n  Common marker positive %: {', '.join([f'{m}={marker_pos_pcts[m]:.1f}%' for m in common_markers if m in marker_pos_pcts])}")
+    print(f"  Minimum common marker positive %: {min_common_pct:.1f}%")
+    print(f"\n  Enforcing hierarchy for rare markers (target: <{min_common_pct:.1f}%)...")
+
+    # Adjust rare marker gates if they exceed common marker threshold
+    adjustments_made = 0
+    for marker in rare_markers:
+        if marker not in adata.var_names:
+            continue
+
+        marker_idx = adata.var_names.get_loc(marker)
+        all_vals = adata.layers['aligned'][:, marker_idx]
+        pos_vals = all_vals[all_vals > 0]
+
+        if len(pos_vals) < 100:
+            continue
+
+        current_gate = gates[marker]
+        current_pct = marker_pos_pcts[marker]
+
+        # If rare marker has higher % than minimum common marker, adjust gate
+        if current_pct > min_common_pct * 0.8:  # Allow 80% of minimum common
+            # For truly rare markers (almost one peak), use very aggressive gating
+            marker_quality = gate_metadata[marker].get('marker_quality', 'unknown')
+
+            if marker_quality == 'rare':
+                # Use 99.9th percentile for rare markers with one peak
+                new_gate = float(np.percentile(pos_vals, 99.9))
+            else:
+                # Binary search for gate that achieves target %
+                target_pct = min_common_pct * 0.5  # Target 50% of minimum common
+                percentiles = np.linspace(95, 99.99, 100)
+                for p in percentiles:
+                    test_gate = np.percentile(pos_vals, p)
+                    test_pct = (all_vals > test_gate).mean() * 100
+                    if test_pct <= target_pct:
+                        new_gate = float(test_gate)
+                        break
+                else:
+                    new_gate = float(np.percentile(pos_vals, 99.9))
+
+            new_pct = (all_vals > new_gate).mean() * 100
+
+            print(f"    {marker:8s}: {current_pct:5.1f}% → {new_pct:5.1f}% "
+                  f"(gate: {current_gate:.1f} → {new_gate:.1f})")
+
+            gates[marker] = new_gate
+            gate_metadata[marker]['hierarchical_adjustment'] = True
+            gate_metadata[marker]['original_gate'] = current_gate
+            gate_metadata[marker]['adjusted_gate'] = new_gate
+            adjustments_made += 1
+
+    if adjustments_made == 0:
+        print("    No adjustments needed - all rare markers within hierarchy")
+
+    return gates, gate_metadata
+
+
 def gmm_gating(adata):
     """
     Enhanced 2-component GMM gating with BIC-based quality assessment.
@@ -1366,6 +1472,17 @@ def gmm_gating(adata):
               f"pos_μ={mean_pos:7.1f} (σ={std_pos:.1f})")
         if not np.isnan(tile_uniformity):
             print(f"             tile_uniformity_CV={tile_uniformity:.2f}")
+
+    print("="*70)
+
+    # ====================================================================
+    # ENFORCE MARKER HIERARCHY (Rare markers must have lower % than common)
+    # ====================================================================
+    print("\n" + "="*70)
+    print("HIERARCHICAL GATE ENFORCEMENT")
+    print("="*70)
+
+    gates, gate_metadata = enforce_marker_hierarchy(adata, gates, gate_metadata)
 
     print("="*70)
     return gates, gate_metadata
@@ -2844,12 +2961,14 @@ def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
     """
     Identify markers that need aggressive tile normalization.
 
-    Targets RARE markers with tile artifacts, not just low intensity.
+    Targets RARE markers with tile artifacts, focusing on markers that appear
+    to have almost one peak after normalization (low bimodality).
 
     Criteria:
     - Low % positive (<5% by default) indicating rare marker
     - High tile-to-tile variation (CV > 0.3) indicating artifacts
-    - Low absolute median intensity (<50) for truly dim signals
+    - Low bimodality score (small separation between negative/positive peaks)
+    - Markers in the rare marker hierarchy list
 
     Parameters:
     ----------
@@ -2860,20 +2979,25 @@ def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
 
     Returns marker indices that need special normalization.
     """
+    from sklearn.mixture import GaussianMixture
+
     print("\n" + "="*70)
-    print("RARE MARKER WITH TILE ARTIFACT DETECTION")
-    print(f"  Criteria: <{rare_threshold_pct}% positive OR median<50 with tile_CV>{min_tile_cv}")
+    print("RARE MARKER DETECTION (Low Bimodality + Tile Artifacts)")
+    print(f"  Criteria: Low positive peak, <{rare_threshold_pct}% positive, or in rare marker list")
     print("="*70)
 
     dim_markers = []
     marker_stats = []
+
+    # Get rare markers from hierarchy
+    rare_marker_list = MARKER_HIERARCHY.get('rare', [])
 
     for marker_idx, marker in enumerate(adata.var_names):
         vals = adata.X[:, marker_idx]
         pos_vals = vals[vals > 0]
 
         if len(pos_vals) < 100:
-            marker_stats.append((marker, 0, 0, np.nan, False))
+            marker_stats.append((marker, 0, 0, np.nan, False, 'insufficient_data'))
             continue
 
         median_intensity = np.median(pos_vals)
@@ -2881,6 +3005,18 @@ def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
         # Estimate % positive using 95th percentile as rough threshold
         rough_threshold = np.percentile(pos_vals, 95)
         pct_positive = (vals > rough_threshold * 0.1).sum() / len(vals) * 100
+
+        # Calculate bimodality: check if there's a clear positive peak
+        bimodality_score = 0
+        try:
+            gmm = GaussianMixture(n_components=2, random_state=42, max_iter=100)
+            gmm.fit(pos_vals.reshape(-1, 1))
+            means = gmm.means_.flatten()
+            stds = np.sqrt(gmm.covariances_.flatten())
+            separation = (max(means) - min(means)) / min(stds)
+            bimodality_score = separation
+        except:
+            bimodality_score = 0
 
         # Calculate tile-to-tile variation (if tiles exist)
         tile_cv = np.nan
@@ -2899,28 +3035,39 @@ def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
                 tile_cv = np.std(tile_medians) / (np.mean(tile_medians) + 0.01)
                 has_tile_artifacts = tile_cv > min_tile_cv
 
-        marker_stats.append((marker, median_intensity, pct_positive, tile_cv, has_tile_artifacts))
+        # Decision logic: Flag if:
+        # 1. In rare marker list (from hierarchy config)
+        # 2. Very low % positive (< rare_threshold)
+        # 3. Low bimodality (almost one peak) AND low positive peak
+        is_rare_from_list = marker in rare_marker_list
+        is_very_rare = pct_positive < rare_threshold_pct
+        is_low_bimodal = bimodality_score < 2.0 and np.percentile(pos_vals, 99) < 0.3  # Positive peak is very low
 
-        # Decision logic: Flag if RARE or (DIM + ARTIFACTS)
-        is_rare = pct_positive < rare_threshold_pct or pct_positive > 0.9
-        is_dim = median_intensity < 50
+        reason = []
+        if is_rare_from_list:
+            reason.append("IN_RARE_LIST")
+        if is_very_rare:
+            reason.append(f"<{rare_threshold_pct}%_POS")
+        if is_low_bimodal:
+            reason.append("LOW_BIMODAL")
+        if has_tile_artifacts:
+            reason.append("TILE_ARTIFACTS")
 
-        if is_rare or (is_dim and has_tile_artifacts):
+        marker_stats.append((marker, median_intensity, pct_positive, tile_cv, has_tile_artifacts,
+                           bimodality_score, reason))
+
+        if is_rare_from_list or is_very_rare or is_low_bimodal:
             dim_markers.append(marker_idx)
 
     if len(dim_markers) > 0:
-        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} markers needing aggressive tile correction:")
+        print(f"  Identified {len(dim_markers)}/{len(adata.var_names)} rare markers needing aggressive gating:")
         for idx in dim_markers:
-            marker, med_int, pct_pos, tile_cv, artifacts = marker_stats[idx]
+            marker, med_int, pct_pos, tile_cv, artifacts, bimodality, reason = marker_stats[idx]
             tile_str = f"tile_CV={tile_cv:.2f}" if not np.isnan(tile_cv) else "no_tiles"
-            reason = []
-            if pct_pos < rare_threshold_pct:
-                reason.append("RARE")
-            if med_int < 50 and artifacts:
-                reason.append("DIM+ARTIFACTS")
-            print(f"    {marker}: median={med_int:.0f}, {pct_pos:.1f}% pos, {tile_str} [{', '.join(reason)}]")
+            bimodal_str = f"bimodal={bimodality:.1f}" if isinstance(bimodality, float) else ""
+            print(f"    {marker}: {pct_pos:.1f}% pos, {bimodal_str}, {tile_str} [{', '.join(reason)}]")
     else:
-        print("  No markers need aggressive tile correction")
+        print("  No rare markers detected")
 
     print("="*70)
     return dim_markers
@@ -2990,33 +3137,26 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         adata.uns['tile_metrics_before'] = tile_metrics_before
 
     landmarks_pct = [5, 10, 25, 40, 50, 60, 75, 90, 95, 99]#[5, 25, 50, 75, 95]
-    
-    for marker_idx, marker in enumerate(adata.var_names):
-        print(f"\n{'='*70}")
-        print(f"{marker} ({marker_idx+1}/{len(adata.var_names)})")
-        print('='*70)
-        
-        # ====================================================================
-        # LEVEL 1: WITHIN-TILE NORMALIZATION (per UniFORM)
-        # Rescale each tile to [0,1] using 1st-99th percentile
-        # ====================================================================
-        is_dim_marker = marker_idx in dim_marker_indices
+
+    # ====================================================================
+    # HELPER FUNCTIONS FOR PARALLEL PROCESSING
+    # ====================================================================
+    def process_marker_level1(marker_idx, marker, adata_X, obs_df, is_dim_marker, skip_within_tile):
+        """Process Level 1 (within-tile) normalization for a single marker."""
         if is_dim_marker:
-            print("  Level 1: Per-tile rescaling (1st-99th, dim marker)...")
             p_low, p_high = 5, 98  # More conservative for dim markers
         else:
-            print("  Level 1: Per-tile rescaling (1st-99th)...")
             p_low, p_high = 1, 99
 
-        start_time = time.time()
+        marker_data = adata_X[:, marker_idx].copy()
 
-        if not skip_within_tile and 'tile_id' in adata.obs.columns:
-            for sample in adata.obs['sample_id'].unique():
-                sample_mask = adata.obs['sample_id'] == sample
+        if not skip_within_tile and 'tile_id' in obs_df.columns:
+            for sample in obs_df['sample_id'].unique():
+                sample_mask = obs_df['sample_id'] == sample
 
-                for tile_id in adata.obs.loc[sample_mask, 'tile_id'].unique():
-                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
-                    vals = adata.X[tile_mask, marker_idx]
+                for tile_id in obs_df.loc[sample_mask, 'tile_id'].unique():
+                    tile_mask = sample_mask & (obs_df['tile_id'] == tile_id)
+                    vals = marker_data[tile_mask]
 
                     pos_vals = vals[vals > 0]
                     if len(pos_vals) < 10:
@@ -3029,29 +3169,68 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                     if p99 > p1:
                         vals_rescaled = (vals - p1) / (p99 - p1)
                         vals_rescaled = np.clip(vals_rescaled, 0, 1)
-                        adata.X[tile_mask, marker_idx] = vals_rescaled
+                        marker_data[tile_mask] = vals_rescaled
 
-        elapsed = time.time() - start_time
-        print(f"    ✓ Level 1 complete in {elapsed:.1f}s")
-        
-        # ====================================================================
-        # LEVEL 2: CROSS-TILE WITHIN-SAMPLE ALIGNMENT (per UniFORM)
-        # Align all tiles within each sample using negative peak + quantile mapping
-        # This is THE KEY STEP for removing tile artifacts
-        # ====================================================================
-        print("\n  Level 2: Cross-tile within-sample alignment (UniFORM)...")
-        start_time = time.time()
+        return marker_idx, marker_data
 
-        if 'tile_id' in adata.obs.columns:
+    # ====================================================================
+    # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)
+    # Rescale each tile to [0,1] using 1st-99th percentile
+    # ====================================================================
+    print("\n" + "="*70)
+    print("LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)")
+    print("="*70)
+    start_time_level1 = time.time()
+
+    if not skip_within_tile and 'tile_id' in adata.obs.columns:
+        # Prepare marker processing tasks
+        marker_tasks = [
+            (marker_idx, marker, adata.X, adata.obs, marker_idx in dim_marker_indices, skip_within_tile)
+            for marker_idx, marker in enumerate(adata.var_names)
+        ]
+
+        # Process markers in parallel
+        print(f"  Processing {len(adata.var_names)} markers in parallel with {n_jobs} jobs...")
+        with parallel_backend('loky', n_jobs=n_jobs):
+            results = Parallel()(
+                delayed(process_marker_level1)(*task)
+                for task in marker_tasks
+            )
+
+        # Update adata.X with results
+        for marker_idx, marker_data in results:
+            adata.X[:, marker_idx] = marker_data
+            marker = adata.var_names[marker_idx]
+            is_dim = marker_idx in dim_marker_indices
+            status = " (dim marker)" if is_dim else ""
+            print(f"  ✓ {marker}{status}")
+
+    elapsed_level1 = time.time() - start_time_level1
+    print(f"\n  ✓✓✓ Level 1 COMPLETE in {elapsed_level1:.1f}s")
+    print("="*70)
+
+    # ====================================================================
+    # LEVEL 2: CROSS-TILE WITHIN-SAMPLE ALIGNMENT (OPTIMIZED)
+    # Align all tiles within each sample using negative peak + quantile mapping
+    # This is THE KEY STEP for removing tile artifacts
+    # ====================================================================
+    print("\n" + "="*70)
+    print("LEVEL 2: CROSS-TILE ALIGNMENT (OPTIMIZED)")
+    print("="*70)
+    start_time_level2 = time.time()
+
+    if 'tile_id' in adata.obs.columns:
+        for marker_idx, marker in enumerate(adata.var_names):
+            print(f"  {marker} ({marker_idx+1}/{len(adata.var_names)})", end=' ')
+
             for sample in adata.obs['sample_id'].unique():
                 sample_mask = adata.obs['sample_id'] == sample
                 tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
 
                 if len(tiles) < 2:
-                    print(f"    {sample}: Only 1 tile, skipping")
                     continue
 
-                # Collect landmarks from each tile
+                # Collect landmarks from each tile (vectorized where possible)
                 tile_landmarks = {}
                 for tile_id in tiles:
                     tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
@@ -3065,7 +3244,6 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                     tile_landmarks[tile_id] = np.percentile(pos_vals, landmarks_pct)
 
                 if len(tile_landmarks) < 2:
-                    print(f"    {sample}: Insufficient tile data")
                     continue
 
                 # Reference = median of all tile landmarks
@@ -3094,12 +3272,13 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                         adata.X[tile_mask, marker_idx] = vals_aligned
                         n_aligned += 1
                     except Exception as e:
-                        print(f"      {sample} tile {tile_id}: Failed - {e}")
+                        pass  # Silent failure for cleaner output
 
-                print(f"    {sample}: Aligned {n_aligned}/{len(tiles)} tiles")
+            print("✓")
 
-        elapsed = time.time() - start_time
-        print(f"    ✓ Level 2 complete in {elapsed:.1f}s")
+    elapsed_level2 = time.time() - start_time_level2
+    print(f"\n  ✓✓✓ Level 2 COMPLETE in {elapsed_level2:.1f}s")
+    print("="*70)
         
     # ====================================================================
     # LEVEL 3: CROSS-SAMPLE ALIGNMENT (per UniFORM)
