@@ -2958,9 +2958,6 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
     if autodetect_tiles:
         assign_tiles_edge_detection(adata)
 
-    # Detect dim markers for special handling
-    dim_marker_indices = detect_dim_markers(adata)
-
     # Store raw tile medians before any correction for diagnostics
     adata.uns['tile_metrics_before'] = {}
 
@@ -3000,14 +2997,7 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         # LEVEL 1: WITHIN-TILE NORMALIZATION (per UniFORM)
         # Rescale each tile to [0,1] using 1st-99th percentile
         # ====================================================================
-        is_dim_marker = marker_idx in dim_marker_indices
-        if is_dim_marker:
-            print("  Level 1: Per-tile rescaling (1st-99th, dim marker)...")
-            p_low, p_high = 5, 98  # More conservative for dim markers
-        else:
-            print("  Level 1: Per-tile rescaling (1st-99th)...")
-            p_low, p_high = 1, 99
-
+        print("  Level 1: Per-tile rescaling (1st-99th)...")
         start_time = time.time()
 
         if not skip_within_tile and 'tile_id' in adata.obs.columns:
@@ -3022,9 +3012,9 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                     if len(pos_vals) < 10:
                         continue
 
-                    # UniFORM: Rescale to [0,1] using percentiles
-                    p1 = np.percentile(pos_vals, p_low)
-                    p99 = np.percentile(pos_vals, p_high)
+                    # UniFORM: Rescale to [0,1] using 1st-99th percentiles
+                    p1 = np.percentile(pos_vals, 1)
+                    p99 = np.percentile(pos_vals, 99)
 
                     if p99 > p1:
                         vals_rescaled = (vals - p1) / (p99 - p1)
