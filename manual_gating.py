@@ -3105,9 +3105,6 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
     if autodetect_tiles:
         assign_tiles_edge_detection(adata)
 
-    # Detect dim markers for special handling
-    dim_marker_indices = detect_dim_markers(adata)
-
     # Store raw tile medians before any correction for diagnostics
     adata.uns['tile_metrics_before'] = {}
 
@@ -3137,18 +3134,18 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         adata.uns['tile_metrics_before'] = tile_metrics_before
 
     landmarks_pct = [5, 10, 25, 40, 50, 60, 75, 90, 95, 99]#[5, 25, 50, 75, 95]
-
-    # ====================================================================
-    # HELPER FUNCTIONS FOR PARALLEL PROCESSING
-    # ====================================================================
-    def process_marker_level1(marker_idx, marker, adata_X, obs_df, is_dim_marker, skip_within_tile):
-        """Process Level 1 (within-tile) normalization for a single marker."""
-        if is_dim_marker:
-            p_low, p_high = 5, 98  # More conservative for dim markers
-        else:
-            p_low, p_high = 1, 99
-
-        marker_data = adata_X[:, marker_idx].copy()
+    
+    for marker_idx, marker in enumerate(adata.var_names):
+        print(f"\n{'='*70}")
+        print(f"{marker} ({marker_idx+1}/{len(adata.var_names)})")
+        print('='*70)
+        
+        # ====================================================================
+        # LEVEL 1: WITHIN-TILE NORMALIZATION (per UniFORM)
+        # Rescale each tile to [0,1] using 1st-99th percentile
+        # ====================================================================
+        print("  Level 1: Per-tile rescaling (1st-99th)...")
+        start_time = time.time()
 
         if not skip_within_tile and 'tile_id' in obs_df.columns:
             for sample in obs_df['sample_id'].unique():
@@ -3162,9 +3159,9 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                     if len(pos_vals) < 10:
                         continue
 
-                    # UniFORM: Rescale to [0,1] using percentiles
-                    p1 = np.percentile(pos_vals, p_low)
-                    p99 = np.percentile(pos_vals, p_high)
+                    # UniFORM: Rescale to [0,1] using 1st-99th percentiles
+                    p1 = np.percentile(pos_vals, 1)
+                    p99 = np.percentile(pos_vals, 99)
 
                     if p99 > p1:
                         vals_rescaled = (vals - p1) / (p99 - p1)
