@@ -1405,10 +1405,23 @@ def gmm_gating(adata):
         std_from_neg = (mean_pos - mean_neg) / std_neg
 
         # Classify marker quality based on BIC
+        gate_method = None  # Track which method was used
         if bic_diff > 10:  # Strong evidence for 2 components
             marker_quality = 'bimodal'
-            # Threshold = midpoint between means
-            gate = float((mean_neg + mean_pos) / 2)
+
+            # Gate = mean_neg + k*std_neg (standard flow cytometry approach)
+            # This excludes 99.7% of negative population (k=3) and is closer to pos peak
+            k = 3.0  # Number of standard deviations above negative mean
+            gate_sd = mean_neg + k * std_neg
+
+            # Safety check: don't exceed positive peak mean
+            if gate_sd < mean_pos:
+                gate = float(gate_sd)
+                gate_method = "μ_neg + 3σ_neg"
+            else:
+                # If 3*SD overshoots, fall back to midpoint
+                gate = float((mean_neg + mean_pos) / 2)
+                gate_method = "midpoint"
         elif bic_diff < -10:  # Strong evidence for 1 component (rare marker)
             marker_quality = 'rare'
             # VERY conservative for rare markers: 99.5th percentile
@@ -1470,6 +1483,11 @@ def gmm_gating(adata):
               f"{pos_pct:5.1f}% pos")
         print(f"             neg_μ={mean_neg:7.1f} (σ={std_neg:.1f}) | "
               f"pos_μ={mean_pos:7.1f} (σ={std_pos:.1f})")
+
+        # Show gate method for bimodal markers
+        if gate_method is not None:
+            print(f"             gate_method={gate_method}")
+
         if not np.isnan(tile_uniformity):
             print(f"             tile_uniformity_CV={tile_uniformity:.2f}")
 
