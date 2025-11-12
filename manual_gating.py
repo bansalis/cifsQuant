@@ -10,7 +10,7 @@ Or explicitly skip normalization
 python manual_gating.py --results_dir results --skip_normalization
 
 rerun all
-python manual_gating.py --results_dir results --force_normalization --n_jobs 15
+python manual_gating.py --results_dir results --force_normalization --n_jobs 10 --redetect_tiles
 """
 
 import pandas as pd
@@ -2902,7 +2902,7 @@ def detect_dim_markers(adata, rare_threshold_pct=5.0, min_tile_cv=0.3):
         marker_stats.append((marker, median_intensity, pct_positive, tile_cv, has_tile_artifacts))
 
         # Decision logic: Flag if RARE or (DIM + ARTIFACTS)
-        is_rare = pct_positive < rare_threshold_pct
+        is_rare = pct_positive < rare_threshold_pct or pct_positive > 0.9
         is_dim = median_intensity < 50
 
         if is_rare or (is_dim and has_tile_artifacts):
