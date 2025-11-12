@@ -1408,58 +1408,19 @@ def gmm_gating(adata):
         gate_method = None  # Track which method was used
         if bic_diff > 10:  # Strong evidence for 2 components
             marker_quality = 'bimodal'
-
-            # Gate = mean_neg + k*std_neg (standard flow cytometry approach)
-            # This excludes 99.7% of negative population (k=3) and is closer to pos peak
-            k = 3.0  # Number of standard deviations above negative mean
-            gate_sd = mean_neg + k * std_neg
-
-            # Safety check: don't exceed positive peak mean
-            if gate_sd < mean_pos:
-                gate = float(gate_sd)
-                gate_method = "μ_neg + 3σ_neg"
-            else:
-                # If 3*SD overshoots, fall back to midpoint
-                gate = float((mean_neg + mean_pos) / 2)
-                gate_method = "midpoint"
+            # For bimodal: use neg_mean + 3*neg_std (more conservative)
+            gate = float(mean_neg + 3 * std_neg)
+            gate_method = 'μ_neg + 3σ_neg'
         elif bic_diff < -10:  # Strong evidence for 1 component (rare marker)
             marker_quality = 'rare'
-            # VERY conservative for rare markers: 99.5th percentile
-            gate_percentile = float(np.percentile(pos_vals, 99.5))
-
-            # Add minimum absolute intensity floor (10% of max)
-            max_intensity = np.max(pos_vals)
-            min_gate = max_intensity * 0.10
-
-            gate = float(max(gate_percentile, min_gate))
-
+            # For rare markers (almost one peak): use 99.5th percentile
+            gate = float(np.percentile(pos_vals, 99.5))
+            gate_method = 'p99.5'
         else:  # Weak/ambiguous fit (possibly artifact)
             marker_quality = 'artifact'
-            # Use 97th percentile for artifacts (more conservative than before)
+            # Use 97th percentile for artifacts
             gate = float(np.percentile(pos_vals, 97))
-
-        # Per-tile validation for rare markers
-        tile_uniformity = np.nan
-        if marker_quality == 'rare' and 'tile_id' in adata.obs.columns:
-            # Check if positive cells are uniform across tiles
-            tile_pos_pcts = []
-            for tile_id in adata.obs['tile_id'].unique():
-                tile_mask = adata.obs['tile_id'] == tile_id
-                tile_vals = all_vals[tile_mask]
-                if len(tile_vals) > 10:
-                    tile_pos_pct = (tile_vals > gate).mean() * 100
-                    tile_pos_pcts.append(tile_pos_pct)
-
-            if len(tile_pos_pcts) > 1:
-                # Calculate coefficient of variation (CV) of % positive across tiles
-                tile_uniformity = np.std(tile_pos_pcts) / (np.mean(tile_pos_pcts) + 0.01)
-
-                # If very non-uniform (CV > 2), increase gate to be more conservative
-                if tile_uniformity > 2.0:
-                    gate_adj = float(np.percentile(pos_vals, 99.9))
-                    print(f"             ⚠️  Non-uniform across tiles (CV={tile_uniformity:.2f}), "
-                          f"adjusting gate: {gate:.1f} → {gate_adj:.1f}")
-                    gate = gate_adj
+            gate_method = 'p97'
 
         gates[marker] = gate
         gate_metadata[marker] = {
@@ -1470,7 +1431,7 @@ def gmm_gating(adata):
             'mean_pos': float(mean_pos),
             'std_neg': float(std_neg),
             'std_pos': float(std_pos),
-            'tile_uniformity': float(tile_uniformity) if not np.isnan(tile_uniformity) else np.nan
+            'gate_method': gate_method
         }
 
         # Calculate positive percentage
@@ -1483,6 +1444,7 @@ def gmm_gating(adata):
               f"{pos_pct:5.1f}% pos")
         print(f"             neg_μ={mean_neg:7.1f} (σ={std_neg:.1f}) | "
               f"pos_μ={mean_pos:7.1f} (σ={std_pos:.1f})")
+        print(f"             gate_method={gate_method}")
 
         # Show gate method for bimodal markers
         if gate_method is not None:
