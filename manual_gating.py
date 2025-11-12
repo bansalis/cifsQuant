@@ -3160,14 +3160,25 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         
         # ====================================================================
         # LEVEL 1: WITHIN-TILE NORMALIZATION (per UniFORM)
-        # Rescale each tile to [0,1] using 1st-99th percentile
+        # Focus on negative peak alignment to correct illumination falloff
+        # Preserve upper tail (don't clip high expressors like TOM in tumor regions)
         # ====================================================================
-        print("  Level 1: Per-tile rescaling (1st-99th)...")
+        print("  Level 1: Per-tile negative peak alignment...")
         start_time = time.time()
 
         if not skip_within_tile and 'tile_id' in adata.obs.columns:
             for sample in adata.obs['sample_id'].unique():
                 sample_mask = adata.obs['sample_id'] == sample
+
+                # Get sample-level reference (5th percentile = negative peak)
+                sample_vals = adata.X[sample_mask, marker_idx]
+                sample_pos_vals = sample_vals[sample_vals > 0]
+                if len(sample_pos_vals) < 100:
+                    continue
+
+                sample_neg_peak = np.percentile(sample_pos_vals, 5)
+                if sample_neg_peak <= 0:
+                    continue
 
                 for tile_id in adata.obs.loc[sample_mask, 'tile_id'].unique():
                     tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
@@ -3177,14 +3188,14 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
                     if len(pos_vals) < 10:
                         continue
 
-                    # UniFORM: Rescale to [0,1] using 1st-99th percentiles
-                    p1 = np.percentile(pos_vals, 1)
-                    p99 = np.percentile(pos_vals, 99)
+                    # Align tile negative peak to sample reference
+                    # This corrects for tile edge illumination falloff without clipping signal
+                    tile_neg_peak = np.percentile(pos_vals, 5)
 
-                    if p99 > p1:
-                        vals_rescaled = (vals - p1) / (p99 - p1)
-                        vals_rescaled = np.clip(vals_rescaled, 0, 1)
-                        adata.X[tile_mask, marker_idx] = vals_rescaled
+                    if tile_neg_peak > 0:
+                        # Multiplicative scaling preserves distribution shape
+                        scaling_factor = sample_neg_peak / tile_neg_peak
+                        adata.X[tile_mask, marker_idx] = vals * scaling_factor
 
         elapsed = time.time() - start_time
         print(f"    ✓ Level 1 complete in {elapsed:.1f}s")
