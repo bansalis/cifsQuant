@@ -1269,16 +1269,19 @@ def gmm_gating(adata):
         # Classify marker quality based on BIC
         if bic_diff > 10:  # Strong evidence for 2 components
             marker_quality = 'bimodal'
-            # Threshold = midpoint between means
-            gate = float((mean_neg + mean_pos) / 2)
+            # For bimodal: use neg_mean + 3*neg_std (more conservative)
+            gate = float(mean_neg + 3 * std_neg)
+            gate_method = 'μ_neg + 3σ_neg'
         elif bic_diff < -10:  # Strong evidence for 1 component (rare marker)
             marker_quality = 'rare'
-            # Use conservative 99th percentile for rare markers
-            gate = float(np.percentile(pos_vals, 99))
+            # For rare markers (almost one peak): use 99.5th percentile
+            gate = float(np.percentile(pos_vals, 99.5))
+            gate_method = 'p99.5'
         else:  # Weak/ambiguous fit (possibly artifact)
             marker_quality = 'artifact'
-            # Use 95th percentile for artifacts
-            gate = float(np.percentile(pos_vals, 95))
+            # Use 97th percentile for artifacts
+            gate = float(np.percentile(pos_vals, 97))
+            gate_method = 'p97'
 
         gates[marker] = gate
         gate_metadata[marker] = {
@@ -1288,7 +1291,8 @@ def gmm_gating(adata):
             'mean_neg': float(mean_neg),
             'mean_pos': float(mean_pos),
             'std_neg': float(std_neg),
-            'std_pos': float(std_pos)
+            'std_pos': float(std_pos),
+            'gate_method': gate_method
         }
 
         # Calculate positive percentage
@@ -1301,6 +1305,7 @@ def gmm_gating(adata):
               f"{pos_pct:5.1f}% pos")
         print(f"             neg_μ={mean_neg:7.1f} (σ={std_neg:.1f}) | "
               f"pos_μ={mean_pos:7.1f} (σ={std_pos:.1f})")
+        print(f"             gate_method={gate_method}")
 
     print("="*70)
     return gates, gate_metadata
