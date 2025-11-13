@@ -795,9 +795,14 @@ class TileArtifactCorrector:
             'n_brighter_cells': int(n_brighter),
             'n_normal_cells': int(n_normal),
             'n_tile_corrected': int(n_tile_corrected),
+            'n_corrected': int(n_tile_corrected),  # Alias for compatibility
+            'n_dimmer_corrected': int(n_dimmer),
+            'n_brighter_corrected': int(n_brighter),
             'n_radial_tiles': int(n_radial_tiles),
+            'n_radial_corrected': int(n_radial_tiles),  # Alias for compatibility
             'dimmer_correction_pct': float(dimmer_correction_pct),
             'brighter_correction_pct': float(brighter_correction_pct),
+            'mean_correction_pct': float((dimmer_correction_pct + brighter_correction_pct) / 2),
             'dimmer_tiles': dimmer_tiles,
             'brighter_tiles': brighter_tiles,
             'normal_tiles': normal_tiles
