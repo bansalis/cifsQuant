@@ -141,6 +141,23 @@ TILE_ARTIFACT_CORRECTION = {
     'PDL1': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'high'},
 }
 
+# Thresholds for artifact detection based on sensitivity
+# Higher sensitivity = lower thresholds = more aggressive correction for rare markers
+ARTIFACT_THRESHOLDS = {
+    'high': {
+        'tile_cv_threshold': 0.15,      # Detect subtle tile-to-tile variation
+        'edge_gradient_threshold': 0.15  # Detect subtle edge artifacts
+    },
+    'medium': {
+        'tile_cv_threshold': 0.25,      # Balanced detection
+        'edge_gradient_threshold': 0.25
+    },
+    'low': {
+        'tile_cv_threshold': 0.35,      # Conservative, only obvious artifacts
+        'edge_gradient_threshold': 0.35
+    }
+}
+
 # ============================================================================
 # HIERARCHICAL MARKER RELATIONSHIPS
 # ============================================================================
