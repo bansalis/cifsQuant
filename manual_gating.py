@@ -109,53 +109,29 @@ USE_SHARED_GATES = True  # True = one gate per marker; False = per-sample gates
 NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax'
 
 # ============================================================================
-# TILE ARTIFACT CORRECTION (per-marker)
+# TILE ARTIFACT CORRECTION (gradient-based edge detection)
 # ============================================================================
-# Markers that need additional tile artifact correction
-# Set to empty list to disable for markers that work well (like TOM)
-TILE_ARTIFACT_CORRECTION = {
-    'TOM': {'enabled': False},
-    'CD45': {'enabled': False},
-    'NINJA': {'enabled': False},
-    'PERK': {'enabled': False},
-    'CD4': {'enabled': False},
-    'EPCAM': {'enabled': False},
-    'B220': {'enabled': False},
-    'CD3E': {'enabled': False},
-    'F480': {'enabled': False},
-    'TTF1': {'enabled': False},
-    'CD8A': {'enabled': False},
-    'ASMA': {'enabled': False},
-    'NAK': {'enabled': False},
-    'KI67': {'enabled': False},
-    'MHCII': {'enabled': False},
-    'CD103': {'enabled': False},
-    
-    # Rare markers requiring artifact correction
-    'GZMB': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-    'FOXP3': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-    'KLRG1': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-    'PD1': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-    'BCL6': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-    'CC3': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-    'PDL1': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'high'},
-}
+# Configuration for gradient-based tile boundary correction
+# This uses Sobel edge detection to identify and correct sharp intensity
+# discontinuities at tile boundaries without relying on tile_id metadata
 
-# Thresholds for artifact detection based on sensitivity
-# Higher sensitivity = lower thresholds = more aggressive correction for rare markers
-ARTIFACT_THRESHOLDS = {
-    'high': {
-        'tile_cv_threshold': 0.15,      # Detect subtle tile-to-tile variation
-        'edge_gradient_threshold': 0.15  # Detect subtle edge artifacts
-    },
-    'medium': {
-        'tile_cv_threshold': 0.25,      # Balanced detection
-        'edge_gradient_threshold': 0.25
-    },
-    'low': {
-        'tile_cv_threshold': 0.35,      # Conservative, only obvious artifacts
-        'edge_gradient_threshold': 0.35
-    }
+TILE_CORRECTION_CONFIG = {
+    'enabled': True,
+    'markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1'],
+
+    # Detection parameters
+    'bin_size': 50,                    # Spatial binning (pixels)
+    'smooth_sigma': 2.0,               # Gaussian smoothing before edge detection
+    'edge_threshold_percentile': 95,   # Edge strength threshold (90-99)
+
+    # Correction parameters
+    'boundary_buffer': 50,             # Buffer zone width (pixels)
+    'local_window': 200,               # Neighborhood radius (pixels)
+    'correction_strength': 0.8,        # Correction damping (0-1)
+
+    # Validation
+    'min_edge_pixels': 10,             # Minimum edges to proceed
+    'max_boundary_pct': 50,            # Safety: warn if >50% cells flagged
 }
 
 # ============================================================================
@@ -1321,149 +1297,147 @@ def auto_suggest_gates(adata):
 
 def correct_tile_artifacts_per_marker(adata):
     """
-    Apply marker-specific tile artifact correction based on TILE_ARTIFACT_CORRECTION config.
-    Only corrects markers that need it, preserving working markers like TOM.
+    Apply gradient-based tile artifact correction using Sobel edge detection.
 
-    Type 1: Baseline brightness differences (clusters of tiles uniformly brighter/dimmer)
-    Type 2: Edge artifacts (tile edges have sharp brightness transitions)
+    This method detects sharp intensity discontinuities at tile boundaries without
+    relying on tile_id metadata, then applies local KNN-based normalization to
+    correct boundary artifacts.
+
+    Only corrects markers specified in TILE_CORRECTION_CONFIG.
+    Runs BEFORE UniFORM normalization to preserve the normalization's effectiveness.
     """
-    from scipy.ndimage import median_filter
-    from scipy.stats import median_abs_deviation
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
+    from tile_artifact_correction import SharpEdgeTileDetector, TileArtifactCorrector
+    from tile_artifact_correction import create_diagnostic_plots, save_correction_report
 
     print("\n" + "="*70)
-    print("MARKER-SPECIFIC TILE ARTIFACT CORRECTION")
+    print("GRADIENT-BASED TILE BOUNDARY CORRECTION")
     print("="*70)
 
-    if 'tile_id' not in adata.obs.columns:
-        print("  ⚠️  No tile_id found, skipping tile artifact correction")
+    if not TILE_CORRECTION_CONFIG.get('enabled', False):
+        print("  ⚠️  Tile correction disabled in config")
         return adata
 
-    corrected_markers = []
-    skipped_markers = []
+    # Get markers to correct
+    markers_to_correct = TILE_CORRECTION_CONFIG.get('markers', [])
+    if not markers_to_correct:
+        print("  ⚠️  No markers specified for correction")
+        return adata
 
-    for marker in adata.var_names:
-        config = TILE_ARTIFACT_CORRECTION.get(marker, {'enabled': False})
+    # Filter to markers that exist in data
+    markers_to_correct = [m for m in markers_to_correct if m in adata.var_names]
+    if not markers_to_correct:
+        print("  ⚠️  None of the specified markers found in data")
+        return adata
 
-        if not config.get('enabled', False):
-            skipped_markers.append(marker)
-            continue
+    print(f"  Correcting {len(markers_to_correct)} markers: {', '.join(markers_to_correct)}")
+    print(f"  Method: Sobel gradient edge detection + KNN local normalization")
+    print()
 
+    # Initialize detector and corrector with config parameters
+    detector = SharpEdgeTileDetector(
+        bin_size=TILE_CORRECTION_CONFIG.get('bin_size', 50),
+        smooth_sigma=TILE_CORRECTION_CONFIG.get('smooth_sigma', 2.0),
+        edge_threshold_percentile=TILE_CORRECTION_CONFIG.get('edge_threshold_percentile', 95),
+        min_edge_pixels=TILE_CORRECTION_CONFIG.get('min_edge_pixels', 10)
+    )
+
+    corrector = TileArtifactCorrector(
+        boundary_buffer=TILE_CORRECTION_CONFIG.get('boundary_buffer', 50),
+        local_window=TILE_CORRECTION_CONFIG.get('local_window', 200),
+        correction_strength=TILE_CORRECTION_CONFIG.get('correction_strength', 0.8),
+        max_boundary_pct=TILE_CORRECTION_CONFIG.get('max_boundary_pct', 50.0)
+    )
+
+    # Store original data for visualization
+    if 'raw_precorrection' not in adata.layers:
+        adata.layers['raw_precorrection'] = adata.X.copy()
+
+    # Correction report
+    correction_report = {}
+
+    # Create output directory for diagnostic plots
+    diagnostic_dir = Path(__file__).parent / 'tile_correction_diagnostics'
+    diagnostic_dir.mkdir(exist_ok=True, parents=True)
+
+    # Process each marker
+    for marker in markers_to_correct:
+        print(f"  Processing {marker}...")
         marker_idx = adata.var_names.get_loc(marker)
-        sensitivity = config.get('sensitivity', 'medium')
-        thresholds = ARTIFACT_THRESHOLDS[sensitivity]
-
-        print(f"\n  {marker} (sensitivity={sensitivity}):")
+        marker_report = {}
 
         # Process each sample separately
         for sample in adata.obs['sample_id'].unique():
             sample_mask = adata.obs['sample_id'] == sample
+            sample_data = adata[sample_mask]
 
-            # Type 1: Baseline tile brightness correction
-            if config.get('type1', False):
-                tile_medians = {}
-                tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
+            # Get coordinates and intensities
+            x_coords = sample_data.obsm['spatial'][:, 0]
+            y_coords = sample_data.obsm['spatial'][:, 1]
+            intensities = sample_data.X[:, marker_idx].copy()
 
-                # Calculate median intensity per tile
-                for tile_id in tiles:
-                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
-                    vals = adata.X[tile_mask, marker_idx]
-                    pos_vals = vals[vals > 0]
-                    if len(pos_vals) >= 10:
-                        tile_medians[tile_id] = np.median(pos_vals)
+            # Phase 1-3: Detect tile boundaries
+            detection_results = detector.detect(x_coords, y_coords, intensities)
 
-                if len(tile_medians) < 3:
-                    continue
+            if not detection_results['detected']:
+                print(f"    {sample}: No tile boundaries detected")
+                marker_report[sample] = {'detected': False, 'reason': 'No boundaries detected'}
+                continue
 
-                # Detect outlier tiles using CV and MAD
-                medians_array = np.array(list(tile_medians.values()))
-                global_median = np.median(medians_array)
-                cv = np.std(medians_array) / global_median if global_median > 0 else 0
-                mad = median_abs_deviation(medians_array)
+            print(f"    {sample}: Detected {detection_results['n_edge_pixels']} edge pixels, "
+                  f"{detection_results['n_h_lines']} H-lines, {detection_results['n_v_lines']} V-lines")
 
-                # Only correct if CV exceeds threshold (indicates artifacts)
-                if cv > thresholds['tile_cv_threshold']:
-                    n_corrected = 0
-                    for tile_id, tile_median in tile_medians.items():
-                        # Correct tiles that deviate significantly from global median
-                        z_score = abs(tile_median - global_median) / (mad + 1e-10)
-                        if z_score > 2.0:  # Tile is outlier
-                            correction_factor = global_median / tile_median
-                            # Limit correction to reasonable range
-                            correction_factor = np.clip(correction_factor, 0.5, 2.0)
+            # Phase 4-5: Correct boundary artifacts
+            corrected_intensities, stats = corrector.correct(
+                x_coords, y_coords, intensities, detection_results
+            )
 
-                            tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
-                            adata.X[tile_mask, marker_idx] *= correction_factor
-                            n_corrected += 1
+            # Create boundary mask for diagnostics
+            boundary_mask = corrector.create_boundary_mask(
+                x_coords, y_coords,
+                detection_results['edge_mask'],
+                detection_results['x_edges'],
+                detection_results['y_edges']
+            )
 
-                    if n_corrected > 0:
-                        print(f"    Type 1: {sample} - corrected {n_corrected}/{len(tiles)} tiles (CV={cv:.3f})")
+            # Update adata
+            sample_indices = np.where(sample_mask)[0]
+            adata.X[sample_indices, marker_idx] = corrected_intensities
 
-            # Type 2: Edge artifact correction
-            if config.get('type2', False):
-                tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
-                n_edge_corrected = 0
+            print(f"    {sample}: Corrected {stats['n_corrected']:,} cells "
+                  f"({stats['pct_boundary_cells']:.1f}% boundary), "
+                  f"mean adjustment: {stats['mean_correction_pct']:+.1f}%")
 
-                for tile_id in tiles:
-                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
-                    tile_cells = adata.obsm['spatial'][tile_mask]
+            # Store stats
+            marker_report[sample] = stats
 
-                    if len(tile_cells) < 50:
-                        continue
+            # Create diagnostic plots for this marker/sample combination
+            sample_diagnostic_dir = diagnostic_dir / sample
+            sample_diagnostic_dir.mkdir(exist_ok=True, parents=True)
 
-                    # Find tile boundaries
-                    x_min, x_max = tile_cells[:, 0].min(), tile_cells[:, 0].max()
-                    y_min, y_max = tile_cells[:, 1].min(), tile_cells[:, 1].max()
-                    tile_width = x_max - x_min
-                    tile_height = y_max - y_min
+            create_diagnostic_plots(
+                marker=f"{marker}_{sample}",
+                x_coords=x_coords,
+                y_coords=y_coords,
+                original_intensities=intensities,
+                corrected_intensities=corrected_intensities,
+                detection_results=detection_results,
+                boundary_mask=boundary_mask,
+                output_dir=sample_diagnostic_dir
+            )
 
-                    # Define edge regions (outer 10% of tile)
-                    edge_margin = 0.10
-                    edge_mask_left = tile_cells[:, 0] < (x_min + tile_width * edge_margin)
-                    edge_mask_right = tile_cells[:, 0] > (x_max - tile_width * edge_margin)
-                    edge_mask_top = tile_cells[:, 1] < (y_min + tile_height * edge_margin)
-                    edge_mask_bottom = tile_cells[:, 1] > (y_max - tile_height * edge_margin)
-                    edge_mask = edge_mask_left | edge_mask_right | edge_mask_top | edge_mask_bottom
+        correction_report[marker] = marker_report
 
-                    # Get intensities for edge and center regions
-                    tile_indices = np.where(tile_mask)[0]
-                    edge_indices = tile_indices[edge_mask]
-                    center_indices = tile_indices[~edge_mask]
-
-                    if len(edge_indices) < 10 or len(center_indices) < 10:
-                        continue
-
-                    edge_vals = adata.X[edge_indices, marker_idx]
-                    center_vals = adata.X[center_indices, marker_idx]
-
-                    edge_vals_pos = edge_vals[edge_vals > 0]
-                    center_vals_pos = center_vals[center_vals > 0]
-
-                    if len(edge_vals_pos) < 10 or len(center_vals_pos) < 10:
-                        continue
-
-                    edge_median = np.median(edge_vals_pos)
-                    center_median = np.median(center_vals_pos)
-
-                    # Calculate relative difference
-                    relative_diff = abs(edge_median - center_median) / (center_median + 1e-10)
-
-                    # Only correct if difference exceeds threshold
-                    if relative_diff > thresholds['edge_gradient_threshold']:
-                        correction_factor = center_median / edge_median
-                        correction_factor = np.clip(correction_factor, 0.5, 2.0)
-
-                        # Apply correction only to edge cells
-                        adata.X[edge_indices, marker_idx] *= correction_factor
-                        n_edge_corrected += 1
-
-                if n_edge_corrected > 0:
-                    print(f"    Type 2: {sample} - corrected edges in {n_edge_corrected}/{len(tiles)} tiles")
-
-        corrected_markers.append(marker)
-
-    print(f"\n  ✓ Corrected: {', '.join(corrected_markers) if corrected_markers else 'none'}")
-    print(f"  ○ Skipped (working well): {', '.join(skipped_markers) if skipped_markers else 'none'}")
+    print(f"\n  ✓ Tile correction complete for {len(markers_to_correct)} markers")
+    print(f"  ✓ Diagnostic plots saved to: {diagnostic_dir}")
     print("="*70)
+
+    # Save correction report
+    save_correction_report(correction_report, diagnostic_dir)
+
+    # Save correction layer
+    adata.layers['tile_corrected'] = adata.X.copy()
 
     return adata
 
@@ -2978,9 +2952,16 @@ def main():
             exit(1)
         
         print("\nRunning hierarchical normalization...")
-        
+
         adata = load_and_combine(args.results_dir)
-        
+
+        # ====================================================================
+        # TILE BOUNDARY CORRECTION (before normalization)
+        # ====================================================================
+        # Apply gradient-based tile boundary correction BEFORE UniFORM normalization
+        # This ensures the normalization works on already-corrected data
+        adata = correct_tile_artifacts_per_marker(adata)
+
         # Hierarchical normalization
         adata = hierarchical_uniform_normalization(
             adata,
@@ -2990,17 +2971,11 @@ def main():
             skip_within_tile=args.skip_within_tile,
             skip_cross_sample=args.skip_cross_sample
         )
-        
+
         # Save checkpoint
         print(f"\n💾 Saving normalized data to: {checkpoint_file}")
         adata.write(checkpoint_file)
         print("✓ Checkpoint saved")
-    
-    # ====================================================================
-    # PER-MARKER TILE ARTIFACT CORRECTION (after normalization, before gating)
-    # ====================================================================
-    # Apply targeted correction only to markers that need it
-    adata = correct_tile_artifacts_per_marker(adata)
 
     # ====================================================================
     # GATING (always runs)
