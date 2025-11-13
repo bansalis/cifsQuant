@@ -117,14 +117,14 @@ NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax
 
 TILE_CORRECTION_CONFIG = {
     'enabled': True,
-    'markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1'],
+    'markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1', 'PERK'],
 
     # Grid detection parameters
-    'bin_size': 50,                    # Spatial binning for heatmap (pixels)
-    'peak_distance': 20,               # Minimum distance between grid lines (bins)
-    'peak_height_percentile': 75,     # Peak detection threshold (percentile)
+    'bin_size': 100,                   # Spatial binning for heatmap (pixels)
+    'peak_distance': 10,               # Minimum distance between grid lines (bins)
+    'peak_height_percentile': 65,      # Peak detection threshold (percentile)
     'min_tiles': 4,                    # Minimum number of tiles to proceed
-    'min_tile_size': 100,              # Minimum cells per tile
+    'min_tile_size': 200,              # Minimum cells per tile
     'outlier_threshold': 2.0,          # MAD units for classifying dimmer/brighter tiles
 
     # UniFORM normalization parameters
@@ -1395,25 +1395,31 @@ def correct_tile_artifacts_per_marker(adata):
                 continue
 
             n_dimmer = detection_results['n_dimmer_cells']
+            n_brighter = detection_results['n_brighter_cells']
             n_normal = detection_results['n_normal_cells']
             n_dimmer_tiles = len(detection_results['dimmer_tiles'])
+            n_brighter_tiles = len(detection_results['brighter_tiles'])
             n_normal_tiles = len(detection_results['normal_tiles'])
 
             print(f"    {sample}: Detected {n_dimmer_tiles} dimmer tiles ({n_dimmer:,} cells), "
+                  f"{n_brighter_tiles} brighter tiles ({n_brighter:,} cells), "
                   f"{n_normal_tiles} normal tiles ({n_normal:,} cells)")
 
-            # Apply UniFORM normalization between dimmer and normal tiles
-            corrected_intensities, stats = corrector.correct(intensities, detection_results)
+            # Apply UniFORM normalization and radial correction
+            corrected_intensities, stats = corrector.correct(x_coords, y_coords, intensities, detection_results)
 
             # Update adata
             sample_indices = np.where(sample_mask)[0]
             adata.X[sample_indices, marker_idx] = corrected_intensities
 
             if stats['n_corrected'] > 0:
-                print(f"    {sample}: UniFORM normalized {stats['n_corrected']:,} dimmer cells, "
-                      f"mean shift: {stats['mean_correction_pct']:+.1f}%")
+                n_radial = stats.get('n_radial_corrected', 0)
+                radial_msg = f", radial: {n_radial} tiles" if n_radial > 0 else ""
+                print(f"    {sample}: Corrected {stats['n_corrected']:,} cells "
+                      f"(dimmer: {stats['n_dimmer_corrected']:,}, brighter: {stats['n_brighter_corrected']:,})"
+                      f"{radial_msg}")
             else:
-                print(f"    {sample}: No dimmer tiles detected, skipping correction")
+                print(f"    {sample}: No abnormal tiles detected, skipping correction")
 
             # Store stats
             marker_report[sample] = stats
