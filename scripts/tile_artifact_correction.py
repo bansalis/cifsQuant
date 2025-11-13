@@ -322,9 +322,9 @@ class MicroscopeTileDetector:
 
         return tile_stats
 
-    def classify_tiles(self, tile_stats: Dict) -> Tuple[List[int], List[int]]:
+    def classify_tiles(self, tile_stats: Dict) -> Tuple[List[int], List[int], List[int]]:
         """
-        Classify tiles as dimmer or normal using MAD-based outlier detection.
+        Classify tiles as dimmer, brighter, or normal using MAD-based outlier detection.
 
         Parameters
         ----------
@@ -335,13 +335,15 @@ class MicroscopeTileDetector:
         -------
         dimmer_tiles : List[int]
             IDs of dimmer tiles
+        brighter_tiles : List[int]
+            IDs of brighter tiles
         normal_tiles : List[int]
             IDs of normal tiles
         """
         from scipy.stats import median_abs_deviation
 
         if len(tile_stats) < 3:
-            return [], list(tile_stats.keys())
+            return [], [], list(tile_stats.keys())
 
         # Get median intensities
         tile_ids = list(tile_stats.keys())
@@ -352,10 +354,11 @@ class MicroscopeTileDetector:
         mad = median_abs_deviation(medians)
 
         if mad == 0:
-            return [], tile_ids
+            return [], [], tile_ids
 
-        # Classify tiles
+        # Classify tiles based on MAD score
         dimmer_tiles = []
+        brighter_tiles = []
         normal_tiles = []
 
         for tile_id, median in zip(tile_ids, medians):
@@ -363,10 +366,12 @@ class MicroscopeTileDetector:
 
             if mad_score > self.outlier_threshold:  # Significantly dimmer
                 dimmer_tiles.append(tile_id)
-            else:
+            elif mad_score < -self.outlier_threshold:  # Significantly brighter
+                brighter_tiles.append(tile_id)
+            else:  # Normal
                 normal_tiles.append(tile_id)
 
-        return dimmer_tiles, normal_tiles
+        return dimmer_tiles, brighter_tiles, normal_tiles
 
     def detect(self,
               x_coords: np.ndarray,
@@ -428,21 +433,31 @@ class MicroscopeTileDetector:
                 'reason': f'Insufficient valid tiles ({len(valid_tiles)} < {self.min_tiles})'
             }
 
-        # Step 6: Classify tiles as dimmer vs normal
-        dimmer_tiles, normal_tiles = self.classify_tiles(valid_tiles)
+        # Step 6: Classify tiles as dimmer, brighter, or normal
+        dimmer_tiles, brighter_tiles, normal_tiles = self.classify_tiles(valid_tiles)
 
         # Count cells in each group
         dimmer_cell_mask = np.isin(cell_tile_ids, dimmer_tiles)
+        brighter_cell_mask = np.isin(cell_tile_ids, brighter_tiles)
         normal_cell_mask = np.isin(cell_tile_ids, normal_tiles)
 
         n_dimmer_cells = np.sum(dimmer_cell_mask)
+        n_brighter_cells = np.sum(brighter_cell_mask)
         n_normal_cells = np.sum(normal_cell_mask)
+        n_abnormal_cells = n_dimmer_cells + n_brighter_cells
 
-        # Need enough cells in both groups for UniFORM
-        if n_dimmer_cells < self.min_tile_size or n_normal_cells < self.min_tile_size:
+        # Need enough normal cells for UniFORM reference
+        if n_normal_cells < self.min_tile_size:
             return {
                 'detected': False,
-                'reason': f'Insufficient cells for UniFORM (dimmer={n_dimmer_cells}, normal={n_normal_cells})'
+                'reason': f'Insufficient normal cells ({n_normal_cells} < {self.min_tile_size})'
+            }
+
+        # Need at least some abnormal tiles to correct
+        if n_abnormal_cells < self.min_tile_size:
+            return {
+                'detected': False,
+                'reason': f'No abnormal tiles to correct (dimmer={n_dimmer_cells}, brighter={n_brighter_cells})'
             }
 
         # Create tile labels for visualization (grid-based)
@@ -471,27 +486,34 @@ class MicroscopeTileDetector:
             'tile_labels': tile_labels,
             'tile_stats': valid_tiles,
             'dimmer_tiles': dimmer_tiles,
+            'brighter_tiles': brighter_tiles,
             'normal_tiles': normal_tiles,
             'cell_tile_ids': cell_tile_ids,
             'n_dimmer_cells': int(n_dimmer_cells),
+            'n_brighter_cells': int(n_brighter_cells),
             'n_normal_cells': int(n_normal_cells),
             'n_tiles': len(valid_tiles),
             'n_dimmer_tiles': len(dimmer_tiles),
+            'n_brighter_tiles': len(brighter_tiles),
             'n_normal_tiles': len(normal_tiles)
         }
 
 
 class TileArtifactCorrector:
     """
-    Corrects tile artifacts using UniFORM normalization between dimmer and normal tiles.
+    Corrects tile artifacts using UniFORM normalization.
 
-    This class applies quantile-based normalization to align the intensity distributions
-    of dimmer tiles to match normal tiles.
+    This class applies:
+    1. Tile-level correction: Normalizes dimmer/brighter tiles to match normal tiles
+    2. Radial correction: Corrects circular/vignetting artifacts within tiles
     """
 
     def __init__(self,
                  n_quantiles: int = 100,
-                 correction_strength: float = 1.0):
+                 correction_strength: float = 1.0,
+                 radial_correction: bool = True,
+                 radial_bins: int = 3,
+                 radial_threshold: float = 0.15):
         """
         Initialize the corrector.
 
@@ -500,11 +522,19 @@ class TileArtifactCorrector:
         n_quantiles : int
             Number of quantiles for UniFORM normalization (default: 100)
         correction_strength : float
-            Strength of correction to apply (0-1, default: 1.0)
-            1.0 = full UniFORM correction, <1.0 = partial correction
+            Strength of tile-level correction (0-1, default: 1.0)
+        radial_correction : bool
+            Enable within-tile radial artifact correction (default: True)
+        radial_bins : int
+            Number of radial zones (center to edge) for analysis (default: 3)
+        radial_threshold : float
+            Relative intensity difference threshold for radial correction (default: 0.15)
         """
         self.n_quantiles = n_quantiles
         self.correction_strength = correction_strength
+        self.radial_correction = radial_correction
+        self.radial_bins = radial_bins
+        self.radial_threshold = radial_threshold
 
     def uniform_normalize(self,
                          source_values: np.ndarray,
@@ -548,18 +578,147 @@ class TileArtifactCorrector:
 
         return normalized
 
-    def correct(self,
-               intensities: np.ndarray,
-               detection_results: Dict) -> Tuple[np.ndarray, Dict]:
+    def correct_radial_artifacts(self,
+                                 x_coords: np.ndarray,
+                                 y_coords: np.ndarray,
+                                 intensities: np.ndarray,
+                                 cell_tile_ids: np.ndarray,
+                                 y_grid: np.ndarray,
+                                 x_grid: np.ndarray) -> Tuple[np.ndarray, int]:
         """
-        Apply UniFORM normalization between dimmer and normal tiles.
+        Correct circular/radial artifacts within tiles (vignetting).
 
         Parameters
         ----------
+        x_coords : np.ndarray
+            X coordinates of cells
+        y_coords : np.ndarray
+            Y coordinates of cells
+        intensities : np.ndarray
+            Cell intensities
+        cell_tile_ids : np.ndarray
+            Tile ID for each cell
+        y_grid : np.ndarray
+            Y grid lines
+        x_grid : np.ndarray
+            X grid lines
+
+        Returns
+        -------
+        corrected : np.ndarray
+            Corrected intensities
+        n_tiles_corrected : int
+            Number of tiles with radial correction applied
+        """
+        corrected = intensities.copy()
+        n_tiles_corrected = 0
+
+        # Get unique tiles
+        unique_tiles = np.unique(cell_tile_ids)
+        unique_tiles = unique_tiles[unique_tiles > 0]  # Skip unassigned
+
+        # Calculate tile spacing (approximate)
+        if len(y_grid) > 1 and len(x_grid) > 1:
+            y_spacing = np.median(np.diff(y_grid))
+            x_spacing = np.median(np.diff(x_grid))
+        else:
+            return corrected, 0
+
+        for tile_id in unique_tiles:
+            tile_mask = cell_tile_ids == tile_id
+            if np.sum(tile_mask) < 100:  # Need enough cells
+                continue
+
+            # Get tile cells
+            tile_x = x_coords[tile_mask]
+            tile_y = y_coords[tile_mask]
+            tile_intensities = intensities[tile_mask]
+
+            # Calculate tile center
+            tile_center_x = np.median(tile_x)
+            tile_center_y = np.median(tile_y)
+
+            # Calculate radial distance from center (normalized by tile size)
+            dx = (tile_x - tile_center_x) / x_spacing
+            dy = (tile_y - tile_center_y) / y_spacing
+            radial_dist = np.sqrt(dx**2 + dy**2)
+
+            # Divide into radial bins
+            max_dist = radial_dist.max()
+            if max_dist == 0:
+                continue
+
+            radial_edges = np.linspace(0, max_dist, self.radial_bins + 1)
+            radial_bin_ids = np.digitize(radial_dist, radial_edges) - 1
+            radial_bin_ids = np.clip(radial_bin_ids, 0, self.radial_bins - 1)
+
+            # Calculate median intensity per radial bin
+            bin_medians = []
+            for bin_id in range(self.radial_bins):
+                bin_mask = radial_bin_ids == bin_id
+                if np.sum(bin_mask) > 10:
+                    bin_vals = tile_intensities[bin_mask]
+                    bin_vals_pos = bin_vals[bin_vals > 0]
+                    if len(bin_vals_pos) > 0:
+                        bin_medians.append(np.median(bin_vals_pos))
+                    else:
+                        bin_medians.append(np.nan)
+                else:
+                    bin_medians.append(np.nan)
+
+            bin_medians = np.array(bin_medians)
+            valid_bins = ~np.isnan(bin_medians)
+
+            if np.sum(valid_bins) < 2:
+                continue
+
+            # Calculate overall tile median
+            tile_median = np.median(bin_medians[valid_bins])
+
+            # Check for significant radial variation
+            max_deviation = np.max(np.abs(bin_medians[valid_bins] - tile_median)) / (tile_median + 1e-10)
+
+            if max_deviation > self.radial_threshold:
+                # Apply radial correction
+                for bin_id in range(self.radial_bins):
+                    if not valid_bins[bin_id]:
+                        continue
+
+                    bin_mask = radial_bin_ids == bin_id
+                    bin_median = bin_medians[bin_id]
+
+                    if bin_median > 0:
+                        correction_factor = tile_median / bin_median
+                        # Limit correction
+                        correction_factor = np.clip(correction_factor, 0.7, 1.3)
+
+                        # Apply to this radial bin
+                        tile_indices = np.where(tile_mask)[0]
+                        bin_indices = tile_indices[bin_mask]
+                        corrected[bin_indices] *= correction_factor
+
+                n_tiles_corrected += 1
+
+        return corrected, n_tiles_corrected
+
+    def correct(self,
+               x_coords: np.ndarray,
+               y_coords: np.ndarray,
+               intensities: np.ndarray,
+               detection_results: Dict) -> Tuple[np.ndarray, Dict]:
+        """
+        Apply tile-level and radial artifact correction.
+
+        Parameters
+        ----------
+        x_coords : np.ndarray
+            X coordinates of cells
+        y_coords : np.ndarray
+            Y coordinates of cells
         intensities : np.ndarray
             Original marker intensities
         detection_results : Dict
-            Results from SharpEdgeTileDetector.detect()
+            Results from MicroscopeTileDetector.detect()
 
         Returns
         -------
@@ -577,53 +736,70 @@ class TileArtifactCorrector:
         # Get cell tile assignments
         cell_tile_ids = detection_results['cell_tile_ids']
         dimmer_tiles = detection_results['dimmer_tiles']
+        brighter_tiles = detection_results['brighter_tiles']
         normal_tiles = detection_results['normal_tiles']
 
-        # Create masks for dimmer and normal cells
+        # Create masks
         dimmer_mask = np.isin(cell_tile_ids, dimmer_tiles)
+        brighter_mask = np.isin(cell_tile_ids, brighter_tiles)
         normal_mask = np.isin(cell_tile_ids, normal_tiles)
 
         n_dimmer = np.sum(dimmer_mask)
+        n_brighter = np.sum(brighter_mask)
         n_normal = np.sum(normal_mask)
 
-        if n_dimmer == 0:
-            # No dimmer tiles, no correction needed
-            return intensities, {
-                'detected': True,
-                'n_dimmer_tiles': len(dimmer_tiles),
-                'n_normal_tiles': len(normal_tiles),
-                'n_dimmer_cells': 0,
-                'n_normal_cells': int(n_normal),
-                'n_corrected': 0,
-                'mean_correction_pct': 0.0
-            }
-
-        # Apply UniFORM normalization: dimmer tiles -> normal tiles
         corrected = intensities.copy()
-        dimmer_values = intensities[dimmer_mask]
         normal_values = intensities[normal_mask]
 
-        # Normalize dimmer to match normal
-        normalized_dimmer = self.uniform_normalize(dimmer_values, normal_values)
+        n_tile_corrected = 0
+        dimmer_correction_pct = 0.0
+        brighter_correction_pct = 0.0
 
-        # Update corrected values
-        corrected[dimmer_mask] = normalized_dimmer
-
-        # Calculate statistics
-        mean_correction_pct = 0.0
+        # Step 1: Normalize dimmer tiles to match normal
         if n_dimmer > 0:
+            dimmer_values = intensities[dimmer_mask]
+            normalized_dimmer = self.uniform_normalize(dimmer_values, normal_values)
+            corrected[dimmer_mask] = normalized_dimmer
+            n_tile_corrected += n_dimmer
+
             changes = (normalized_dimmer - dimmer_values) / (dimmer_values + 1e-10)
-            mean_correction_pct = np.mean(changes[np.isfinite(changes)]) * 100
+            dimmer_correction_pct = np.mean(changes[np.isfinite(changes)]) * 100
+
+        # Step 2: Normalize brighter tiles to match normal
+        if n_brighter > 0:
+            brighter_values = intensities[brighter_mask]
+            normalized_brighter = self.uniform_normalize(brighter_values, normal_values)
+            corrected[brighter_mask] = normalized_brighter
+            n_tile_corrected += n_brighter
+
+            changes = (normalized_brighter - brighter_values) / (brighter_values + 1e-10)
+            brighter_correction_pct = np.mean(changes[np.isfinite(changes)]) * 100
+
+        # Step 3: Apply radial correction within tiles
+        n_radial_tiles = 0
+        if self.radial_correction:
+            y_grid = detection_results.get('y_grid', np.array([]))
+            x_grid = detection_results.get('x_grid', np.array([]))
+
+            if len(y_grid) > 0 and len(x_grid) > 0:
+                corrected, n_radial_tiles = self.correct_radial_artifacts(
+                    x_coords, y_coords, corrected, cell_tile_ids, y_grid, x_grid
+                )
 
         stats = {
             'detected': True,
             'n_dimmer_tiles': len(dimmer_tiles),
+            'n_brighter_tiles': len(brighter_tiles),
             'n_normal_tiles': len(normal_tiles),
             'n_dimmer_cells': int(n_dimmer),
+            'n_brighter_cells': int(n_brighter),
             'n_normal_cells': int(n_normal),
-            'n_corrected': int(n_dimmer),
-            'mean_correction_pct': float(mean_correction_pct),
+            'n_tile_corrected': int(n_tile_corrected),
+            'n_radial_tiles': int(n_radial_tiles),
+            'dimmer_correction_pct': float(dimmer_correction_pct),
+            'brighter_correction_pct': float(brighter_correction_pct),
             'dimmer_tiles': dimmer_tiles,
+            'brighter_tiles': brighter_tiles,
             'normal_tiles': normal_tiles
         }
 
@@ -669,25 +845,28 @@ def create_diagnostic_plots(marker: str,
     axes[0, 0].set_ylabel('Y Bin')
     plt.colorbar(im1, ax=axes[0, 0])
 
-    # 2. Tile segmentation (show dimmer vs normal tiles)
+    # 2. Tile segmentation (show dimmer/brighter/normal tiles)
     tile_labels = detection_results.get('tile_labels', np.zeros_like(heatmap))
     dimmer_tiles = detection_results.get('dimmer_tiles', [])
+    brighter_tiles = detection_results.get('brighter_tiles', [])
     normal_tiles = detection_results.get('normal_tiles', [])
 
-    # Create classification map: 0=edge, 1=normal, 2=dimmer
+    # Create classification map: 0=edge, 1=normal, 2=dimmer, 3=brighter
     tile_classification = np.zeros_like(tile_labels)
     for tid in normal_tiles:
         tile_classification[tile_labels == tid] = 1
     for tid in dimmer_tiles:
         tile_classification[tile_labels == tid] = 2
+    for tid in brighter_tiles:
+        tile_classification[tile_labels == tid] = 3
 
-    cmap = plt.cm.colors.ListedColormap(['black', 'blue', 'red'])
-    im2 = axes[0, 1].imshow(tile_classification, cmap=cmap, aspect='auto', vmin=0, vmax=2)
-    axes[0, 1].set_title(f'Tile Classification\n({len(dimmer_tiles)} dimmer, {len(normal_tiles)} normal)')
+    cmap = plt.cm.colors.ListedColormap(['black', 'blue', 'red', 'yellow'])
+    im2 = axes[0, 1].imshow(tile_classification, cmap=cmap, aspect='auto', vmin=0, vmax=3)
+    axes[0, 1].set_title(f'Tile Classification\n({len(dimmer_tiles)} dimmer, {len(brighter_tiles)} brighter, {len(normal_tiles)} normal)')
     axes[0, 1].set_xlabel('X Bin')
     axes[0, 1].set_ylabel('Y Bin')
-    cbar = plt.colorbar(im2, ax=axes[0, 1], ticks=[0, 1, 2])
-    cbar.set_ticklabels(['Edge', 'Normal', 'Dimmer'])
+    cbar = plt.colorbar(im2, ax=axes[0, 1], ticks=[0, 1, 2, 3])
+    cbar.set_ticklabels(['Edge', 'Normal', 'Dimmer', 'Brighter'])
 
     # 3. Detected grid overlay
     axes[0, 2].imshow(heatmap, cmap='gray', aspect='auto', alpha=0.7)
@@ -715,8 +894,8 @@ def create_diagnostic_plots(marker: str,
     # Get tile assignments for cells
     cell_tile_ids = detection_results.get('cell_tile_ids', np.zeros(len(x_coords), dtype=int))
     dimmer_mask = np.isin(cell_tile_ids, dimmer_tiles)
+    brighter_mask = np.isin(cell_tile_ids, brighter_tiles)
     normal_mask = np.isin(cell_tile_ids, normal_tiles)
-    edge_mask_cells = ~(dimmer_mask | normal_mask)
 
     # Subsample for plotting if too many cells
     if len(x_coords) > 50000:
@@ -726,6 +905,7 @@ def create_diagnostic_plots(marker: str,
         orig_plot = original_intensities[sample_idx]
         corr_plot = corrected_intensities[sample_idx]
         dimmer_plot = dimmer_mask[sample_idx]
+        brighter_plot = brighter_mask[sample_idx]
         normal_plot = normal_mask[sample_idx]
     else:
         x_plot = x_coords
@@ -733,6 +913,7 @@ def create_diagnostic_plots(marker: str,
         orig_plot = original_intensities
         corr_plot = corrected_intensities
         dimmer_plot = dimmer_mask
+        brighter_plot = brighter_mask
         normal_plot = normal_mask
 
     # 4. Spatial scatter: Original intensities
