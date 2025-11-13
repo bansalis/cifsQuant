@@ -109,22 +109,22 @@ USE_SHARED_GATES = True  # True = one gate per marker; False = per-sample gates
 NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax'
 
 # ============================================================================
-# TILE ARTIFACT CORRECTION (gradient-based detection + UniFORM normalization)
+# TILE ARTIFACT CORRECTION (microscope grid detection + UniFORM normalization)
 # ============================================================================
-# Configuration for tile detection and UniFORM normalization
-# Detects square tile regions with dimmer fluorescence and normalizes them
-# to match normal tiles using quantile-based normalization (UniFORM)
+# Configuration for detecting actual microscope tile grid and applying UniFORM
+# Detects regular grid of microscope tiles (not MCMICRO tiles) using intensity
+# patterns, then normalizes dimmer tiles to match normal tiles
 
 TILE_CORRECTION_CONFIG = {
     'enabled': True,
     'markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1'],
 
-    # Detection parameters
-    'bin_size': 50,                    # Spatial binning (pixels)
-    'smooth_sigma': 2.0,               # Gaussian smoothing before edge detection
-    'edge_threshold_percentile': 90,   # Edge strength threshold (85-95, lower=more sensitive)
-    'min_edge_pixels': 10,             # Minimum edges to proceed
-    'min_tile_size': 100,              # Minimum cells per tile region
+    # Grid detection parameters
+    'bin_size': 50,                    # Spatial binning for heatmap (pixels)
+    'peak_distance': 20,               # Minimum distance between grid lines (bins)
+    'peak_height_percentile': 75,     # Peak detection threshold (percentile)
+    'min_tiles': 4,                    # Minimum number of tiles to proceed
+    'min_tile_size': 100,              # Minimum cells per tile
     'outlier_threshold': 2.0,          # MAD units for classifying dimmer tiles
 
     # UniFORM normalization parameters
@@ -1308,7 +1308,7 @@ def correct_tile_artifacts_per_marker(adata):
     """
     import sys
     sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
-    from tile_artifact_correction import SharpEdgeTileDetector, TileArtifactCorrector
+    from tile_artifact_correction import MicroscopeTileDetector, TileArtifactCorrector
     from tile_artifact_correction import create_diagnostic_plots, save_correction_report
 
     print("\n" + "="*70)
@@ -1336,12 +1336,13 @@ def correct_tile_artifacts_per_marker(adata):
     print()
 
     # Initialize detector and corrector with config parameters
-    detector = SharpEdgeTileDetector(
+    detector = MicroscopeTileDetector(
         bin_size=TILE_CORRECTION_CONFIG.get('bin_size', 50),
-        smooth_sigma=TILE_CORRECTION_CONFIG.get('smooth_sigma', 2.0),
-        edge_threshold_percentile=TILE_CORRECTION_CONFIG.get('edge_threshold_percentile', 90),
-        min_edge_pixels=TILE_CORRECTION_CONFIG.get('min_edge_pixels', 10),
-        min_tile_size=TILE_CORRECTION_CONFIG.get('min_tile_size', 100)
+        peak_distance=TILE_CORRECTION_CONFIG.get('peak_distance', 20),
+        peak_height_percentile=TILE_CORRECTION_CONFIG.get('peak_height_percentile', 75),
+        min_tiles=TILE_CORRECTION_CONFIG.get('min_tiles', 4),
+        min_tile_size=TILE_CORRECTION_CONFIG.get('min_tile_size', 100),
+        outlier_threshold=TILE_CORRECTION_CONFIG.get('outlier_threshold', 2.0)
     )
 
     corrector = TileArtifactCorrector(

@@ -1,16 +1,19 @@
 """
-Gradient-Based Tile Boundary Correction for MCMICRO Data
+Microscope Tile Grid Detection and Correction for MCMICRO Data
 
-This module implements a sophisticated tile artifact correction system using
-gradient-based edge detection (Sobel operator) to identify and correct intensity
-discontinuities at tile boundaries in multiplex imaging data.
+This module detects actual microscope tile boundaries (not MCMICRO tiles) using
+intensity pattern analysis and applies UniFORM normalization to correct dimmer tiles.
 
-Algorithm Overview:
-1. Spatial Heatmap Generation: Convert sparse cell coordinates to dense 2D intensity map
-2. Edge Detection: Apply Sobel gradients to detect sharp intensity discontinuities
-3. Grid Line Identification: Validate detected edges form coherent grid structure
-4. Boundary Region Mapping: Map detected edges to cell coordinates
-5. Local Intensity Correction: Normalize boundary cells using KNN approach
+Algorithm:
+1. Create fine-resolution intensity heatmap
+2. Apply Sobel edge detection to find tile boundaries
+3. Project edges to 1D and find peaks (boundary lines)
+4. Estimate regular grid spacing from peak distances
+5. Fit regular grid and assign cells to microscope tiles
+6. Classify tiles as dimmer vs normal
+7. Apply UniFORM normalization between populations
+
+Expected microscope tile size: ~1024-2048 pixels (CellDIVE/Leica)
 
 Author: Claude Code
 Date: 2025-11-13
@@ -20,8 +23,8 @@ import numpy as np
 import pandas as pd
 from scipy import ndimage
 from scipy.signal import find_peaks
-from scipy.ndimage import gaussian_filter, binary_dilation, binary_erosion
-from skimage import morphology, filters
+from scipy.ndimage import gaussian_filter
+from skimage import filters
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -32,48 +35,52 @@ import warnings
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
-class SharpEdgeTileDetector:
+class MicroscopeTileDetector:
     """
-    Detects tile regions using gradient-based edge detection (Sobel operator).
+    Detects actual microscope tile grid using intensity pattern analysis.
 
-    This class identifies sharp intensity discontinuities that indicate tile boundaries,
-    then segments the image into tile regions for classification and normalization.
+    This class finds the regular grid structure of microscope tiles (not MCMICRO tiles)
+    by detecting intensity discontinuities and fitting a regular grid.
     """
 
     def __init__(self,
                  bin_size: int = 50,
-                 smooth_sigma: float = 2.0,
-                 edge_threshold_percentile: int = 90,
-                 min_edge_pixels: int = 10,
-                 min_tile_size: int = 100):
+                 peak_distance: int = 20,
+                 peak_height_percentile: int = 75,
+                 min_tiles: int = 4,
+                 min_tile_size: int = 100,
+                 outlier_threshold: float = 2.0):
         """
-        Initialize the edge detector.
+        Initialize the microscope tile detector.
 
         Parameters
         ----------
         bin_size : int
             Spatial binning size in pixels (default: 50)
-        smooth_sigma : float
-            Gaussian smoothing kernel width (default: 2.0)
-        edge_threshold_percentile : int
-            Percentile threshold for edge detection (85-95, default: 90)
-        min_edge_pixels : int
-            Minimum number of edge pixels to proceed (default: 10)
+        peak_distance : int
+            Minimum distance between peaks in bins (default: 20)
+        peak_height_percentile : int
+            Percentile for peak detection threshold (default: 75)
+        min_tiles : int
+            Minimum number of tiles to proceed (default: 4)
         min_tile_size : int
-            Minimum number of cells per tile region (default: 100)
+            Minimum number of cells per tile (default: 100)
+        outlier_threshold : float
+            MAD units for classifying dimmer tiles (default: 2.0)
         """
         self.bin_size = bin_size
-        self.smooth_sigma = smooth_sigma
-        self.edge_threshold_percentile = edge_threshold_percentile
-        self.min_edge_pixels = min_edge_pixels
+        self.peak_distance = peak_distance
+        self.peak_height_percentile = peak_height_percentile
+        self.min_tiles = min_tiles
         self.min_tile_size = min_tile_size
+        self.outlier_threshold = outlier_threshold
 
     def create_spatial_heatmap(self,
                               x_coords: np.ndarray,
                               y_coords: np.ndarray,
                               intensities: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Convert sparse single-cell coordinates to dense 2D intensity map.
+        Create fine-resolution intensity heatmap for tile boundary detection.
 
         Parameters
         ----------
@@ -87,14 +94,14 @@ class SharpEdgeTileDetector:
         Returns
         -------
         heatmap : np.ndarray
-            2D array representing tissue intensity landscape
+            2D array with median intensity per bin
         x_edges : np.ndarray
             Bin edges for X axis
         y_edges : np.ndarray
             Bin edges for Y axis
         """
         # Filter out invalid values
-        valid = np.isfinite(x_coords) & np.isfinite(y_coords) & np.isfinite(intensities)
+        valid = np.isfinite(x_coords) & np.isfinite(y_coords) & np.isfinite(intensities) & (intensities > 0)
         x_coords = x_coords[valid]
         y_coords = y_coords[valid]
         intensities = intensities[valid]
@@ -102,20 +109,18 @@ class SharpEdgeTileDetector:
         if len(x_coords) == 0:
             return np.zeros((10, 10)), np.linspace(0, 1000, 11), np.linspace(0, 1000, 11)
 
-        # Calculate number of bins
+        # Create bins
         x_min, x_max = x_coords.min(), x_coords.max()
         y_min, y_max = y_coords.min(), y_coords.max()
 
-        n_x_bins = max(10, int((x_max - x_min) / self.bin_size))
-        n_y_bins = max(10, int((y_max - y_min) / self.bin_size))
+        x_edges = np.arange(x_min, x_max + self.bin_size, self.bin_size)
+        y_edges = np.arange(y_min, y_max + self.bin_size, self.bin_size)
 
-        # Create bins
-        x_edges = np.linspace(x_min, x_max, n_x_bins + 1)
-        y_edges = np.linspace(y_min, y_max, n_y_bins + 1)
+        n_x_bins = len(x_edges) - 1
+        n_y_bins = len(y_edges) - 1
 
-        # Bin the data and calculate mean intensity per bin
+        # Bin the data and calculate median intensity per bin
         heatmap = np.zeros((n_y_bins, n_x_bins))
-        counts = np.zeros((n_y_bins, n_x_bins))
 
         # Digitize coordinates
         x_idx = np.digitize(x_coords, x_edges) - 1
@@ -125,20 +130,18 @@ class SharpEdgeTileDetector:
         x_idx = np.clip(x_idx, 0, n_x_bins - 1)
         y_idx = np.clip(y_idx, 0, n_y_bins - 1)
 
-        # Accumulate intensities
-        for i in range(len(x_coords)):
-            heatmap[y_idx[i], x_idx[i]] += intensities[i]
-            counts[y_idx[i], x_idx[i]] += 1
-
-        # Calculate mean (avoid division by zero)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            heatmap = np.where(counts > 0, heatmap / counts, 0)
+        # Calculate median per bin
+        for by in range(n_y_bins):
+            for bx in range(n_x_bins):
+                mask = (x_idx == bx) & (y_idx == by)
+                if np.any(mask):
+                    heatmap[by, bx] = np.median(intensities[mask])
 
         return heatmap, x_edges, y_edges
 
-    def detect_sharp_edges(self, heatmap: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def detect_tile_boundaries(self, heatmap: np.ndarray) -> Tuple[np.ndarray, np.ndarray, List[int], List[int]]:
         """
-        Identify sharp intensity discontinuities using Sobel gradients.
+        Detect microscope tile boundaries using Sobel edge detection.
 
         Parameters
         ----------
@@ -147,193 +150,105 @@ class SharpEdgeTileDetector:
 
         Returns
         -------
-        edge_mask : np.ndarray
-            Binary mask of detected edges
-        edge_strength : np.ndarray
-            Gradient magnitude map
+        edges_y : np.ndarray
+            Horizontal edge strength (for detecting horizontal tile boundaries)
+        edges_x : np.ndarray
+            Vertical edge strength (for detecting vertical tile boundaries)
+        y_peaks : List[int]
+            Y-coordinates of horizontal boundary lines (in bin indices)
+        x_peaks : List[int]
+            X-coordinates of vertical boundary lines (in bin indices)
         """
-        # Apply Gaussian smoothing to reduce noise while preserving edges
-        smoothed = gaussian_filter(heatmap, sigma=self.smooth_sigma)
+        # Apply Sobel to detect edges (tile boundaries)
+        edges_y = filters.sobel(heatmap, axis=0)  # Horizontal lines
+        edges_x = filters.sobel(heatmap, axis=1)  # Vertical lines
 
-        # Compute Sobel gradients in X and Y directions
-        grad_x = filters.sobel_h(smoothed)
-        grad_y = filters.sobel_v(smoothed)
+        # Project edges to 1D and find peaks (tile boundaries)
+        y_projection = np.abs(edges_y).sum(axis=1)
+        x_projection = np.abs(edges_x).sum(axis=0)
 
-        # Calculate gradient magnitude
-        edge_strength = np.sqrt(grad_x**2 + grad_y**2)
+        # Find peaks with adaptive threshold
+        y_threshold = np.percentile(y_projection[y_projection > 0], self.peak_height_percentile) if np.any(y_projection > 0) else 0
+        x_threshold = np.percentile(x_projection[x_projection > 0], self.peak_height_percentile) if np.any(x_projection > 0) else 0
 
-        # Threshold at specified percentile of non-zero gradients
-        non_zero = edge_strength[edge_strength > 0]
-        if len(non_zero) == 0:
-            return np.zeros_like(heatmap, dtype=bool), edge_strength
+        y_peaks, _ = find_peaks(y_projection, height=y_threshold, distance=self.peak_distance)
+        x_peaks, _ = find_peaks(x_projection, height=x_threshold, distance=self.peak_distance)
 
-        threshold = np.percentile(non_zero, self.edge_threshold_percentile)
-        edge_mask = edge_strength > threshold
+        return edges_y, edges_x, list(y_peaks), list(x_peaks)
 
-        # Apply morphological operations to clean up edges
-        # Binary dilation to connect nearby edges
-        edge_mask = binary_dilation(edge_mask, iterations=2)
-
-        # Skeletonization to thin edges to single-pixel lines
-        edge_mask = morphology.skeletonize(edge_mask)
-
-        return edge_mask, edge_strength
-
-    def detect_grid_lines(self, edge_mask: np.ndarray) -> Tuple[List[int], List[int]]:
+    def fit_regular_grid(self,
+                        y_peaks: List[int],
+                        x_peaks: List[int],
+                        y_edges: np.ndarray,
+                        x_edges: np.ndarray,
+                        max_y: float,
+                        max_x: float) -> Tuple[np.ndarray, np.ndarray, float, float]:
         """
-        Validate detected edges form coherent grid structure.
+        Estimate grid spacing and fit regular grid.
 
         Parameters
         ----------
-        edge_mask : np.ndarray
-            Binary edge mask
+        y_peaks : List[int]
+            Y-coordinates of detected boundaries (bin indices)
+        x_peaks : List[int]
+            X-coordinates of detected boundaries (bin indices)
+        y_edges : np.ndarray
+            Y bin edges (pixel coordinates)
+        x_edges : np.ndarray
+            X bin edges (pixel coordinates)
+        max_y : float
+            Maximum Y coordinate in data
+        max_x : float
+            Maximum X coordinate in data
 
         Returns
         -------
-        h_lines : List[int]
-            Positions of horizontal lines (in bin coordinates)
-        v_lines : List[int]
-            Positions of vertical lines (in bin coordinates)
+        y_grid : np.ndarray
+            Y-coordinates of horizontal grid lines (pixel coordinates)
+        x_grid : np.ndarray
+            X-coordinates of vertical grid lines (pixel coordinates)
+        y_spacing : float
+            Vertical spacing between tiles (pixels)
+        x_spacing : float
+            Horizontal spacing between tiles (pixels)
         """
-        # Project edge mask onto axes
-        h_projection = np.sum(edge_mask, axis=1)  # Horizontal projection
-        v_projection = np.sum(edge_mask, axis=0)  # Vertical projection
+        # Convert peak indices to pixel coordinates
+        y_peak_coords = y_edges[y_peaks] if len(y_peaks) > 0 else np.array([])
+        x_peak_coords = x_edges[x_peaks] if len(x_peaks) > 0 else np.array([])
 
-        # Find peaks in projections
-        h_threshold = np.percentile(h_projection[h_projection > 0], 75) if np.any(h_projection > 0) else 0
-        v_threshold = np.percentile(v_projection[v_projection > 0], 75) if np.any(v_projection > 0) else 0
+        # Estimate grid spacing (median of differences)
+        if len(y_peaks) > 1:
+            y_spacing = np.median(np.diff(y_peak_coords))
+        else:
+            y_spacing = 1500.0  # Default CellDIVE tile size
 
-        h_peaks, _ = find_peaks(h_projection, height=h_threshold, distance=5)
-        v_peaks, _ = find_peaks(v_projection, height=v_threshold, distance=5)
+        if len(x_peaks) > 1:
+            x_spacing = np.median(np.diff(x_peak_coords))
+        else:
+            x_spacing = 1500.0  # Default CellDIVE tile size
 
-        return list(h_peaks), list(v_peaks)
+        # Fit regular grid starting from first detected boundary
+        if len(y_peak_coords) > 0:
+            y_start = y_peak_coords[0]
+            y_grid = np.arange(y_start, max_y + y_spacing, y_spacing)
+        else:
+            y_grid = np.arange(0, max_y + y_spacing, y_spacing)
 
-    def segment_tiles(self, edge_mask: np.ndarray, heatmap: np.ndarray) -> Tuple[np.ndarray, Dict]:
+        if len(x_peak_coords) > 0:
+            x_start = x_peak_coords[0]
+            x_grid = np.arange(x_start, max_x + x_spacing, x_spacing)
+        else:
+            x_grid = np.arange(0, max_x + x_spacing, x_spacing)
+
+        return y_grid, x_grid, y_spacing, x_spacing
+
+    def assign_cells_to_grid_tiles(self,
+                                   x_coords: np.ndarray,
+                                   y_coords: np.ndarray,
+                                   y_grid: np.ndarray,
+                                   x_grid: np.ndarray) -> Tuple[np.ndarray, Dict]:
         """
-        Segment the image into tile regions using detected edges.
-
-        Parameters
-        ----------
-        edge_mask : np.ndarray
-            Binary edge mask
-        heatmap : np.ndarray
-            2D intensity heatmap
-
-        Returns
-        -------
-        tile_labels : np.ndarray
-            2D array with tile region labels (0 = edge, 1+ = tiles)
-        tile_stats : Dict
-            Statistics for each tile region
-        """
-        from scipy import ndimage
-
-        # Invert edge mask (1 = interior, 0 = edge)
-        interior_mask = ~edge_mask
-
-        # Label connected regions
-        tile_labels, n_tiles = ndimage.label(interior_mask)
-
-        # Calculate statistics for each tile
-        tile_stats = {}
-        for tile_id in range(1, n_tiles + 1):
-            tile_mask = tile_labels == tile_id
-            tile_intensities = heatmap[tile_mask]
-
-            # Filter out zero intensities
-            tile_intensities = tile_intensities[tile_intensities > 0]
-
-            if len(tile_intensities) > 0:
-                tile_stats[tile_id] = {
-                    'n_bins': int(np.sum(tile_mask)),
-                    'median_intensity': float(np.median(tile_intensities)),
-                    'mean_intensity': float(np.mean(tile_intensities)),
-                    'std_intensity': float(np.std(tile_intensities))
-                }
-            else:
-                tile_stats[tile_id] = {
-                    'n_bins': int(np.sum(tile_mask)),
-                    'median_intensity': 0.0,
-                    'mean_intensity': 0.0,
-                    'std_intensity': 0.0
-                }
-
-        return tile_labels, tile_stats
-
-    def classify_tiles(self, tile_stats: Dict, outlier_threshold: float = 2.0) -> Tuple[List[int], List[int]]:
-        """
-        Classify tiles as dimmer (outlier) or normal based on intensity.
-
-        Uses MAD (Median Absolute Deviation) to robustly identify outlier tiles.
-
-        Parameters
-        ----------
-        tile_stats : Dict
-            Statistics for each tile region
-        outlier_threshold : float
-            Number of MAD units for outlier detection (default: 2.0)
-
-        Returns
-        -------
-        dimmer_tiles : List[int]
-            IDs of tiles that are significantly dimmer
-        normal_tiles : List[int]
-            IDs of normal tiles
-        """
-        from scipy.stats import median_abs_deviation
-
-        if len(tile_stats) < 3:
-            # Not enough tiles to classify
-            return [], list(tile_stats.keys())
-
-        # Get median intensities for all tiles
-        tile_ids = list(tile_stats.keys())
-        medians = np.array([tile_stats[tid]['median_intensity'] for tid in tile_ids])
-
-        # Filter out zero intensities
-        valid_mask = medians > 0
-        if np.sum(valid_mask) < 3:
-            return [], tile_ids
-
-        valid_tile_ids = [tid for tid, v in zip(tile_ids, valid_mask) if v]
-        valid_medians = medians[valid_mask]
-
-        # Calculate global median and MAD
-        global_median = np.median(valid_medians)
-        mad = median_abs_deviation(valid_medians)
-
-        if mad == 0:
-            # All tiles have same intensity
-            return [], tile_ids
-
-        # Classify tiles
-        dimmer_tiles = []
-        normal_tiles = []
-
-        for tile_id, median in zip(valid_tile_ids, valid_medians):
-            # Calculate MAD score (how many MADs away from global median)
-            mad_score = (global_median - median) / mad
-
-            if mad_score > outlier_threshold:  # Significantly dimmer
-                dimmer_tiles.append(tile_id)
-            else:
-                normal_tiles.append(tile_id)
-
-        # Add zero-intensity tiles to normal (they'll be skipped anyway)
-        for tid in tile_ids:
-            if tid not in valid_tile_ids:
-                normal_tiles.append(tid)
-
-        return dimmer_tiles, normal_tiles
-
-    def assign_cells_to_tiles(self,
-                             x_coords: np.ndarray,
-                             y_coords: np.ndarray,
-                             tile_labels: np.ndarray,
-                             x_edges: np.ndarray,
-                             y_edges: np.ndarray) -> np.ndarray:
-        """
-        Assign each cell to a tile region.
+        Assign cells to microscope grid tiles and calculate tile statistics.
 
         Parameters
         ----------
@@ -341,42 +256,124 @@ class SharpEdgeTileDetector:
             X coordinates of cells
         y_coords : np.ndarray
             Y coordinates of cells
-        tile_labels : np.ndarray
-            2D array with tile region labels from segmentation
-        x_edges : np.ndarray
-            Bin edges for X axis
-        y_edges : np.ndarray
-            Bin edges for Y axis
+        y_grid : np.ndarray
+            Y-coordinates of horizontal grid lines
+        x_grid : np.ndarray
+            X-coordinates of vertical grid lines
 
         Returns
         -------
         cell_tile_ids : np.ndarray
-            Tile ID for each cell (0 = edge/unassigned)
+            Tile ID for each cell (row * n_cols + col)
+        tile_stats : Dict
+            Statistics for each tile
         """
         n_cells = len(x_coords)
         cell_tile_ids = np.zeros(n_cells, dtype=int)
 
-        # Digitize coordinates to bin indices
-        x_idx = np.digitize(x_coords, x_edges) - 1
-        y_idx = np.digitize(y_coords, y_edges) - 1
+        # Assign cells to grid tiles
+        y_tile_idx = np.digitize(y_coords, y_grid)
+        x_tile_idx = np.digitize(x_coords, x_grid)
 
-        # Clip to valid range
-        n_y_bins, n_x_bins = tile_labels.shape
-        x_idx = np.clip(x_idx, 0, n_x_bins - 1)
-        y_idx = np.clip(y_idx, 0, n_y_bins - 1)
-
-        # Assign cells to tiles
-        for i in range(n_cells):
-            cell_tile_ids[i] = tile_labels[y_idx[i], x_idx[i]]
+        # Create tile IDs (row * n_cols + col)
+        n_cols = len(x_grid)
+        cell_tile_ids = y_tile_idx * n_cols + x_tile_idx
 
         return cell_tile_ids
+
+    def calculate_tile_statistics(self,
+                                  cell_tile_ids: np.ndarray,
+                                  intensities: np.ndarray) -> Dict:
+        """
+        Calculate median intensity for each tile.
+
+        Parameters
+        ----------
+        cell_tile_ids : np.ndarray
+            Tile ID for each cell
+        intensities : np.ndarray
+            Marker intensities for each cell
+
+        Returns
+        -------
+        tile_stats : Dict
+            Statistics for each tile
+        """
+        tile_stats = {}
+        unique_tiles = np.unique(cell_tile_ids)
+
+        for tile_id in unique_tiles:
+            if tile_id == 0:  # Skip unassigned cells
+                continue
+
+            tile_mask = cell_tile_ids == tile_id
+            tile_intensities = intensities[tile_mask]
+
+            # Filter positive values
+            tile_intensities_pos = tile_intensities[tile_intensities > 0]
+
+            if len(tile_intensities_pos) > 0:
+                tile_stats[int(tile_id)] = {
+                    'n_cells': int(np.sum(tile_mask)),
+                    'median_intensity': float(np.median(tile_intensities_pos)),
+                    'mean_intensity': float(np.mean(tile_intensities_pos)),
+                    'std_intensity': float(np.std(tile_intensities_pos))
+                }
+
+        return tile_stats
+
+    def classify_tiles(self, tile_stats: Dict) -> Tuple[List[int], List[int]]:
+        """
+        Classify tiles as dimmer or normal using MAD-based outlier detection.
+
+        Parameters
+        ----------
+        tile_stats : Dict
+            Statistics for each tile
+
+        Returns
+        -------
+        dimmer_tiles : List[int]
+            IDs of dimmer tiles
+        normal_tiles : List[int]
+            IDs of normal tiles
+        """
+        from scipy.stats import median_abs_deviation
+
+        if len(tile_stats) < 3:
+            return [], list(tile_stats.keys())
+
+        # Get median intensities
+        tile_ids = list(tile_stats.keys())
+        medians = np.array([tile_stats[tid]['median_intensity'] for tid in tile_ids])
+
+        # Calculate global median and MAD
+        global_median = np.median(medians)
+        mad = median_abs_deviation(medians)
+
+        if mad == 0:
+            return [], tile_ids
+
+        # Classify tiles
+        dimmer_tiles = []
+        normal_tiles = []
+
+        for tile_id, median in zip(tile_ids, medians):
+            mad_score = (global_median - median) / mad
+
+            if mad_score > self.outlier_threshold:  # Significantly dimmer
+                dimmer_tiles.append(tile_id)
+            else:
+                normal_tiles.append(tile_id)
+
+        return dimmer_tiles, normal_tiles
 
     def detect(self,
               x_coords: np.ndarray,
               y_coords: np.ndarray,
               intensities: np.ndarray) -> Dict:
         """
-        Full detection pipeline: detect tiles and classify them.
+        Detect microscope tile grid and classify tiles as dimmer vs normal.
 
         Parameters
         ----------
@@ -390,47 +387,49 @@ class SharpEdgeTileDetector:
         Returns
         -------
         results : Dict
-            Detection results including tile segmentation and classification
+            Detection results including grid, tile assignments, and classification
         """
-        # Phase 1: Create spatial heatmap
+        # Step 1: Create fine-resolution intensity heatmap
         heatmap, x_edges, y_edges = self.create_spatial_heatmap(x_coords, y_coords, intensities)
 
-        # Phase 2: Detect edges
-        edge_mask, edge_strength = self.detect_sharp_edges(heatmap)
+        # Step 2: Detect tile boundaries using Sobel edge detection
+        edges_y, edges_x, y_peaks, x_peaks = self.detect_tile_boundaries(heatmap)
 
-        # Phase 3: Identify grid lines
-        h_lines, v_lines = self.detect_grid_lines(edge_mask)
-
-        # Count edge pixels
-        n_edge_pixels = np.sum(edge_mask)
-
-        # Check if detection was successful
-        detected = n_edge_pixels >= self.min_edge_pixels
-
-        if not detected:
+        # Check if we detected enough boundaries
+        if len(y_peaks) < 1 or len(x_peaks) < 1:
             return {
                 'detected': False,
-                'reason': 'Insufficient edge pixels detected'
+                'reason': f'Insufficient tile boundaries detected (y={len(y_peaks)}, x={len(x_peaks)})'
             }
 
-        # Phase 4: Segment into tile regions
-        tile_labels, tile_stats = self.segment_tiles(edge_mask, heatmap)
+        # Step 3: Fit regular grid and estimate tile spacing
+        max_y = y_coords.max()
+        max_x = x_coords.max()
+        y_grid, x_grid, y_spacing, x_spacing = self.fit_regular_grid(
+            y_peaks, x_peaks, y_edges, x_edges, max_y, max_x
+        )
 
-        # Filter tiles by minimum size
+        print(f"      Grid: {len(y_grid)} rows × {len(x_grid)} cols, "
+              f"spacing: {y_spacing:.0f}px × {x_spacing:.0f}px")
+
+        # Step 4: Assign cells to grid tiles
+        cell_tile_ids = self.assign_cells_to_grid_tiles(x_coords, y_coords, y_grid, x_grid)
+
+        # Step 5: Calculate statistics for each tile
+        tile_stats = self.calculate_tile_statistics(cell_tile_ids, intensities)
+
+        # Filter tiles by minimum cell count
         valid_tiles = {tid: stats for tid, stats in tile_stats.items()
-                      if stats['n_bins'] >= 5}  # At least 5 bins per tile
+                      if stats['n_cells'] >= self.min_tile_size}
 
-        if len(valid_tiles) < 2:
+        if len(valid_tiles) < self.min_tiles:
             return {
                 'detected': False,
-                'reason': 'Insufficient valid tile regions'
+                'reason': f'Insufficient valid tiles ({len(valid_tiles)} < {self.min_tiles})'
             }
 
-        # Phase 5: Classify tiles as dimmer vs normal
+        # Step 6: Classify tiles as dimmer vs normal
         dimmer_tiles, normal_tiles = self.classify_tiles(valid_tiles)
-
-        # Phase 6: Assign cells to tiles
-        cell_tile_ids = self.assign_cells_to_tiles(x_coords, y_coords, tile_labels, x_edges, y_edges)
 
         # Count cells in each group
         dimmer_cell_mask = np.isin(cell_tile_ids, dimmer_tiles)
@@ -439,32 +438,46 @@ class SharpEdgeTileDetector:
         n_dimmer_cells = np.sum(dimmer_cell_mask)
         n_normal_cells = np.sum(normal_cell_mask)
 
-        # Need enough cells in both groups
+        # Need enough cells in both groups for UniFORM
         if n_dimmer_cells < self.min_tile_size or n_normal_cells < self.min_tile_size:
             return {
                 'detected': False,
-                'reason': f'Insufficient cells (dimmer={n_dimmer_cells}, normal={n_normal_cells})'
+                'reason': f'Insufficient cells for UniFORM (dimmer={n_dimmer_cells}, normal={n_normal_cells})'
             }
+
+        # Create tile labels for visualization (grid-based)
+        tile_labels = np.zeros(heatmap.shape, dtype=int)
+        for by in range(heatmap.shape[0]):
+            for bx in range(heatmap.shape[1]):
+                y_coord = y_edges[by]
+                x_coord = x_edges[bx]
+                y_idx = np.digitize([y_coord], y_grid)[0]
+                x_idx = np.digitize([x_coord], x_grid)[0]
+                tile_labels[by, bx] = y_idx * len(x_grid) + x_idx
 
         return {
             'detected': True,
-            'edge_mask': edge_mask,
-            'edge_strength': edge_strength,
             'heatmap': heatmap,
             'x_edges': x_edges,
             'y_edges': y_edges,
-            'h_lines': h_lines,
-            'v_lines': v_lines,
-            'n_edge_pixels': int(n_edge_pixels),
-            'n_h_lines': len(h_lines),
-            'n_v_lines': len(v_lines),
+            'edges_y': edges_y,
+            'edges_x': edges_x,
+            'y_peaks': y_peaks,
+            'x_peaks': x_peaks,
+            'y_grid': y_grid,
+            'x_grid': x_grid,
+            'y_spacing': y_spacing,
+            'x_spacing': x_spacing,
             'tile_labels': tile_labels,
-            'tile_stats': tile_stats,
+            'tile_stats': valid_tiles,
             'dimmer_tiles': dimmer_tiles,
             'normal_tiles': normal_tiles,
             'cell_tile_ids': cell_tile_ids,
             'n_dimmer_cells': int(n_dimmer_cells),
-            'n_normal_cells': int(n_normal_cells)
+            'n_normal_cells': int(n_normal_cells),
+            'n_tiles': len(valid_tiles),
+            'n_dimmer_tiles': len(dimmer_tiles),
+            'n_normal_tiles': len(normal_tiles)
         }
 
 
@@ -676,11 +689,25 @@ def create_diagnostic_plots(marker: str,
     cbar = plt.colorbar(im2, ax=axes[0, 1], ticks=[0, 1, 2])
     cbar.set_ticklabels(['Edge', 'Normal', 'Dimmer'])
 
-    # 3. Edge detection overlay
-    axes[0, 2].imshow(heatmap, cmap='gray', aspect='auto', alpha=0.5)
-    edge_mask = detection_results.get('edge_mask', np.zeros_like(heatmap, dtype=bool))
-    axes[0, 2].imshow(edge_mask, cmap='Reds', aspect='auto', alpha=0.7)
-    axes[0, 2].set_title(f"Detected Tile Boundaries\n({detection_results.get('n_edge_pixels', 0)} edge pixels)")
+    # 3. Detected grid overlay
+    axes[0, 2].imshow(heatmap, cmap='gray', aspect='auto', alpha=0.7)
+
+    # Draw detected grid lines
+    x_edges_plot = detection_results.get('x_edges', np.array([]))
+    y_edges_plot = detection_results.get('y_edges', np.array([]))
+    x_grid = detection_results.get('x_grid', np.array([]))
+    y_grid = detection_results.get('y_grid', np.array([]))
+
+    # Convert grid coordinates to bin indices for plotting
+    for x_line in x_grid:
+        x_idx = np.argmin(np.abs(x_edges_plot - x_line))
+        axes[0, 2].axvline(x_idx, color='red', linestyle='-', linewidth=2, alpha=0.8)
+
+    for y_line in y_grid:
+        y_idx = np.argmin(np.abs(y_edges_plot - y_line))
+        axes[0, 2].axhline(y_idx, color='red', linestyle='-', linewidth=2, alpha=0.8)
+
+    axes[0, 2].set_title(f"Detected Microscope Grid\n({len(y_grid)} rows × {len(x_grid)} cols)")
     axes[0, 2].set_xlabel('X Bin')
     axes[0, 2].set_ylabel('Y Bin')
 
