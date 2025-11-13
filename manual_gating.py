@@ -63,6 +63,49 @@ USE_SHARED_GATES = True  # True = one gate per marker; False = per-sample gates
 NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax'
 
 # ============================================================================
+# TILE ARTIFACT CORRECTION (per-marker)
+# ============================================================================
+# Markers that need additional tile artifact correction
+# Set to empty list to disable for markers that work well (like TOM)
+TILE_ARTIFACT_CORRECTION = {
+    # Markers with NO correction (working well)
+    'TOM': {'enabled': False},
+    'CD45': {'enabled': False},
+
+    # Markers with Type 1 correction (baseline brightness differences)
+    # Type 1: clusters of tiles are uniformly brighter/dimmer
+    'AGFP': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'medium'},
+    'PERK': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'medium'},
+    'KI67': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'high'},
+
+    # Markers with Type 2 correction (edge artifacts)
+    # Type 2: tile edges have sharp brightness transitions
+    'CD8B': {'enabled': True, 'type1': False, 'type2': True, 'sensitivity': 'medium'},
+    'CD3': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+}
+
+# Sensitivity thresholds for artifact detection
+ARTIFACT_THRESHOLDS = {
+    'low': {'tile_cv_threshold': 0.30, 'edge_gradient_threshold': 0.25},
+    'medium': {'tile_cv_threshold': 0.20, 'edge_gradient_threshold': 0.20},
+    'high': {'tile_cv_threshold': 0.15, 'edge_gradient_threshold': 0.15},
+}
+
+# ============================================================================
+# HIERARCHICAL MARKER RELATIONSHIPS
+# ============================================================================
+# Define parent-child relationships: child markers must be subset of parent
+# Format: 'child_marker': 'parent_marker'
+# Child will only be positive if parent is also positive
+MARKER_HIERARCHY = {
+    # Example: FOXP3 should only be positive in CD3+ cells
+    # 'FOXP3': 'CD3',
+    # 'GZMB': 'CD45',  # Granzyme B only in immune cells
+    # 'CD8B': 'CD3',   # CD8B only in T cells
+    # Add your hierarchical relationships here
+}
+
+# ============================================================================
 
 def load_and_combine(results_dir):
     """Load all samples into single AnnData"""
@@ -1201,6 +1244,220 @@ def auto_suggest_gates(adata):
                 print(f"{marker:8s} | {sample:12s} | suggested={suggestions[marker][sample]:.3f}")
     
     return suggestions
+
+def correct_tile_artifacts_per_marker(adata):
+    """
+    Apply marker-specific tile artifact correction based on TILE_ARTIFACT_CORRECTION config.
+    Only corrects markers that need it, preserving working markers like TOM.
+
+    Type 1: Baseline brightness differences (clusters of tiles uniformly brighter/dimmer)
+    Type 2: Edge artifacts (tile edges have sharp brightness transitions)
+    """
+    from scipy.ndimage import median_filter
+    from scipy.stats import median_abs_deviation
+
+    print("\n" + "="*70)
+    print("MARKER-SPECIFIC TILE ARTIFACT CORRECTION")
+    print("="*70)
+
+    if 'tile_id' not in adata.obs.columns:
+        print("  ⚠️  No tile_id found, skipping tile artifact correction")
+        return adata
+
+    corrected_markers = []
+    skipped_markers = []
+
+    for marker in adata.var_names:
+        config = TILE_ARTIFACT_CORRECTION.get(marker, {'enabled': False})
+
+        if not config.get('enabled', False):
+            skipped_markers.append(marker)
+            continue
+
+        marker_idx = adata.var_names.get_loc(marker)
+        sensitivity = config.get('sensitivity', 'medium')
+        thresholds = ARTIFACT_THRESHOLDS[sensitivity]
+
+        print(f"\n  {marker} (sensitivity={sensitivity}):")
+
+        # Process each sample separately
+        for sample in adata.obs['sample_id'].unique():
+            sample_mask = adata.obs['sample_id'] == sample
+
+            # Type 1: Baseline tile brightness correction
+            if config.get('type1', False):
+                tile_medians = {}
+                tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
+
+                # Calculate median intensity per tile
+                for tile_id in tiles:
+                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    vals = adata.X[tile_mask, marker_idx]
+                    pos_vals = vals[vals > 0]
+                    if len(pos_vals) >= 10:
+                        tile_medians[tile_id] = np.median(pos_vals)
+
+                if len(tile_medians) < 3:
+                    continue
+
+                # Detect outlier tiles using CV and MAD
+                medians_array = np.array(list(tile_medians.values()))
+                global_median = np.median(medians_array)
+                cv = np.std(medians_array) / global_median if global_median > 0 else 0
+                mad = median_abs_deviation(medians_array)
+
+                # Only correct if CV exceeds threshold (indicates artifacts)
+                if cv > thresholds['tile_cv_threshold']:
+                    n_corrected = 0
+                    for tile_id, tile_median in tile_medians.items():
+                        # Correct tiles that deviate significantly from global median
+                        z_score = abs(tile_median - global_median) / (mad + 1e-10)
+                        if z_score > 2.0:  # Tile is outlier
+                            correction_factor = global_median / tile_median
+                            # Limit correction to reasonable range
+                            correction_factor = np.clip(correction_factor, 0.5, 2.0)
+
+                            tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                            adata.X[tile_mask, marker_idx] *= correction_factor
+                            n_corrected += 1
+
+                    if n_corrected > 0:
+                        print(f"    Type 1: {sample} - corrected {n_corrected}/{len(tiles)} tiles (CV={cv:.3f})")
+
+            # Type 2: Edge artifact correction
+            if config.get('type2', False):
+                tiles = adata.obs.loc[sample_mask, 'tile_id'].unique()
+                n_edge_corrected = 0
+
+                for tile_id in tiles:
+                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    tile_cells = adata.obsm['spatial'][tile_mask]
+
+                    if len(tile_cells) < 50:
+                        continue
+
+                    # Find tile boundaries
+                    x_min, x_max = tile_cells[:, 0].min(), tile_cells[:, 0].max()
+                    y_min, y_max = tile_cells[:, 1].min(), tile_cells[:, 1].max()
+                    tile_width = x_max - x_min
+                    tile_height = y_max - y_min
+
+                    # Define edge regions (outer 10% of tile)
+                    edge_margin = 0.10
+                    edge_mask_left = tile_cells[:, 0] < (x_min + tile_width * edge_margin)
+                    edge_mask_right = tile_cells[:, 0] > (x_max - tile_width * edge_margin)
+                    edge_mask_top = tile_cells[:, 1] < (y_min + tile_height * edge_margin)
+                    edge_mask_bottom = tile_cells[:, 1] > (y_max - tile_height * edge_margin)
+                    edge_mask = edge_mask_left | edge_mask_right | edge_mask_top | edge_mask_bottom
+
+                    # Get intensities for edge and center regions
+                    tile_indices = np.where(tile_mask)[0]
+                    edge_indices = tile_indices[edge_mask]
+                    center_indices = tile_indices[~edge_mask]
+
+                    if len(edge_indices) < 10 or len(center_indices) < 10:
+                        continue
+
+                    edge_vals = adata.X[edge_indices, marker_idx]
+                    center_vals = adata.X[center_indices, marker_idx]
+
+                    edge_vals_pos = edge_vals[edge_vals > 0]
+                    center_vals_pos = center_vals[center_vals > 0]
+
+                    if len(edge_vals_pos) < 10 or len(center_vals_pos) < 10:
+                        continue
+
+                    edge_median = np.median(edge_vals_pos)
+                    center_median = np.median(center_vals_pos)
+
+                    # Calculate relative difference
+                    relative_diff = abs(edge_median - center_median) / (center_median + 1e-10)
+
+                    # Only correct if difference exceeds threshold
+                    if relative_diff > thresholds['edge_gradient_threshold']:
+                        correction_factor = center_median / edge_median
+                        correction_factor = np.clip(correction_factor, 0.5, 2.0)
+
+                        # Apply correction only to edge cells
+                        adata.X[edge_indices, marker_idx] *= correction_factor
+                        n_edge_corrected += 1
+
+                if n_edge_corrected > 0:
+                    print(f"    Type 2: {sample} - corrected edges in {n_edge_corrected}/{len(tiles)} tiles")
+
+        corrected_markers.append(marker)
+
+    print(f"\n  ✓ Corrected: {', '.join(corrected_markers) if corrected_markers else 'none'}")
+    print(f"  ○ Skipped (working well): {', '.join(skipped_markers) if skipped_markers else 'none'}")
+    print("="*70)
+
+    return adata
+
+
+def apply_hierarchical_gating(adata, gates):
+    """
+    Enforce hierarchical marker relationships after initial gating.
+
+    Child markers can only be positive if their parent marker is also positive.
+    This is applied at the cell classification level, not during gate calculation.
+
+    Example: If FOXP3 parent is CD3, then any cell with FOXP3+ but CD3- will be
+             reclassified as FOXP3-.
+    """
+    if not MARKER_HIERARCHY:
+        return adata
+
+    print("\n" + "="*70)
+    print("HIERARCHICAL MARKER GATING")
+    print("="*70)
+    print("  Enforcing parent-child relationships:")
+
+    # Create gated boolean matrix
+    gated_bool = {}
+    for marker in adata.var_names:
+        marker_idx = adata.var_names.get_loc(marker)
+        gate = gates.get(marker, np.percentile(adata.X[:, marker_idx], 95))
+        gated_bool[marker] = adata.X[:, marker_idx] > gate
+
+    # Apply hierarchy constraints
+    adjustments_made = {}
+    for child_marker, parent_marker in MARKER_HIERARCHY.items():
+        if child_marker not in adata.var_names or parent_marker not in adata.var_names:
+            print(f"  ⚠️  Skipping {child_marker} → {parent_marker} (marker not found)")
+            continue
+
+        # Find cells that are child+ but parent-
+        child_pos = gated_bool[child_marker]
+        parent_neg = ~gated_bool[parent_marker]
+        invalid_cells = child_pos & parent_neg
+
+        n_invalid = invalid_cells.sum()
+        n_child_pos = child_pos.sum()
+
+        if n_invalid > 0:
+            # Reclassify these cells as child-negative by setting intensity below gate
+            child_idx = adata.var_names.get_loc(child_marker)
+            gate = gates[child_marker]
+
+            # Set to gate * 0.9 to ensure they're below threshold
+            adata.X[invalid_cells, child_idx] = gate * 0.9
+
+            # Update the gated boolean
+            gated_bool[child_marker] = adata.X[:, child_idx] > gate
+
+            pct_adjusted = (n_invalid / n_child_pos * 100) if n_child_pos > 0 else 0
+            adjustments_made[child_marker] = (n_invalid, n_child_pos, pct_adjusted)
+
+            print(f"    {child_marker} ⊂ {parent_marker}: {n_invalid:,} cells adjusted "
+                  f"({pct_adjusted:.1f}% of {child_marker}+ cells)")
+
+    if not adjustments_made:
+        print("    ✓ No adjustments needed - all markers respect hierarchy")
+
+    print("="*70)
+
+    return adata
+
 
 def gmm_gating(adata):
     """
@@ -2666,26 +2923,35 @@ def main():
         print("✓ Checkpoint saved")
     
     # ====================================================================
+    # PER-MARKER TILE ARTIFACT CORRECTION (after normalization, before gating)
+    # ====================================================================
+    # Apply targeted correction only to markers that need it
+    adata = correct_tile_artifacts_per_marker(adata)
+
+    # ====================================================================
     # GATING (always runs)
     # ====================================================================
     print("\n" + "="*70)
     print("GATING WORKFLOW")
     print("="*70)
-    
+
     # Visualize tile correction
     visualize_tile_artifacts(adata, output_dir)
-    
+
     # Density-based gating
     density_gates = density_based_gating(adata)
     gates = finalize_gates_with_override(density_gates)
-    
+
+    # Apply hierarchical marker relationships (child markers must be subset of parent)
+    adata = apply_hierarchical_gating(adata, gates)
+
     # Diagnostic plots
     create_diagnostic_plots(adata, gates, output_dir)
-    
+
     # Save gates
     with open(output_dir / 'gates.json', 'w') as f:
         json.dump({k: float(v) for k, v in gates.items()}, f, indent=2)
-    
+
     # Apply gates
     adata = apply_gates(adata, gates)
     
