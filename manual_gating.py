@@ -35,13 +35,43 @@ from scipy.signal import argrelextrema
 # ============================================================================
 
 MARKERS = {
-    'Channel_2': 'TOM', 
-    'Channel_3': 'CD45',
-    'Channel_4': 'AGFP',
-    'Channel_6': 'PERK',
-    'Channel_7': 'CD8B',
-    'Channel_8': 'KI67',
-    'Channel_10': 'CD3'
+    'R1.0.1_CY3': 'TOM',
+  'R1.0.4_CY5_CD45': 'CD45',
+  'R1.0.4_CY7_AGFP': 'NINJA',
+  'R2.0.4_CY3_PERK': 'PERK',
+  'R2.0.4_CY5_CD4': 'CD4',
+  'R2.0.4_CY7_EPCAM': 'EPCAM',
+  'R2.0.4_FITC_B220': 'B220',
+  'R3.0.4_CY3_CD3E': 'CD3E',
+  'R3.0.4_CY5_F480': 'F480',
+  'R3.0.4_CY7_TTF1': 'TTF1',
+  'R4.0.4_CY3_PD': 'PDL1',
+  'R4.0.4_CY5_CD8A': 'CD8A',
+  'R4.0.4_FITC_ASMA': 'ASMA',
+  'R5.0.4_CY3_GZMB': 'GZMB',
+  'R5.0.4_CY5_KLRG1': 'KLRG1',
+  'R5.0.4_FITC_FOXP3': 'FOXP3',
+  'R6.0.4_CY3_PD1': 'PD1',
+  'R6.0.4_CY5_NAK': 'NAK',
+  'R6.0.4_CY7_KI67': 'KI67',
+  'R6.0.4_FITC_MHCII': 'MHCII',
+  'R7.0.4_CY3_BCL6': 'BCL6',
+  'R7.0.4_CY5_CC3': 'CC3',
+  'R7.0.4_FITC_CD103': 'CD103'
+}
+
+# MARKER HIERARCHY for rare marker validation
+# Common markers are abundant phenotypes that should have HIGH positive %
+# Rare markers are subsets/functional markers that should have LOWER positive % than common markers
+OLD_MARKER_HIERARCHY = {
+    # Common markers (high abundance expected)
+    'common': ['CD45', 'TOM', 'EPCAM', 'CD3E'],
+
+    # Rare/functional markers that must have lower % than common markers
+    'rare': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1'],
+
+    # Intermediate markers (not strictly enforced)
+    'intermediate': ['CD4', 'CD8A', 'B220', 'F480', 'TTF1', 'ASMA', 'MHCII', 'NINJA', 'PERK', 'CD103', 'NAK', 'KI67']
 }
 
 # GATE VALUES (normalized 0-1 scale)
@@ -49,13 +79,29 @@ MARKERS = {
 # Set to None to auto-calculate suggestions
 
 GATES = {
-    'TOM': None,#0.228,#0.06,      # Example: manually set
-    'CD45': None,#0.350,#0.32,
-    'AGFP': None,#0.475,#0.60,
-    'PERK': None,#0.572,#0.80,
-    'CD8B': None,#0.486,#0.60,
-    'KI67': None,#0.175,#0.20,
-    'CD3': None#0.377#0.30
+    'TOM': None,
+  'CD45': None,
+  'NINJA': None,
+  'PERK': None,
+  'CD4': None,
+  'EPCAM': None,
+  'B220': None,
+  'CD3E': None,
+  'F480': None,
+  'TTF1': None,
+  'PDL1': None,
+  'CD8A': None,
+  'ASMA': None,
+  'GZMB': None,
+  'KLRG1': None,
+  'FOXP3': None,
+  'PD1': None,
+  'NAK': None,
+  'KI67': None,
+  'MHCII': None,
+  'BCL6': None,
+  'CC3': None,
+  'CD103': None
 }
 
 # Advanced options
@@ -68,27 +114,31 @@ NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax
 # Markers that need additional tile artifact correction
 # Set to empty list to disable for markers that work well (like TOM)
 TILE_ARTIFACT_CORRECTION = {
-    # Markers with NO correction (working well)
     'TOM': {'enabled': False},
     'CD45': {'enabled': False},
-
-    # Markers with Type 1 correction (baseline brightness differences)
-    # Type 1: clusters of tiles are uniformly brighter/dimmer
-    'AGFP': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'medium'},
-    'PERK': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'medium'},
-    'KI67': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'high'},
-
-    # Markers with Type 2 correction (edge artifacts)
-    # Type 2: tile edges have sharp brightness transitions
-    'CD8B': {'enabled': True, 'type1': False, 'type2': True, 'sensitivity': 'medium'},
-    'CD3': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
-}
-
-# Sensitivity thresholds for artifact detection
-ARTIFACT_THRESHOLDS = {
-    'low': {'tile_cv_threshold': 0.30, 'edge_gradient_threshold': 0.25},
-    'medium': {'tile_cv_threshold': 0.20, 'edge_gradient_threshold': 0.20},
-    'high': {'tile_cv_threshold': 0.15, 'edge_gradient_threshold': 0.15},
+    'NINJA': {'enabled': False},
+    'PERK': {'enabled': False},
+    'CD4': {'enabled': False},
+    'EPCAM': {'enabled': False},
+    'B220': {'enabled': False},
+    'CD3E': {'enabled': False},
+    'F480': {'enabled': False},
+    'TTF1': {'enabled': False},
+    'CD8A': {'enabled': False},
+    'ASMA': {'enabled': False},
+    'NAK': {'enabled': False},
+    'KI67': {'enabled': False},
+    'MHCII': {'enabled': False},
+    'CD103': {'enabled': False},
+    
+    # Rare markers requiring artifact correction
+    'GZMB': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+    'FOXP3': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+    'KLRG1': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+    'PD1': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+    'BCL6': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+    'CC3': {'enabled': True, 'type1': True, 'type2': True, 'sensitivity': 'high'},
+    'PDL1': {'enabled': True, 'type1': True, 'type2': False, 'sensitivity': 'high'},
 }
 
 # ============================================================================
@@ -98,11 +148,17 @@ ARTIFACT_THRESHOLDS = {
 # Format: 'child_marker': 'parent_marker'
 # Child will only be positive if parent is also positive
 MARKER_HIERARCHY = {
-    # Example: FOXP3 should only be positive in CD3+ cells
-    # 'FOXP3': 'CD3',
-    # 'GZMB': 'CD45',  # Granzyme B only in immune cells
-    # 'CD8B': 'CD3',   # CD8B only in T cells
-    # Add your hierarchical relationships here
+    'FOXP3': 'CD4',
+    'GZMB': 'CD8A',
+    'CD8A': 'CD3E',
+    'CD4': 'CD3E',
+    'PD1': 'CD3E',
+    'KLRG1': 'CD8A',
+    'CD103': 'CD3E',
+    'B220': 'CD45',
+    'F480': 'CD45',
+    'MHCII': 'CD45',
+    'BCL6': 'B220',
 }
 
 # ============================================================================
