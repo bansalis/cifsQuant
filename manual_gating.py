@@ -109,11 +109,11 @@ USE_SHARED_GATES = True  # True = one gate per marker; False = per-sample gates
 NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax'
 
 # ============================================================================
-# TILE ARTIFACT CORRECTION (gradient-based edge detection)
+# TILE ARTIFACT CORRECTION (gradient-based detection + UniFORM normalization)
 # ============================================================================
-# Configuration for gradient-based tile boundary correction
-# This uses Sobel edge detection to identify and correct sharp intensity
-# discontinuities at tile boundaries without relying on tile_id metadata
+# Configuration for tile detection and UniFORM normalization
+# Detects square tile regions with dimmer fluorescence and normalizes them
+# to match normal tiles using quantile-based normalization (UniFORM)
 
 TILE_CORRECTION_CONFIG = {
     'enabled': True,
@@ -122,16 +122,14 @@ TILE_CORRECTION_CONFIG = {
     # Detection parameters
     'bin_size': 50,                    # Spatial binning (pixels)
     'smooth_sigma': 2.0,               # Gaussian smoothing before edge detection
-    'edge_threshold_percentile': 95,   # Edge strength threshold (90-99)
-
-    # Correction parameters
-    'boundary_buffer': 50,             # Buffer zone width (pixels)
-    'local_window': 200,               # Neighborhood radius (pixels)
-    'correction_strength': 0.8,        # Correction damping (0-1)
-
-    # Validation
+    'edge_threshold_percentile': 90,   # Edge strength threshold (85-95, lower=more sensitive)
     'min_edge_pixels': 10,             # Minimum edges to proceed
-    'max_boundary_pct': 50,            # Safety: warn if >50% cells flagged
+    'min_tile_size': 100,              # Minimum cells per tile region
+    'outlier_threshold': 2.0,          # MAD units for classifying dimmer tiles
+
+    # UniFORM normalization parameters
+    'n_quantiles': 100,                # Number of quantiles for UniFORM
+    'correction_strength': 1.0,        # UniFORM strength (0-1, 1.0=full correction)
 }
 
 # ============================================================================
@@ -1297,14 +1295,16 @@ def auto_suggest_gates(adata):
 
 def correct_tile_artifacts_per_marker(adata):
     """
-    Apply gradient-based tile artifact correction using Sobel edge detection.
+    Detect dimmer tile regions and apply UniFORM normalization.
 
-    This method detects sharp intensity discontinuities at tile boundaries without
-    relying on tile_id metadata, then applies local KNN-based normalization to
-    correct boundary artifacts.
+    This method:
+    1. Uses Sobel edge detection to identify tile boundaries
+    2. Segments the image into tile regions
+    3. Classifies tiles as "dimmer" or "normal" based on intensity
+    4. Applies UniFORM (quantile-based) normalization to align dimmer tiles to normal tiles
 
     Only corrects markers specified in TILE_CORRECTION_CONFIG.
-    Runs BEFORE UniFORM normalization to preserve the normalization's effectiveness.
+    Runs BEFORE hierarchical UniFORM normalization.
     """
     import sys
     sys.path.insert(0, str(Path(__file__).parent / 'scripts'))
@@ -1312,7 +1312,7 @@ def correct_tile_artifacts_per_marker(adata):
     from tile_artifact_correction import create_diagnostic_plots, save_correction_report
 
     print("\n" + "="*70)
-    print("GRADIENT-BASED TILE BOUNDARY CORRECTION")
+    print("TILE DETECTION & UniFORM CORRECTION")
     print("="*70)
 
     if not TILE_CORRECTION_CONFIG.get('enabled', False):
@@ -1332,22 +1332,21 @@ def correct_tile_artifacts_per_marker(adata):
         return adata
 
     print(f"  Correcting {len(markers_to_correct)} markers: {', '.join(markers_to_correct)}")
-    print(f"  Method: Sobel gradient edge detection + KNN local normalization")
+    print(f"  Method: Gradient-based tile detection + UniFORM normalization")
     print()
 
     # Initialize detector and corrector with config parameters
     detector = SharpEdgeTileDetector(
         bin_size=TILE_CORRECTION_CONFIG.get('bin_size', 50),
         smooth_sigma=TILE_CORRECTION_CONFIG.get('smooth_sigma', 2.0),
-        edge_threshold_percentile=TILE_CORRECTION_CONFIG.get('edge_threshold_percentile', 95),
-        min_edge_pixels=TILE_CORRECTION_CONFIG.get('min_edge_pixels', 10)
+        edge_threshold_percentile=TILE_CORRECTION_CONFIG.get('edge_threshold_percentile', 90),
+        min_edge_pixels=TILE_CORRECTION_CONFIG.get('min_edge_pixels', 10),
+        min_tile_size=TILE_CORRECTION_CONFIG.get('min_tile_size', 100)
     )
 
     corrector = TileArtifactCorrector(
-        boundary_buffer=TILE_CORRECTION_CONFIG.get('boundary_buffer', 50),
-        local_window=TILE_CORRECTION_CONFIG.get('local_window', 200),
-        correction_strength=TILE_CORRECTION_CONFIG.get('correction_strength', 0.8),
-        max_boundary_pct=TILE_CORRECTION_CONFIG.get('max_boundary_pct', 50.0)
+        n_quantiles=TILE_CORRECTION_CONFIG.get('n_quantiles', 100),
+        correction_strength=TILE_CORRECTION_CONFIG.get('correction_strength', 1.0)
     )
 
     # Store original data for visualization
@@ -1377,37 +1376,35 @@ def correct_tile_artifacts_per_marker(adata):
             y_coords = sample_data.obsm['spatial'][:, 1]
             intensities = sample_data.X[:, marker_idx].copy()
 
-            # Phase 1-3: Detect tile boundaries
+            # Phase 1-6: Detect tiles and classify them
             detection_results = detector.detect(x_coords, y_coords, intensities)
 
             if not detection_results['detected']:
-                print(f"    {sample}: No tile boundaries detected")
-                marker_report[sample] = {'detected': False, 'reason': 'No boundaries detected'}
+                reason = detection_results.get('reason', 'Detection failed')
+                print(f"    {sample}: {reason}")
+                marker_report[sample] = {'detected': False, 'reason': reason}
                 continue
 
-            print(f"    {sample}: Detected {detection_results['n_edge_pixels']} edge pixels, "
-                  f"{detection_results['n_h_lines']} H-lines, {detection_results['n_v_lines']} V-lines")
+            n_dimmer = detection_results['n_dimmer_cells']
+            n_normal = detection_results['n_normal_cells']
+            n_dimmer_tiles = len(detection_results['dimmer_tiles'])
+            n_normal_tiles = len(detection_results['normal_tiles'])
 
-            # Phase 4-5: Correct boundary artifacts
-            corrected_intensities, stats = corrector.correct(
-                x_coords, y_coords, intensities, detection_results
-            )
+            print(f"    {sample}: Detected {n_dimmer_tiles} dimmer tiles ({n_dimmer:,} cells), "
+                  f"{n_normal_tiles} normal tiles ({n_normal:,} cells)")
 
-            # Create boundary mask for diagnostics
-            boundary_mask = corrector.create_boundary_mask(
-                x_coords, y_coords,
-                detection_results['edge_mask'],
-                detection_results['x_edges'],
-                detection_results['y_edges']
-            )
+            # Apply UniFORM normalization between dimmer and normal tiles
+            corrected_intensities, stats = corrector.correct(intensities, detection_results)
 
             # Update adata
             sample_indices = np.where(sample_mask)[0]
             adata.X[sample_indices, marker_idx] = corrected_intensities
 
-            print(f"    {sample}: Corrected {stats['n_corrected']:,} cells "
-                  f"({stats['pct_boundary_cells']:.1f}% boundary), "
-                  f"mean adjustment: {stats['mean_correction_pct']:+.1f}%")
+            if stats['n_corrected'] > 0:
+                print(f"    {sample}: UniFORM normalized {stats['n_corrected']:,} dimmer cells, "
+                      f"mean shift: {stats['mean_correction_pct']:+.1f}%")
+            else:
+                print(f"    {sample}: No dimmer tiles detected, skipping correction")
 
             # Store stats
             marker_report[sample] = stats
@@ -1423,7 +1420,6 @@ def correct_tile_artifacts_per_marker(adata):
                 original_intensities=intensities,
                 corrected_intensities=corrected_intensities,
                 detection_results=detection_results,
-                boundary_mask=boundary_mask,
                 output_dir=sample_diagnostic_dir
             )
 
