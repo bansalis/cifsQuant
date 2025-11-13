@@ -125,11 +125,16 @@ TILE_CORRECTION_CONFIG = {
     'peak_height_percentile': 75,     # Peak detection threshold (percentile)
     'min_tiles': 4,                    # Minimum number of tiles to proceed
     'min_tile_size': 100,              # Minimum cells per tile
-    'outlier_threshold': 2.0,          # MAD units for classifying dimmer tiles
+    'outlier_threshold': 2.0,          # MAD units for classifying dimmer/brighter tiles
 
     # UniFORM normalization parameters
     'n_quantiles': 100,                # Number of quantiles for UniFORM
     'correction_strength': 1.0,        # UniFORM strength (0-1, 1.0=full correction)
+
+    # Radial artifact correction parameters (within-tile vignetting)
+    'radial_correction': True,         # Enable radial artifact correction
+    'radial_bins': 3,                  # Number of radial zones (center to edge)
+    'radial_threshold': 0.15,          # Max deviation to trigger correction (15%)
 }
 
 # ============================================================================
@@ -1347,7 +1352,10 @@ def correct_tile_artifacts_per_marker(adata):
 
     corrector = TileArtifactCorrector(
         n_quantiles=TILE_CORRECTION_CONFIG.get('n_quantiles', 100),
-        correction_strength=TILE_CORRECTION_CONFIG.get('correction_strength', 1.0)
+        correction_strength=TILE_CORRECTION_CONFIG.get('correction_strength', 1.0),
+        radial_correction=TILE_CORRECTION_CONFIG.get('radial_correction', True),
+        radial_bins=TILE_CORRECTION_CONFIG.get('radial_bins', 3),
+        radial_threshold=TILE_CORRECTION_CONFIG.get('radial_threshold', 0.15)
     )
 
     # Store original data for visualization
