@@ -1527,6 +1527,24 @@ def correct_tile_artifacts_per_marker(adata):
 
     print(f"\n  ✓ Tile correction complete for {len(markers_to_correct)} markers")
     print(f"  ✓ Diagnostic plots saved to: {diagnostic_dir}")
+
+    # Step 3: Add microscope tile IDs to adata.obs for use in Level 1 normalization
+    print(f"\n  Step 3: Adding microscope tile IDs to all cells for Level 1 processing...")
+    if 'microscope_tile_id' not in adata.obs.columns:
+        adata.obs['microscope_tile_id'] = 0  # Initialize with 0 (unassigned)
+
+    for sample in adata.obs['sample_id'].unique():
+        stored_detection = adata.uns['tile_detection'].get(sample, {})
+        if stored_detection.get('detected', False):
+            sample_mask = adata.obs['sample_id'] == sample
+            cell_tile_ids = stored_detection['cell_tile_ids']
+            # Assign microscope tile IDs to all cells in this sample
+            adata.obs.loc[sample_mask, 'microscope_tile_id'] = cell_tile_ids
+            print(f"    {sample}: Assigned {len(np.unique(cell_tile_ids))} microscope tiles to {np.sum(sample_mask):,} cells")
+        else:
+            print(f"    {sample}: No tile detection available")
+
+    print(f"  ✓ Microscope tile IDs available for all cells (column: 'microscope_tile_id')")
     print("="*70)
 
     # Save correction report
@@ -2705,12 +2723,15 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
         # ====================================================================
         # LEVEL 1: WITHIN-TILE NORMALIZATION (PARALLELIZED)
         # ====================================================================
-        print("  Level 1: Background-anchored tile correction...")
+        tile_type = "microscope" if 'microscope_tile_id' in adata.obs.columns else "MCMICRO"
+        print(f"  Level 1: Background-anchored tile correction (using {tile_type} tiles)...")
         start_time = time.time()
-        
+
         def process_sample_tiles(sample, sample_mask, marker_idx, X_data, obs_data):
             """Process all tiles for one sample"""
-            tiles = obs_data.loc[sample_mask, 'tile_id'].unique()
+            # Use microscope tiles if available, otherwise fall back to MCMICRO tiles
+            tile_col = 'microscope_tile_id' if 'microscope_tile_id' in obs_data.columns else 'tile_id'
+            tiles = obs_data.loc[sample_mask, tile_col].unique()
             
             # Global reference = 5th percentile across all tiles
             sample_vals = X_data[sample_mask, marker_idx]
@@ -2721,18 +2742,18 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
             
             corrections = {}
             for tile_id in tiles:
-                tile_mask = sample_mask & (obs_data['tile_id'] == tile_id)
+                tile_mask = sample_mask & (obs_data[tile_col] == tile_id)
                 vals = X_data[tile_mask, marker_idx]
-                
+
                 pos_vals_tile = vals[vals > 0]
                 if len(pos_vals_tile) < 10:
                     continue
                 tile_bg = np.percentile(pos_vals_tile, 5)
-                
+
                 if tile_bg > 0:
                     corrections[tile_id] = global_bg / tile_bg
-            
-            return sample, corrections
+
+            return sample, tile_col, corrections
         if not skip_within_tile:
             # Parallel processing across samples
             sample_masks = {sample: adata.obs['sample_id'] == sample 
@@ -2747,11 +2768,11 @@ def hierarchical_uniform_normalization(adata, autodetect_tiles=True, n_jobs=8,
             for result in results:
                 if result is None:
                     continue
-                sample, corrections = result
+                sample, tile_col, corrections = result
                 sample_mask = sample_masks[sample]
-                
+
                 for tile_id, factor in corrections.items():
-                    tile_mask = sample_mask & (adata.obs['tile_id'] == tile_id)
+                    tile_mask = sample_mask & (adata.obs[tile_col] == tile_id)
                     adata.X[tile_mask, marker_idx] *= factor
         
         elapsed = time.time() - start_time
