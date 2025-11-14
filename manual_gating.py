@@ -129,7 +129,7 @@ TILE_CORRECTION_CONFIG = {
 
     # UniFORM normalization parameters
     'n_quantiles': 100,                # Number of quantiles for UniFORM
-    'correction_strength': 1.0,        # UniFORM strength (0-1, 1.0=full correction)
+    'correction_strength': 0.5,        # UniFORM strength (0-1, 1.0=full correction) - REDUCED from 1.0
 
     # Radial artifact correction parameters (within-tile vignetting)
     'radial_correction': True,         # Enable radial artifact correction
@@ -156,6 +156,28 @@ MARKER_HIERARCHY = {
     'MHCII': 'CD45',
     'BCL6': 'B220',
     'NINJA': 'TOM'
+}
+
+# ============================================================================
+# LIBERAL GATING CONFIGURATION
+# ============================================================================
+# Specify markers where you want to OVERESTIMATE positive populations
+# (i.e., be less conservative, allow more cells to be called positive)
+# These markers will use relaxed thresholds to enrich positive populations
+
+LIBERAL_GATING_CONFIG = {
+    'enabled': True,
+
+    # List markers that should use liberal (less conservative) gating
+    # Example: markers where you want to capture more positive cells
+    'liberal_markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1'],
+
+    # Liberal gating parameters (less stringent than default)
+    # Default values: PEAK_MULTIPLIER=2.0, VALLEY_MAX_HEIGHT=0.20, MIN_PERCENTILE=85
+    'liberal_peak_multiplier': 1.5,      # Reduced from 2.0 (allows gates closer to negative peak)
+    'liberal_valley_max_height': 0.30,   # Increased from 0.20 (tolerates shallower valleys)
+    'liberal_min_percentile': 75,        # Reduced from 85 (allows lower percentile gates)
+    'liberal_min_absolute_gate': 0.10,   # Reduced from 0.15 (allows lower absolute gates)
 }
 
 # ============================================================================
@@ -1571,6 +1593,7 @@ def density_based_gating(adata):
     """
     Fixed density gating: Valley detection between negative and positive peaks.
     Uses biological constraints to avoid cutting into negative tails.
+    Supports liberal gating mode for markers specified in LIBERAL_GATING_CONFIG.
     """
     from scipy.signal import find_peaks, argrelextrema
     from scipy.ndimage import gaussian_filter1d
@@ -1581,19 +1604,45 @@ def density_based_gating(adata):
     print("DENSITY-BASED GATING (valley detection)")
     print("="*70)
 
+    # Default (conservative) parameters
     PEAK_MULTIPLIER = 2.0      # Was 1.5 - increase to 2.0, 2.5, 3.0
     MIN_ABSOLUTE_GATE = 0.15   # NEW - hard minimum (prevents gates below this)
     MIN_PERCENTILE = 85        # NEW - gate must be at least p85 of positive cells
     VALLEY_MAX_HEIGHT = 0.20   # Was 0.30 - decrease to 0.20, 0.15 for stricter
 
-    print(f"Gating parameters: peak_mult={PEAK_MULTIPLIER}, "
+    # Liberal gating configuration
+    liberal_enabled = LIBERAL_GATING_CONFIG.get('enabled', False)
+    liberal_markers = LIBERAL_GATING_CONFIG.get('liberal_markers', [])
+
+    if liberal_enabled and liberal_markers:
+        print(f"Liberal gating ENABLED for markers: {', '.join(liberal_markers)}")
+        print(f"  Liberal params: peak_mult={LIBERAL_GATING_CONFIG['liberal_peak_multiplier']}, "
+              f"valley_height={LIBERAL_GATING_CONFIG['liberal_valley_max_height']}, "
+              f"min_pct=p{LIBERAL_GATING_CONFIG['liberal_min_percentile']}")
+
+    print(f"Default (conservative) parameters: peak_mult={PEAK_MULTIPLIER}, "
         f"min_gate={MIN_ABSOLUTE_GATE}, min_pct=p{MIN_PERCENTILE}")
-    
+
     gates = {}
-    
+
     for marker in adata.var_names:
         marker_idx = adata.var_names.get_loc(marker)
-        
+
+        # Check if this marker should use liberal gating
+        use_liberal = liberal_enabled and marker in liberal_markers
+        if use_liberal:
+            # Use liberal parameters for this marker
+            peak_mult = LIBERAL_GATING_CONFIG['liberal_peak_multiplier']
+            valley_max_height = LIBERAL_GATING_CONFIG['liberal_valley_max_height']
+            min_percentile = LIBERAL_GATING_CONFIG['liberal_min_percentile']
+            min_absolute_gate = LIBERAL_GATING_CONFIG['liberal_min_absolute_gate']
+        else:
+            # Use default conservative parameters
+            peak_mult = PEAK_MULTIPLIER
+            valley_max_height = VALLEY_MAX_HEIGHT
+            min_percentile = MIN_PERCENTILE
+            min_absolute_gate = MIN_ABSOLUTE_GATE
+
         # Step 1: Stratified subsample
         sampled_vals = []
         for sample in adata.obs['sample_id'].unique():
@@ -1606,8 +1655,12 @@ def density_based_gating(adata):
             sampled_vals.extend(sample_vals)
         
         sampled_vals = np.array(sampled_vals)
-        
-        print(f"\n  {marker}: {len(sampled_vals):,} cells sampled")
+
+        gating_mode = "LIBERAL" if use_liberal else "conservative"
+        print(f"\n  {marker} ({gating_mode}): {len(sampled_vals):,} cells sampled")
+        if use_liberal:
+            print(f"    Using liberal params: peak_mult={peak_mult}, valley_max={valley_max_height}, "
+                  f"min_pct=p{min_percentile}, min_gate={min_absolute_gate}")
         
         # Step 2: Remove artifacts
         if sampled_vals.max() > 65000:
@@ -1807,17 +1860,17 @@ def density_based_gating(adata):
                     gate_gmm = gate_valley
         
         # Step 7: Apply biological constraints
-        
-        # Constraint 1: Gate must be at least 1.5× negative peak position
-        # (ensures we're clearly right of negative mode)
-        min_gate_biological = neg_peak_val * PEAK_MULTIPLIER
 
-        min_gate_absolute = MIN_ABSOLUTE_GATE
-        
+        # Constraint 1: Gate must be at least peak_mult× negative peak position
+        # (ensures we're clearly right of negative mode)
+        min_gate_biological = neg_peak_val * peak_mult
+
+        min_gate_absolute = min_absolute_gate
+
         # Constraint 2: Gate must be in low-density region
-        # (valley height should be <30% of negative peak height)
-        min_gate_percentile = float(np.percentile(sampled_vals, MIN_PERCENTILE))
-        max_valley_height = neg_peak_height * VALLEY_MAX_HEIGHT
+        # (valley height should be below max threshold)
+        min_gate_percentile = float(np.percentile(sampled_vals, min_percentile))
+        max_valley_height = neg_peak_height * valley_max_height
         
         # Choose gate
         if valley_height < max_valley_height:
@@ -1850,9 +1903,9 @@ def density_based_gating(adata):
         gate = max(gate_candidate, min_gate_biological, min_gate_absolute, min_gate_percentile)
 
         print(f"    Constraints: valley={gate_candidate:.3f}, "
-            f"peak×{PEAK_MULTIPLIER}={min_gate_biological:.3f}, "
+            f"peak×{peak_mult}={min_gate_biological:.3f}, "
             f"abs={min_gate_absolute:.3f}, "
-            f"p{MIN_PERCENTILE}={min_gate_percentile:.3f} "
+            f"p{min_percentile}={min_gate_percentile:.3f} "
             f"→ FINAL={gate:.3f}")
         
         if gate != gate_candidate:
