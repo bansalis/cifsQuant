@@ -1393,63 +1393,7 @@ def correct_tile_artifacts_per_marker(adata):
     diagnostic_dir = Path(__file__).parent / 'tile_correction_diagnostics'
     diagnostic_dir.mkdir(exist_ok=True, parents=True)
 
-    # Store tile detection results per sample (tiles are a property of the microscope, not individual markers)
-    if 'tile_detection' not in adata.uns:
-        adata.uns['tile_detection'] = {}
-
-    # Step 1: Detect tiles ONCE per sample using the first marker
-    print(f"\n  Step 1: Detecting tile grid per sample (using {markers_to_correct[0]})...")
-    detection_marker = markers_to_correct[0]
-    detection_marker_idx = adata.var_names.get_loc(detection_marker)
-
-    for sample in adata.obs['sample_id'].unique():
-        # Skip if we already have detection results for this sample
-        if sample in adata.uns['tile_detection']:
-            print(f"    {sample}: Using cached tile detection")
-            continue
-
-        sample_mask = adata.obs['sample_id'] == sample
-        sample_data = adata[sample_mask]
-
-        # Get coordinates and intensities for detection
-        x_coords = sample_data.obsm['spatial'][:, 0]
-        y_coords = sample_data.obsm['spatial'][:, 1]
-        intensities = sample_data.X[:, detection_marker_idx].copy()
-
-        # Detect tiles
-        detection_results = detector.detect(x_coords, y_coords, intensities)
-
-        if not detection_results['detected']:
-            reason = detection_results.get('reason', 'Detection failed')
-            print(f"    {sample}: {reason}")
-            adata.uns['tile_detection'][sample] = {'detected': False, 'reason': reason}
-        else:
-            n_dimmer_tiles = len(detection_results['dimmer_tiles'])
-            n_brighter_tiles = len(detection_results['brighter_tiles'])
-            n_normal_tiles = len(detection_results['normal_tiles'])
-            n_dimmer = detection_results['n_dimmer_cells']
-            n_brighter = detection_results['n_brighter_cells']
-            n_normal = detection_results['n_normal_cells']
-
-            print(f"    {sample}: Detected {n_dimmer_tiles} dimmer tiles ({n_dimmer:,} cells), "
-                  f"{n_brighter_tiles} brighter tiles ({n_brighter:,} cells), "
-                  f"{n_normal_tiles} normal tiles ({n_normal:,} cells)")
-
-            # Store tile detection results for reuse
-            adata.uns['tile_detection'][sample] = {
-                'detected': True,
-                'y_grid': detection_results['y_grid'],
-                'x_grid': detection_results['x_grid'],
-                'cell_tile_ids': detection_results['cell_tile_ids'],
-                'dimmer_tiles': detection_results['dimmer_tiles'],
-                'brighter_tiles': detection_results['brighter_tiles'],
-                'normal_tiles': detection_results['normal_tiles'],
-                'tile_stats': detection_results['tile_stats'],
-                'detection_marker': detection_marker
-            }
-
-    # Step 2: Apply corrections to all specified markers using the detected tiles
-    print(f"\n  Step 2: Applying tile correction to {len(markers_to_correct)} markers...")
+    # Process each marker
     for marker in markers_to_correct:
         print(f"  Processing {marker}...")
         marker_idx = adata.var_names.get_loc(marker)
@@ -1465,30 +1409,25 @@ def correct_tile_artifacts_per_marker(adata):
             y_coords = sample_data.obsm['spatial'][:, 1]
             intensities = sample_data.X[:, marker_idx].copy()
 
-            # Use stored tile detection results
-            stored_detection = adata.uns['tile_detection'].get(sample, {})
-            if not stored_detection.get('detected', False):
-                reason = stored_detection.get('reason', 'No tile detection available')
+            # Phase 1-6: Detect tiles and classify them
+            detection_results = detector.detect(x_coords, y_coords, intensities)
+
+            if not detection_results['detected']:
+                reason = detection_results.get('reason', 'Detection failed')
                 print(f"    {sample}: {reason}")
                 marker_report[sample] = {'detected': False, 'reason': reason}
                 continue
 
-            # Reconstruct detection_results for the corrector
-            # The corrector needs the cell tile assignments for THIS marker's data
-            cell_tile_ids = stored_detection['cell_tile_ids']
+            n_dimmer = detection_results['n_dimmer_cells']
+            n_brighter = detection_results['n_brighter_cells']
+            n_normal = detection_results['n_normal_cells']
+            n_dimmer_tiles = len(detection_results['dimmer_tiles'])
+            n_brighter_tiles = len(detection_results['brighter_tiles'])
+            n_normal_tiles = len(detection_results['normal_tiles'])
 
-            detection_results = {
-                'detected': True,
-                'y_grid': stored_detection['y_grid'],
-                'x_grid': stored_detection['x_grid'],
-                'cell_tile_ids': cell_tile_ids,
-                'dimmer_tiles': stored_detection['dimmer_tiles'],
-                'brighter_tiles': stored_detection['brighter_tiles'],
-                'normal_tiles': stored_detection['normal_tiles'],
-                'n_dimmer_cells': np.sum(np.isin(cell_tile_ids, stored_detection['dimmer_tiles'])),
-                'n_brighter_cells': np.sum(np.isin(cell_tile_ids, stored_detection['brighter_tiles'])),
-                'n_normal_cells': np.sum(np.isin(cell_tile_ids, stored_detection['normal_tiles'])),
-            }
+            print(f"    {sample}: Detected {n_dimmer_tiles} dimmer tiles ({n_dimmer:,} cells), "
+                  f"{n_brighter_tiles} brighter tiles ({n_brighter:,} cells), "
+                  f"{n_normal_tiles} normal tiles ({n_normal:,} cells)")
 
             # Apply UniFORM normalization and radial correction
             corrected_intensities, stats = corrector.correct(x_coords, y_coords, intensities, detection_results)
