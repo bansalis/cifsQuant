@@ -511,6 +511,7 @@ class TileArtifactCorrector:
     def __init__(self,
                  n_quantiles: int = 100,
                  correction_strength: float = 1.0,
+                 bright_correction_strength: float = None,
                  radial_correction: bool = True,
                  radial_bins: int = 3,
                  radial_threshold: float = 0.15):
@@ -522,7 +523,10 @@ class TileArtifactCorrector:
         n_quantiles : int
             Number of quantiles for UniFORM normalization (default: 100)
         correction_strength : float
-            Strength of tile-level correction (0-1, default: 1.0)
+            Strength of dim tile correction (0-1, default: 1.0)
+        bright_correction_strength : float
+            Strength of bright tile correction (0-1, default: same as correction_strength)
+            Use lower values to reduce bright tile normalization
         radial_correction : bool
             Enable within-tile radial artifact correction (default: True)
         radial_bins : int
@@ -532,13 +536,15 @@ class TileArtifactCorrector:
         """
         self.n_quantiles = n_quantiles
         self.correction_strength = correction_strength
+        self.bright_correction_strength = bright_correction_strength if bright_correction_strength is not None else correction_strength
         self.radial_correction = radial_correction
         self.radial_bins = radial_bins
         self.radial_threshold = radial_threshold
 
     def uniform_normalize(self,
                          source_values: np.ndarray,
-                         target_values: np.ndarray) -> np.ndarray:
+                         target_values: np.ndarray,
+                         strength: float = None) -> np.ndarray:
         """
         Apply UniFORM-style quantile normalization.
 
@@ -548,9 +554,11 @@ class TileArtifactCorrector:
         Parameters
         ----------
         source_values : np.ndarray
-            Values to be normalized (dimmer tiles)
+            Values to be normalized (dimmer or brighter tiles)
         target_values : np.ndarray
             Reference values (normal tiles)
+        strength : float, optional
+            Correction strength override (default: use self.correction_strength)
 
         Returns
         -------
@@ -573,8 +581,9 @@ class TileArtifactCorrector:
         normalized = np.interp(source_values, source_quantiles, target_quantiles)
 
         # Apply correction strength
-        if self.correction_strength < 1.0:
-            normalized = source_values + self.correction_strength * (normalized - source_values)
+        correction_strength = strength if strength is not None else self.correction_strength
+        if correction_strength < 1.0:
+            normalized = source_values + correction_strength * (normalized - source_values)
 
         return normalized
 
@@ -755,20 +764,20 @@ class TileArtifactCorrector:
         dimmer_correction_pct = 0.0
         brighter_correction_pct = 0.0
 
-        # Step 1: Normalize dimmer tiles to match normal
+        # Step 1: Normalize dimmer tiles to match normal (using dim correction strength)
         if n_dimmer > 0:
             dimmer_values = intensities[dimmer_mask]
-            normalized_dimmer = self.uniform_normalize(dimmer_values, normal_values)
+            normalized_dimmer = self.uniform_normalize(dimmer_values, normal_values, strength=self.correction_strength)
             corrected[dimmer_mask] = normalized_dimmer
             n_tile_corrected += n_dimmer
 
             changes = (normalized_dimmer - dimmer_values) / (dimmer_values + 1e-10)
             dimmer_correction_pct = np.mean(changes[np.isfinite(changes)]) * 100
 
-        # Step 2: Normalize brighter tiles to match normal
+        # Step 2: Normalize brighter tiles to match normal (using bright correction strength)
         if n_brighter > 0:
             brighter_values = intensities[brighter_mask]
-            normalized_brighter = self.uniform_normalize(brighter_values, normal_values)
+            normalized_brighter = self.uniform_normalize(brighter_values, normal_values, strength=self.bright_correction_strength)
             corrected[brighter_mask] = normalized_brighter
             n_tile_corrected += n_brighter
 
