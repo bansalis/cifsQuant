@@ -129,7 +129,8 @@ TILE_CORRECTION_CONFIG = {
 
     # UniFORM normalization parameters
     'n_quantiles': 100,                # Number of quantiles for UniFORM
-    'correction_strength': 0.5,        # UniFORM strength (0-1, 1.0=full correction) - REDUCED from 1.0
+    'correction_strength': 1.0,        # Dim tile correction strength (0-1, 1.0=full correction)
+    'bright_correction_strength': 0.3, # Bright tile correction strength (REDUCED to minimize bright tile normalization)
 
     # Radial artifact correction parameters (within-tile vignetting)
     'radial_correction': True,         # Enable radial artifact correction
@@ -1375,6 +1376,7 @@ def correct_tile_artifacts_per_marker(adata):
     corrector = TileArtifactCorrector(
         n_quantiles=TILE_CORRECTION_CONFIG.get('n_quantiles', 100),
         correction_strength=TILE_CORRECTION_CONFIG.get('correction_strength', 1.0),
+        bright_correction_strength=TILE_CORRECTION_CONFIG.get('bright_correction_strength', 1.0),
         radial_correction=TILE_CORRECTION_CONFIG.get('radial_correction', True),
         radial_bins=TILE_CORRECTION_CONFIG.get('radial_bins', 3),
         radial_threshold=TILE_CORRECTION_CONFIG.get('radial_threshold', 0.15)
