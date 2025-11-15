@@ -69,314 +69,180 @@ metadata:
 # PHENOTYPE DEFINITIONS
 # ============================================================================
 phenotypes:
-  # Tumor phenotypes
+  # ============================================================================
+  # TUMOR PHENOTYPES
+  # ============================================================================
   Tumor:
     description: "All tumor cells (TOM+)"
     positive: ['TOM']
     negative: []
-    color: '#E41A1C'
-
+  
   pERK_positive_tumor:
     description: "pERK+ tumor cells"
     base: 'Tumor'
     positive: ['PERK']
-    negative: []
-    color: '#4DAF4A'
-
+  
   pERK_negative_tumor:
     description: "pERK- tumor cells"
     base: 'Tumor'
-    positive: []
     negative: ['PERK']
-    color: '#FDB462'
-
+  
   NINJA_positive_tumor:
-    description: "NINJA+ (AGFP+) tumor cells"
+    description: "NINJA+ (AGFP+) tumor"
     base: 'Tumor'
     positive: ['NINJA']
-    negative: []
-    color: '#377EB8'
-
+  
   NINJA_negative_tumor:
-    description: "NINJA- tumor cells"
+    description: "NINJA- tumor"
     base: 'Tumor'
-    positive: []
     negative: ['NINJA']
-    color: '#FDB462'
-
+  
   Ki67_positive_tumor:
-    description: "Proliferating tumor cells"
+    description: "Proliferating tumor"
     base: 'Tumor'
     positive: ['KI67']
-    negative: []
-    color: '#FF7F00'
-
-  Ki67_negative_tumor:
-    description: "Non-proliferating tumor cells"
+  
+  PDL1_positive_tumor:
+    description: "PD-L1+ tumor (checkpoint)"
     base: 'Tumor'
-    positive: []
-    negative: ['KI67']
-    color: '#FFFF99'
-
+    positive: ['PDL1']
+  
+  PDL1_negative_tumor:
+    description: "PD-L1- tumor"
+    base: 'Tumor'
+    negative: ['PDL1']
+  
   EPCAM_positive_tumor:
-    description: "Epithelial tumor cells"
+    description: "Epithelial tumor"
     base: 'Tumor'
     positive: ['EPCAM']
-    negative: []
-    color: '#A65628'
-
+    
   EPCAM_negative_tumor:
-    description: "Non-epithelial tumor cells"
+    description: "Epithelial tumor"
     base: 'Tumor'
-    positive: []
     negative: ['EPCAM']
-    color: '#FDB462'
-
+  
   TTF1_positive_tumor:
-    description: "TTF1+ tumor cells (lung lineage)"
+    description: "TTF1+ lung lineage"
     base: 'Tumor'
     positive: ['TTF1']
-    negative: []
-    color: '#F781BF'
-
+  
   TTF1_negative_tumor:
-    description: "TTF1- tumor cells"
+    description: "TTF1- lung lineage"
     base: 'Tumor'
-    positive: []
     negative: ['TTF1']
-    color: '#FDB462'
-
-  PD_positive_tumor:
-    description: "PD-L1+ tumor cells"
-    base: 'Tumor'
-    positive: ['PD']
-    negative: []
-    color: '#984EA3'
-
-  PD_negative_tumor:
-    description: "PD-L1- tumor cells"
-    base: 'Tumor'
-    positive: []
-    negative: ['PD']
-    color: '#FDB462'
 
   CC3_positive_tumor:
-    description: "Apoptotic tumor cells"
+    description: "Apoptotic tumor"
     base: 'Tumor'
     positive: ['CC3']
-    negative: []
-    color: '#999999'
-
-  # Complex tumor phenotypes
+  
+  CC3_negative_tumor:
+    description: "Non-apoptotic tumor"
+    base: 'Tumor'
+    negative: ['CC3']
+  
   pERK_NINJA_positive_tumor:
-    description: "Double positive pERK+ NINJA+ tumor"
+    description: "Double positive"
     base: 'Tumor'
     positive: ['PERK', 'NINJA']
-    negative: []
-    color: '#B3DE69'
-
-  pERK_NINJA_negative_tumor:
-    description: "Double negative pERK- NINJA- tumor"
-    base: 'Tumor'
-    positive: []
-    negative: ['PERK', 'NINJA']
-    color: '#FCCDE5'
-
-  pERK_Ki67_positive_tumor:
-    description: "pERK+ proliferating tumor"
-    base: 'Tumor'
-    positive: ['PERK', 'KI67']
-    negative: []
-    color: '#FCCDE5'
-
-  NINJA_Ki67_positive_tumor:
-    description: "NINJA+ proliferating tumor"
-    base: 'Tumor'
-    positive: ['NINJA', 'KI67']
-    negative: []
-    color: '#BC80BD'
-
-  PD_pERK_positive_tumor:
-    description: "PD-L1+ pERK+ tumor"
-    base: 'Tumor'
-    positive: ['PD', 'PERK']
-    negative: []
-    color: '#CCEBC5'
-
-  # Immune phenotypes
+  
+  # ============================================================================
+  # T CELLS
+  # ============================================================================
   CD45_positive:
     description: "All immune cells"
     positive: ['CD45']
     negative: []
-    color: '#984EA3'
-
+  
   T_cells:
-    description: "All T cells (CD3E+)"
+    description: "All T cells"
     positive: ['CD3E']
     negative: []
-    color: '#A65628'
-
-  CD4_T_cells:
-    description: "CD4+ T cells"
-    positive: ['CD3E', 'CD4']
-    negative: []
-    color: '#FFED6F'
-
+  
   CD8_T_cells:
-    description: "CD8+ T cells"
+    description: "CD8+ cytotoxic T cells"
     positive: ['CD3E', 'CD8A']
     negative: []
-    color: '#F781BF'
-
+  
+  CD4_T_cells:
+    description: "CD4+ helper T cells"
+    positive: ['CD3E', 'CD4']
+    negative: []
+  
   CD4_Tregs:
     description: "CD4+ regulatory T cells"
     positive: ['CD3E', 'CD4', 'FOXP3']
     negative: []
-    color: '#66C2A5'
-
-  CD8_Tregs:
-    description: "CD8+ regulatory T cells"
-    positive: ['CD3E', 'CD8A', 'FOXP3']
-    negative: []
-    color: '#FC8D62'
-
+  
   CD8_TRM:
-    description: "CD8+ tissue resident memory T cells"
+    description: "CD8+ tissue resident memory"
     positive: ['CD3E', 'CD8A', 'CD103']
     negative: []
-    color: '#8DA0CB'
-
-  CD4_TRM:
-    description: "CD4+ tissue resident memory T cells"
-    positive: ['CD3E', 'CD4', 'CD103']
-    negative: []
-    color: '#E78AC3'
-
+  
   CD8_cytotoxic:
-    description: "Cytotoxic CD8+ T cells"
+    description: "Cytotoxic CD8+ (GZMB+)"
     positive: ['CD3E', 'CD8A', 'GZMB']
     negative: []
-    color: '#A6D854'
-
+  
   CD8_TRM_cytotoxic:
-    description: "Cytotoxic CD8+ TRM"
+    description: "Cytotoxic tissue resident CD8+"
     positive: ['CD3E', 'CD8A', 'CD103', 'GZMB']
     negative: []
-    color: '#FFD92F'
-
-  PD1_positive_T_cells:
-    description: "PD-1+ T cells (exhausted)"
-    positive: ['CD3E', 'PD1']
-    negative: []
-    color: '#E5C494'
-
-  CD8_PD1_positive:
-    description: "PD-1+ CD8+ T cells"
+  
+  PD1_positive_CD8:
+    description: "Exhausted CD8+ T cells"
     positive: ['CD3E', 'CD8A', 'PD1']
     negative: []
-    color: '#B3B3B3'
-
-  CD4_PD1_positive:
-    description: "PD-1+ CD4+ T cells"
-    positive: ['CD3E', 'CD4', 'PD1']
-    negative: []
-    color: '#CCEBC5'
-
-  KLRG1_positive_T_cells:
-    description: "KLRG1+ T cells (terminal effector)"
-    positive: ['CD3E', 'KLRG1']
-    negative: []
-    color: '#FB8072'
-
-  CD8_KLRG1_positive:
-    description: "KLRG1+ CD8+ T cells"
+  
+  KLRG1_positive_CD8:
+    description: "Terminal effector CD8+"
     positive: ['CD3E', 'CD8A', 'KLRG1']
     negative: []
-    color: '#80B1D3'
-
-  CD8_KLRG1_GZMB:
-    description: "Terminal effector cytotoxic CD8+"
-    positive: ['CD3E', 'CD8A', 'KLRG1', 'GZMB']
-    negative: []
-    color: '#FDBF6F'
-
-  Proliferating_T_cells:
-    description: "Proliferating T cells"
-    positive: ['CD3E', 'KI67']
-    negative: []
-    color: '#FDB462'
-
+  
   CD8_proliferating:
-    description: "Proliferating CD8+ T cells"
+    description: "Proliferating CD8+"
     positive: ['CD3E', 'CD8A', 'KI67']
     negative: []
-    color: '#BEBADA'
-
-  CD4_proliferating:
-    description: "Proliferating CD4+ T cells"
-    positive: ['CD3E', 'CD4', 'KI67']
+  
+  # ============================================================================
+  # MACROPHAGES
+  # ============================================================================
+  Macrophages:
+    description: "All macrophages"
+    positive: ['F480']
     negative: []
-    color: '#FB8072'
-
-  CD8_PD1_KLRG1:
-    description: "Exhausted terminal CD8+ T cells"
-    positive: ['CD3E', 'CD8A', 'PD1', 'KLRG1']
+  
+  M1_macrophages:
+    description: "M1 anti-tumor macrophages"
+    positive: ['F480', 'MHCII']
     negative: []
-    color: '#B15928'
-
+  
+  M2_macrophages:
+    description: "M2 pro-tumor macrophages"
+    positive: ['F480']
+    negative: ['MHCII']
+  
+  # ============================================================================
+  # OTHER IMMUNE
+  # ============================================================================
   B_cells:
     description: "B cells"
     positive: ['B220']
     negative: []
-    color: '#FFFFB3'
-
+  
   Germinal_center_B_cells:
     description: "Germinal center B cells"
     positive: ['B220', 'BCL6']
     negative: []
-    color: '#FCCDE5'
-
-  Macrophages:
-    description: "Macrophages"
-    positive: ['F480']
-    negative: []
-    color: '#D9D9D9'
-
-  M1_like_macrophages:
-    description: "M1-like macrophages (MHCII+ antigen presenting)"
-    positive: ['F480', 'MHCII']
-    negative: []
-    color: '#BC80BD'
-
-  M2_like_macrophages:
-    description: "M2-like macrophages (MHCII-)"
-    positive: ['F480']
-    negative: ['MHCII']
-    color: '#FFED6F'
-
-  NK_cells:
-    description: "NK cells"
-    positive: ['NAK']
-    negative: []
-    color: '#8DD3C7'
-
-  NK_cytotoxic:
-    description: "Cytotoxic NK cells"
-    positive: ['NAK', 'GZMB']
-    negative: []
-    color: '#FCCDE5'
-
-  Non_T_immune:
-    description: "Non-T immune cells"
-    positive: ['CD45']
-    negative: ['CD3E']
-    color: '#CCEBC5'
-
+  
+  # ============================================================================
+  # STROMAL
+  # ============================================================================
   CAFs:
     description: "Cancer-associated fibroblasts"
     positive: ['ASMA']
-    negative: []
-    color: '#FFED6F'
+    negative: ['CD45']
 
 # ============================================================================
 # ANALYSIS 0: PER-TUMOR ANALYSIS
@@ -405,88 +271,59 @@ per_tumor_analysis:
 # ANALYSIS 1: POPULATION DYNAMICS (CROSS-SECTIONAL)
 # ============================================================================
 population_dynamics:
-  enabled: true
-  
   populations:
-    # Tumor
+    # Tumor (10)
     - Tumor
     - pERK_positive_tumor
     - pERK_negative_tumor
     - NINJA_positive_tumor
     - NINJA_negative_tumor
     - Ki67_positive_tumor
+    - PDL1_positive_tumor
     - EPCAM_positive_tumor
     - TTF1_positive_tumor
-    - PD_positive_tumor
-    - CC3_positive_tumor
     - pERK_NINJA_positive_tumor
-    - pERK_NINJA_negative_tumor
-    # Immune
+    
+    # T cells (9)
     - CD45_positive
     - T_cells
-    - CD4_T_cells
     - CD8_T_cells
+    - CD4_T_cells
     - CD4_Tregs
-    - CD8_Tregs
     - CD8_TRM
-    - CD4_TRM
     - CD8_cytotoxic
     - CD8_TRM_cytotoxic
-    - PD1_positive_T_cells
-    - CD8_PD1_positive
-    - CD4_PD1_positive
-    - KLRG1_positive_T_cells
-    - CD8_KLRG1_positive
-    - CD8_KLRG1_GZMB
-    - Proliferating_T_cells
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
     - CD8_proliferating
-    - CD4_proliferating
-    - CD8_PD1_KLRG1
+    
+    # Myeloid (3)
+    - Macrophages
+    - M1_macrophages
+    - M2_macrophages
+    
+    # Other (3)
     - B_cells
     - Germinal_center_B_cells
-    - Macrophages
-    - M1_like_macrophages
-    - M2_like_macrophages
-    - NK_cells
-    - NK_cytotoxic
-    - Non_T_immune
     - CAFs
-
+  
   fractional_populations:
-    # Tumor fractions
     pERK_positive_tumor: Tumor
-    pERK_negative_tumor: Tumor
     NINJA_positive_tumor: Tumor
-    NINJA_negative_tumor: Tumor
     Ki67_positive_tumor: Tumor
+    PDL1_positive_tumor: Tumor
     EPCAM_positive_tumor: Tumor
     TTF1_positive_tumor: Tumor
-    PD_positive_tumor: Tumor
-    CC3_positive_tumor: Tumor
-    pERK_NINJA_positive_tumor: Tumor
-    pERK_NINJA_negative_tumor: Tumor
-    # T cell fractions
-    CD4_T_cells: T_cells
     CD8_T_cells: T_cells
+    CD4_T_cells: T_cells
     CD4_Tregs: CD4_T_cells
-    CD8_Tregs: CD8_T_cells
     CD8_TRM: CD8_T_cells
-    CD4_TRM: CD4_T_cells
     CD8_cytotoxic: CD8_T_cells
     CD8_TRM_cytotoxic: CD8_T_cells
-    PD1_positive_T_cells: T_cells
-    CD8_PD1_positive: CD8_T_cells
-    CD4_PD1_positive: CD4_T_cells
-    KLRG1_positive_T_cells: T_cells
-    CD8_KLRG1_positive: CD8_T_cells
-    CD8_KLRG1_GZMB: CD8_T_cells
-    CD8_proliferating: CD8_T_cells
-    CD4_proliferating: CD4_T_cells
-    CD8_PD1_KLRG1: CD8_T_cells
-    # Other immune
-    M1_like_macrophages: Macrophages
-    M2_like_macrophages: Macrophages
-    NK_cytotoxic: NK_cells
+    PD1_positive_CD8: CD8_T_cells
+    KLRG1_positive_CD8: CD8_T_cells
+    M1_macrophages: Macrophages
+    M2_macrophages: Macrophages
     Germinal_center_B_cells: B_cells
 
   comparisons:
@@ -511,91 +348,30 @@ distance_analysis:
   enabled: true
   
   pairings:
-    # CD8 T cells to tumor subsets
     - source: 'CD8_T_cells'
-      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PD_positive_tumor']
+      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
+                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor']
     
-    # Cytotoxic CD8 to tumor
     - source: 'CD8_cytotoxic'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor', 'PD_positive_tumor', 'Ki67_positive_tumor']
-    
-    # Tissue resident memory to tumor
-    - source: 'CD8_TRM'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor', 'PD_positive_tumor']
+      targets: ['pERK_positive_tumor', 'NINJA_positive_tumor', 'Ki67_positive_tumor']
     
     - source: 'CD8_TRM_cytotoxic'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor']
+      targets: ['pERK_positive_tumor', 'NINJA_positive_tumor']
     
-    # Exhausted T cells to checkpoint-expressing tumor
-    - source: 'PD1_positive_T_cells'
-      targets: ['Tumor', 'PD_positive_tumor', 'PD_negative_tumor']
+    - source: 'PD1_positive_CD8'
+      targets: ['PDL1_positive_tumor']
     
-    - source: 'CD8_PD1_positive'
-      targets: ['Tumor', 'PD_positive_tumor', 'pERK_positive_tumor']
-    
-    # Terminal effectors to tumor
-    - source: 'KLRG1_positive_T_cells'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor']
-    
-    - source: 'CD8_KLRG1_positive'
-      targets: ['Tumor', 'pERK_positive_tumor']
-    
-    - source: 'CD8_KLRG1_GZMB'
-      targets: ['Tumor', 'pERK_positive_tumor', 'Ki67_positive_tumor']
-    
-    # Tregs (suppressive)
     - source: 'CD4_Tregs'
-      targets: ['Tumor', 'CD8_T_cells', 'CD8_cytotoxic']
+      targets: ['CD8_T_cells', 'CD8_cytotoxic', 'Tumor']
     
-    - source: 'CD8_Tregs'
-      targets: ['Tumor', 'CD8_T_cells']
-    
-    # CD4 T cells
-    - source: 'CD4_T_cells'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor']
-    
-    # General T cells
-    - source: 'T_cells'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor', 'PD_positive_tumor']
-    
-    # Macrophages
-    - source: 'Macrophages'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor', 'PD_positive_tumor']
-    
-    - source: 'M1_like_macrophages'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor']
-    
-    - source: 'M2_like_macrophages'
+    - source: 'M1_macrophages'
       targets: ['Tumor', 'pERK_positive_tumor']
     
-    # NK cells
-    - source: 'NK_cells'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor']
-    
-    - source: 'NK_cytotoxic'
-      targets: ['Tumor', 'pERK_positive_tumor', 'Ki67_positive_tumor']
-    
-    # B cells
-    - source: 'B_cells'
+    - source: 'M2_macrophages'
       targets: ['Tumor', 'pERK_positive_tumor']
     
-    - source: 'Germinal_center_B_cells'
-      targets: ['Tumor', 'T_cells']
-    
-    # CAFs
     - source: 'CAFs'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor', 'CD8_T_cells']
-    
-    # General immune
-    - source: 'CD45_positive'
-      targets: ['Tumor', 'pERK_positive_tumor', 'NINJA_positive_tumor']
-    
-    # Proliferating cells
-    - source: 'CD8_proliferating'
-      targets: ['Tumor', 'Ki67_positive_tumor']
-    
-    - source: 'Proliferating_T_cells'
-      targets: ['Tumor', 'Ki67_positive_tumor']
+      targets: ['CD8_T_cells', 'Tumor']
 
   metrics:
     - 'mean_nearest_neighbor'
@@ -626,29 +402,17 @@ immune_infiltration:
     - CD4_T_cells
     - CD8_T_cells
     - CD4_Tregs
-    - CD8_Tregs
     - CD8_TRM
-    - CD4_TRM
     - CD8_cytotoxic
     - CD8_TRM_cytotoxic
-    - PD1_positive_T_cells
-    - CD8_PD1_positive
-    - CD4_PD1_positive
-    - KLRG1_positive_T_cells
-    - CD8_KLRG1_positive
-    - CD8_KLRG1_GZMB
-    - Proliferating_T_cells
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
     - CD8_proliferating
-    - CD4_proliferating
-    - CD8_PD1_KLRG1
     - B_cells
     - Germinal_center_B_cells
     - Macrophages
-    - M1_like_macrophages
-    - M2_like_macrophages
-    - NK_cells
-    - NK_cytotoxic
-    - Non_T_immune
+    - M1_macrophages
+    - M2_macrophages
     - CAFs
 
   boundaries:
@@ -676,13 +440,9 @@ immune_infiltration:
         positive_phenotype: 'NINJA_positive_tumor'
         negative_phenotype: 'NINJA_negative_tumor'
       
-      - marker: 'KI67'
-        positive_phenotype: 'Ki67_positive_tumor'
-        negative_phenotype: 'Ki67_negative_tumor'
-      
-      - marker: 'PD'
-        positive_phenotype: 'PD_positive_tumor'
-        negative_phenotype: 'PD_negative_tumor'
+      - marker: 'PDL1'
+        positive_phenotype: 'PDL1_positive_tumor'
+        negative_phenotype: 'PDL1_negative_tumor'
       
       - marker: 'EPCAM'
         positive_phenotype: 'EPCAM_positive_tumor'
@@ -691,6 +451,10 @@ immune_infiltration:
       - marker: 'TTF1'
         positive_phenotype: 'TTF1_positive_tumor'
         negative_phenotype: 'TTF1_negative_tumor'
+
+      - marker: 'CC3'
+        positive_phenotype: 'CC3_positive_tumor'
+        negative_phenotype: 'CC3_negative_tumor'
 
     heterogeneity_metrics:
       - 'getis_ord_gi_star'
@@ -704,16 +468,14 @@ immune_infiltration:
         - CD8_cytotoxic
         - CD8_TRM
         - CD8_TRM_cytotoxic
-        - PD1_positive_T_cells
-        - CD8_PD1_positive
+        - PD1_positive_CD8
+        - KLRG1_positive_CD8
         - CD4_Tregs
-        - CD8_Tregs
         - T_cells
         - CD45_positive
         - Macrophages
-        - M1_like_macrophages
-        - NK_cells
-        - NK_cytotoxic
+        - M1_macrophages
+        - M2_macrophages
         - B_cells
 
 # ============================================================================
@@ -731,7 +493,7 @@ cellular_neighborhoods:
     - NINJA_positive_tumor
     - NINJA_negative_tumor
     - Ki67_positive_tumor
-    - PD_positive_tumor
+    - PDL1_positive_tumor
     - EPCAM_positive_tumor
     - TTF1_positive_tumor
     - CC3_positive_tumor
@@ -741,28 +503,23 @@ cellular_neighborhoods:
     - CD4_T_cells
     - CD8_T_cells
     - CD4_Tregs
-    - CD8_Tregs
     - CD8_TRM
     - CD8_cytotoxic
     - CD8_TRM_cytotoxic
-    - PD1_positive_T_cells
-    - CD8_PD1_positive
-    - KLRG1_positive_T_cells
-    - CD8_KLRG1_positive
-    - CD8_KLRG1_GZMB
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
+    - CD8_proliferating
     - B_cells
     - Germinal_center_B_cells
     - Macrophages
-    - M1_like_macrophages
-    - M2_like_macrophages
-    - NK_cells
-    - NK_cytotoxic
+    - M1_macrophages
+    - M2_macrophages
     - CAFs
 
   window_size: 100
   k_neighbors: 30
   cells_per_sample: 100000
-  n_clusters: 20  # Increased for complex immune landscape
+  n_clusters: 15
   clustering_method: 'kmeans'
   define_globally: true
 
@@ -785,7 +542,7 @@ coexpression_analysis:
     pERK: 'is_PERK'
     NINJA: 'is_NINJA'
     Ki67: 'is_KI67'
-    PD-L1: 'is_PD'
+    PDL1: 'is_PDL1'
     EPCAM: 'is_EPCAM'
     TTF1: 'is_TTF1'
     CC3: 'is_CC3'
@@ -807,9 +564,9 @@ enhanced_neighborhoods:
       pos_col: 'is_NINJA_positive_tumor'
       neg_col: 'is_NINJA_negative_tumor'
     
-    - name: 'PD-L1'
-      pos_col: 'is_PD_positive_tumor'
-      neg_col: 'is_PD_negative_tumor'
+    - name: 'PDL1'
+      pos_col: 'is_PDL1_positive_tumor'
+      neg_col: 'is_PDL1_negative_tumor'
     
     - name: 'EPCAM'
       pos_col: 'is_EPCAM_positive_tumor'
@@ -824,7 +581,7 @@ enhanced_neighborhoods:
     - pERK_positive_tumor
     - NINJA_positive_tumor
     - Ki67_positive_tumor
-    - PD_positive_tumor
+    - PDL1_positive_tumor
     - EPCAM_positive_tumor
     - TTF1_positive_tumor
     - CD45_positive
@@ -834,37 +591,44 @@ enhanced_neighborhoods:
     - CD8_TRM
     - CD8_cytotoxic
     - CD8_TRM_cytotoxic
-    - PD1_positive_T_cells
-    - CD8_PD1_positive
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
     - CD4_Tregs
     - Macrophages
-    - M1_like_macrophages
-    - NK_cells
+    - M1_macrophages
+    - M2_macrophages
     - B_cells
     - CAFs
 
+  immune_cells:
+      - CD45_positive
+      - T_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - CD8_TRM
+      - CD8_cytotoxic
+      - CD8_TRM_cytotoxic
+      - PD1_positive_CD8
+      - KLRG1_positive_CD8
+      - CD4_Tregs
+      - Macrophages
+      - M1_macrophages
+      - M2_macrophages
+      - B_cells
+      - CAFs
+
 # ============================================================================
-# ANALYSIS 8: TUMOR MICROENVIRONMENT (NEW)
+# ANALYSIS 7: TUMOR MICROENVIRONMENT
 # ============================================================================
 tumor_microenvironment:
   enabled: true
   generate_plots: true
 
-  # Analyze immune microenvironment around tumor cell phenotypes
-  # For each tumor sub-phenotype (pERK+, pERK-, etc.):
-  # - Calculate immune cell composition in local vicinity
-  # - Multiple distance bins: cell contact, close proximity, distal proximity
-  # - Generate stacked column plots (percentages and counts)
-  # - Statistical tests between phenotypes, timepoints, and groups
-  # - Enrichment/depletion analysis adjusting for overall infiltration
-
-  # Distance bins for proximity analysis (in microns)
   distance_bins:
-    contact: 20      # Cell-cell contact distance
-    close: 100        # Close proximity
-    distal: 500      # Distal proximity
+    contact: 20
+    close: 100
+    distal: 500
 
-  # Tumor phenotypes to analyze
   tumor_phenotypes:
     - name: 'pERK'
       phenotype: 'pERK_positive_tumor'
@@ -872,43 +636,31 @@ tumor_microenvironment:
       phenotype: 'NINJA_positive_tumor'
     - name: 'Ki67'
       phenotype: 'Ki67_positive_tumor'
-    - name: 'EPCAM+'
+    - name: 'EPCAM'
       phenotype: 'EPCAM_positive_tumor'
-      description: 'Epithelial tumor cells'
-    - name: 'TTF1+'
+    - name: 'TTF1'
       phenotype: 'TTF1_positive_tumor'
-      description: 'TTF1+ tumor cells (lung lineage marker)'
-    - name: 'PD-L1+'
-      phenotype: 'PD_positive_tumor'
-      description: 'PD-L1+ tumor cells (immune suppressive)'
-    - name: 'CC3+'
+    - name: 'PDL1'
+      phenotype: 'PDL1_positive_tumor'
+    - name: 'CC3'
       phenotype: 'CC3_positive_tumor'
-      description: 'Apoptotic tumor cells'
     
-  # Immune populations to quantify in microenvironment
   immune_populations:
-    - 'CD45_positive'
-    - 'T_cells'
-    - 'CD4_T_cells'
-    - 'CD8_T_cells'
-    - 'CD8_TRM'
-    - 'CD8_cytotoxic'
-    - 'CD8_TRM_cytotoxic'
-    - 'PD1_positive_T_cells'
-    - 'CD8_PD1_positive'
-    - 'CD4_Tregs'
-    - 'Macrophages'
-    - 'M1_like_macrophages'
-    - 'NK_cells'
-    - 'B_cells'
-    - 'CAFs'
-
-# ============================================================================
-# ANALYSIS 9: PSEUDOTIME ANALYSIS (NEW)
-# ============================================================================
-pseudotime_analysis:
-  enabled: true
-  generate_plots: true
+    - CD45_positive
+    - T_cells
+    - CD4_T_cells
+    - CD8_T_cells
+    - CD8_TRM
+    - CD8_cytotoxic
+    - CD8_TRM_cytotoxic
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
+    - CD4_Tregs
+    - Macrophages
+    - M1_macrophages
+    - M2_macrophages
+    - B_cells
+    - CAFs
 
 # ============================================================================
 # ANALYSIS 8: UMAP VISUALIZATION
@@ -920,12 +672,12 @@ umap_visualization:
     - is_PERK
     - is_NINJA
     - is_KI67
-    - is_PD
+    - is_PDL1
     - is_EPCAM
     - is_TTF1
     - is_CC3
-    - is_Tumor
-    - is_CD45_positive
+    - is_TOM
+    - is_CD45
     - is_CD3E
     - is_CD4
     - is_CD8A
@@ -937,7 +689,6 @@ umap_visualization:
     - is_B220
     - is_F480
     - is_MHCII
-    - is_NAK
     - is_ASMA
 
   phenotypes:
@@ -945,7 +696,7 @@ umap_visualization:
     - pERK_positive_tumor
     - NINJA_positive_tumor
     - Ki67_positive_tumor
-    - PD_positive_tumor
+    - PDL1_positive_tumor
     - CD45_positive
     - T_cells
     - CD4_T_cells
@@ -953,20 +704,26 @@ umap_visualization:
     - CD8_TRM
     - CD8_cytotoxic
     - CD8_TRM_cytotoxic
-    - PD1_positive_T_cells
-    - CD8_PD1_positive
-    - KLRG1_positive_T_cells
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
     - CD4_Tregs
     - B_cells
     - Macrophages
-    - M1_like_macrophages
-    - NK_cells
+    - M1_macrophages
+    - M2_macrophages
     - CAFs
 
   n_neighbors: 30
   min_dist: 0.3
   n_clusters: 15
   subsample: 100000
+
+# ============================================================================
+# ANALYSIS 9: PSEUDOTIME ANALYSIS (NEW)
+# ============================================================================
+pseudotime_analysis:
+  enabled: true
+  generate_plots: true
 
 # ============================================================================
 # VISUALIZATION SETTINGS
