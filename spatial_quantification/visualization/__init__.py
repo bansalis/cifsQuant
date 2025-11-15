@@ -8,6 +8,7 @@ from .population_dynamics_plotter import PopulationDynamicsPlotter
 from .distance_analysis_plotter import DistanceAnalysisPlotter
 from .neighborhood_plotter import NeighborhoodPlotter
 from .spatial_plotter import SpatialPlotter
+from .spatial_visualization_manager import SpatialVisualizationManager
 
 __all__ = [
     'PlotManager',
@@ -18,5 +19,6 @@ __all__ = [
     'PopulationDynamicsPlotter',
     'DistanceAnalysisPlotter',
     'NeighborhoodPlotter',
-    'SpatialPlotter'
+    'SpatialPlotter',
+    'SpatialVisualizationManager'
 ]

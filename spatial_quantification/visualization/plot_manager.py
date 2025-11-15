@@ -99,6 +99,10 @@ class PlotManager:
         """
         print("\nGenerating distance analysis plots...")
 
+        # Create distance plotter for histogram visualizations
+        from .distance_analysis_plotter import DistanceAnalysisPlotter
+        distance_plotter = DistanceAnalysisPlotter(self.output_dir / 'distance_analysis', self.config)
+
         comparisons = self.config['distance_analysis'].get('comparisons', [])
 
         for pairing_name, pairing_data in distance_results.items():
@@ -140,6 +144,18 @@ class PlotManager:
                     groups=groups,
                     output_name=f'{pairing_name}_distribution'
                 )
+
+                # NEW: Binned distance histograms (show peak shifts)
+                if self.config.get('spatial_visualization', {}).get('distance_histograms', {}).get('enabled', True):
+                    distance_bins = self.config.get('spatial_visualization', {}).get('distance_histograms', {}).get('distance_bins', None)
+                    distance_plotter.plot_distance_histograms_binned(
+                        pairing_data,
+                        source=source,
+                        target=target,
+                        group_col=group_col,
+                        groups=groups,
+                        distance_bins=distance_bins
+                    )
 
                 # Save statistics
                 stats_path = self.output_dir / 'distance_analysis' / f'{output_name}_stats.csv'

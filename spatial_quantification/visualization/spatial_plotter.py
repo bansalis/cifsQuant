@@ -507,3 +507,341 @@ class SpatialPlotter:
             plt.close(fig)
 
         print(f"    ✓ Generated {len(neighborhood_assignments)} neighborhood spatial maps")
+
+    def plot_individual_phenotypes(self, adata, phenotypes: List[str] = None):
+        """
+        Plot each cell phenotype separately showing spatial distribution.
+
+        Creates individual spatial plots for each phenotype with all cells in background.
+        Useful for visualizing where specific cell types are located.
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data object
+        phenotypes : List[str], optional
+            List of phenotype names to plot. If None, uses all phenotypes from config.
+        """
+        print("\n  Generating individual phenotype spatial plots...")
+
+        if phenotypes is None:
+            phenotypes = list(self.config.get('phenotypes', {}).keys())
+
+        samples = adata.obs['sample_id'].unique()
+        n_plots = 0
+
+        for sample in samples:
+            sample_mask = adata.obs['sample_id'] == sample
+            sample_data = adata.obs[sample_mask]
+            sample_coords = adata.obsm['spatial'][sample_mask.values]
+
+            for phenotype in phenotypes:
+                pheno_col = f'is_{phenotype}'
+
+                if pheno_col not in sample_data.columns:
+                    continue
+
+                pheno_mask = sample_data[pheno_col].values
+                pos_coords = sample_coords[pheno_mask]
+                neg_coords = sample_coords[~pheno_mask]
+
+                if len(pos_coords) == 0:
+                    continue
+
+                # Get phenotype color from config
+                pheno_config = self.config.get('phenotypes', {}).get(phenotype, {})
+                color = pheno_config.get('color', '#E41A1C')
+
+                fig, ax = plt.subplots(figsize=(12, 10))
+
+                # Background: all other cells
+                ax.scatter(neg_coords[:, 0], neg_coords[:, 1],
+                          c='lightgray', s=1, alpha=0.2, label='Other cells')
+
+                # Phenotype cells
+                ax.scatter(pos_coords[:, 0], pos_coords[:, 1],
+                          c=color, s=4, alpha=0.7, label=f'{phenotype}')
+
+                ax.set_xlabel('X (μm)', fontsize=12, fontweight='bold')
+                ax.set_ylabel('Y (μm)', fontsize=12, fontweight='bold')
+                ax.set_title(f'{sample} - {phenotype} (n={len(pos_coords):,})',
+                           fontsize=14, fontweight='bold')
+                ax.set_aspect('equal')
+                ax.legend(loc='upper right', fontsize=10)
+
+                plt.tight_layout()
+
+                plot_path = self.plots_dir / 'individual_phenotypes' / f'{sample}_{phenotype}_spatial.png'
+                plot_path.parent.mkdir(parents=True, exist_ok=True)
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)
+
+                n_plots += 1
+
+        print(f"    ✓ Generated {n_plots} individual phenotype spatial plots")
+
+    def plot_tumor_zones_dbscan(self, adata, tumor_col: str = 'is_Tumor'):
+        """
+        Plot unique tumor zones/clusters detected by DBSCAN.
+
+        Each tumor cluster is colored differently to visualize spatial heterogeneity
+        and validate DBSCAN parameters (eps, min_samples).
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data object
+        tumor_col : str
+            Column name for tumor cell identification
+        """
+        print("\n  Generating tumor zone (DBSCAN cluster) plots...")
+
+        tumor_config = self.config.get('tumor_definition', {}).get('structure_detection', {})
+        eps = tumor_config.get('eps', 100)
+        min_samples = tumor_config.get('min_samples', 10)
+        min_cluster_size = tumor_config.get('min_cluster_size', 250)
+
+        samples = adata.obs['sample_id'].unique()
+        n_plots = 0
+
+        for sample in samples:
+            sample_mask = adata.obs['sample_id'] == sample
+            sample_data = adata.obs[sample_mask]
+            sample_coords = adata.obsm['spatial'][sample_mask.values]
+
+            # Get tumor cells
+            if tumor_col not in sample_data.columns:
+                continue
+
+            tumor_mask = sample_data[tumor_col].values
+            tumor_coords = sample_coords[tumor_mask]
+            non_tumor_coords = sample_coords[~tumor_mask]
+
+            if len(tumor_coords) < min_samples:
+                continue
+
+            # Run DBSCAN
+            clusterer = DBSCAN(eps=eps, min_samples=min_samples)
+            labels = clusterer.fit_predict(tumor_coords)
+
+            # Filter by minimum cluster size
+            unique_labels = set(labels)
+            valid_clusters = []
+            for label in unique_labels:
+                if label == -1:  # Skip noise
+                    continue
+                cluster_size = (labels == label).sum()
+                if cluster_size >= min_cluster_size:
+                    valid_clusters.append(label)
+
+            n_clusters = len(valid_clusters)
+
+            if n_clusters == 0:
+                continue
+
+            # Create plot
+            fig, ax = plt.subplots(figsize=(14, 12))
+
+            # Background: non-tumor cells
+            if len(non_tumor_coords) > 0:
+                ax.scatter(non_tumor_coords[:, 0], non_tumor_coords[:, 1],
+                          c='lightgray', s=1, alpha=0.2, label='Non-tumor', rasterized=True)
+
+            # Plot each tumor zone with unique color
+            colors = plt.cm.tab20(np.linspace(0, 1, max(n_clusters, 1)))
+
+            for idx, cluster_label in enumerate(sorted(valid_clusters)):
+                cluster_mask = (labels == cluster_label)
+                cluster_coords = tumor_coords[cluster_mask]
+                cluster_size = len(cluster_coords)
+
+                ax.scatter(cluster_coords[:, 0], cluster_coords[:, 1],
+                          c=[colors[idx]], s=4, alpha=0.8, edgecolors='none',
+                          label=f'Zone {cluster_label+1} (n={cluster_size:,})',
+                          rasterized=True)
+
+            # Plot noise (if any)
+            if -1 in labels:
+                noise_mask = (labels == -1)
+                noise_coords = tumor_coords[noise_mask]
+                if len(noise_coords) > 0:
+                    ax.scatter(noise_coords[:, 0], noise_coords[:, 1],
+                             c='black', s=1, alpha=0.3, label=f'Noise (n={len(noise_coords):,})',
+                             rasterized=True)
+
+            ax.set_xlabel('X (μm)', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Y (μm)', fontsize=12, fontweight='bold')
+            ax.set_title(f'{sample} - Tumor Zones/Clusters (n={n_clusters})\n'
+                        f'DBSCAN: eps={eps}, min_samples={min_samples}',
+                        fontsize=14, fontweight='bold')
+            ax.set_aspect('equal')
+            ax.legend(loc='upper right', bbox_to_anchor=(1.20, 1), fontsize=9, markerscale=3)
+
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / 'tumor_zones' / f'{sample}_tumor_zones_dbscan.png'
+            plot_path.parent.mkdir(parents=True, exist_ok=True)
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+
+            n_plots += 1
+
+        print(f"    ✓ Generated {n_plots} tumor zone plots (DBSCAN parameters: eps={eps}, min_samples={min_samples})")
+
+    def plot_marker_zones(self, adata, markers: List[Dict], tumor_col: str = 'is_Tumor'):
+        """
+        Plot spatial zones for marker +/- tumor cells (e.g., pERK+/- zones).
+
+        Uses DBSCAN to identify spatial clusters of marker+ and marker- tumor cells
+        to visualize marker heterogeneity and validate zone detection parameters.
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data object
+        markers : List[Dict]
+            List of marker definitions with 'name', 'positive_phenotype', 'negative_phenotype'
+        tumor_col : str
+            Column name for tumor cell identification
+        """
+        print("\n  Generating marker +/- zone plots...")
+
+        tumor_config = self.config.get('tumor_definition', {}).get('structure_detection', {})
+        eps = tumor_config.get('eps', 100)
+        min_samples = tumor_config.get('min_samples', 10)
+        min_cluster_size = tumor_config.get('min_cluster_size', 250)
+
+        samples = adata.obs['sample_id'].unique()
+        n_plots = 0
+
+        for marker_info in markers:
+            marker_name = marker_info.get('name', marker_info.get('marker'))
+            pos_phenotype = marker_info.get('positive_phenotype')
+            neg_phenotype = marker_info.get('negative_phenotype')
+
+            for sample in samples:
+                sample_mask = adata.obs['sample_id'] == sample
+                sample_data = adata.obs[sample_mask]
+                sample_coords = adata.obsm['spatial'][sample_mask.values]
+
+                # Get marker+ and marker- tumor cells
+                pos_col = f'is_{pos_phenotype}'
+                neg_col = f'is_{neg_phenotype}'
+
+                if pos_col not in sample_data.columns or neg_col not in sample_data.columns:
+                    continue
+
+                pos_mask = sample_data[pos_col].values
+                neg_mask = sample_data[neg_col].values
+                tumor_mask = sample_data.get(tumor_col, pos_mask | neg_mask).values if tumor_col in sample_data.columns else (pos_mask | neg_mask)
+
+                pos_coords = sample_coords[pos_mask]
+                neg_coords = sample_coords[neg_mask]
+                non_tumor_coords = sample_coords[~tumor_mask]
+
+                if len(pos_coords) < min_samples and len(neg_coords) < min_samples:
+                    continue
+
+                # Run DBSCAN on marker+ cells
+                pos_labels = np.full(len(pos_coords), -1)
+                if len(pos_coords) >= min_samples:
+                    clusterer_pos = DBSCAN(eps=eps, min_samples=min_samples)
+                    pos_labels = clusterer_pos.fit_predict(pos_coords)
+
+                # Run DBSCAN on marker- cells
+                neg_labels = np.full(len(neg_coords), -1)
+                if len(neg_coords) >= min_samples:
+                    clusterer_neg = DBSCAN(eps=eps, min_samples=min_samples)
+                    neg_labels = clusterer_neg.fit_predict(neg_coords)
+
+                # Count valid clusters (>= min_cluster_size)
+                pos_clusters = []
+                for label in set(pos_labels):
+                    if label != -1 and (pos_labels == label).sum() >= min_cluster_size:
+                        pos_clusters.append(label)
+
+                neg_clusters = []
+                for label in set(neg_labels):
+                    if label != -1 and (neg_labels == label).sum() >= min_cluster_size:
+                        neg_clusters.append(label)
+
+                n_pos_zones = len(pos_clusters)
+                n_neg_zones = len(neg_clusters)
+
+                # Create plot
+                fig, ax = plt.subplots(figsize=(14, 12))
+
+                # Background: non-tumor cells
+                if len(non_tumor_coords) > 0:
+                    ax.scatter(non_tumor_coords[:, 0], non_tumor_coords[:, 1],
+                             c='lightgray', s=1, alpha=0.2, label='Non-tumor', rasterized=True)
+
+                # Plot marker+ zones (shades of green)
+                if n_pos_zones > 0:
+                    pos_colors = plt.cm.Greens(np.linspace(0.4, 0.9, max(n_pos_zones, 1)))
+                    for idx, cluster_label in enumerate(sorted(pos_clusters)):
+                        cluster_mask = (pos_labels == cluster_label)
+                        cluster_coords = pos_coords[cluster_mask]
+                        ax.scatter(cluster_coords[:, 0], cluster_coords[:, 1],
+                                 c=[pos_colors[idx]], s=5, alpha=0.8, edgecolors='none',
+                                 label=f'{marker_name}+ Zone {cluster_label+1} (n={len(cluster_coords):,})',
+                                 rasterized=True)
+                else:
+                    # No valid clusters, plot all as one
+                    if len(pos_coords) > 0:
+                        ax.scatter(pos_coords[:, 0], pos_coords[:, 1],
+                                 c='green', s=3, alpha=0.5,
+                                 label=f'{marker_name}+ (no zones, n={len(pos_coords):,})',
+                                 rasterized=True)
+
+                # Plot marker- zones (shades of red)
+                if n_neg_zones > 0:
+                    neg_colors = plt.cm.Reds(np.linspace(0.4, 0.9, max(n_neg_zones, 1)))
+                    for idx, cluster_label in enumerate(sorted(neg_clusters)):
+                        cluster_mask = (neg_labels == cluster_label)
+                        cluster_coords = neg_coords[cluster_mask]
+                        ax.scatter(cluster_coords[:, 0], cluster_coords[:, 1],
+                                 c=[neg_colors[idx]], s=5, alpha=0.8, edgecolors='none',
+                                 label=f'{marker_name}- Zone {cluster_label+1} (n={len(cluster_coords):,})',
+                                 rasterized=True)
+                else:
+                    # No valid clusters, plot all as one
+                    if len(neg_coords) > 0:
+                        ax.scatter(neg_coords[:, 0], neg_coords[:, 1],
+                                 c='red', s=3, alpha=0.5,
+                                 label=f'{marker_name}- (no zones, n={len(neg_coords):,})',
+                                 rasterized=True)
+
+                # Plot noise (if any)
+                pos_noise_mask = (pos_labels == -1)
+                neg_noise_mask = (neg_labels == -1)
+                n_pos_noise = pos_noise_mask.sum()
+                n_neg_noise = neg_noise_mask.sum()
+
+                if n_pos_noise > 0:
+                    ax.scatter(pos_coords[pos_noise_mask][:, 0], pos_coords[pos_noise_mask][:, 1],
+                             c='darkgreen', s=1, alpha=0.3, rasterized=True)
+
+                if n_neg_noise > 0:
+                    ax.scatter(neg_coords[neg_noise_mask][:, 0], neg_coords[neg_noise_mask][:, 1],
+                             c='darkred', s=1, alpha=0.3, rasterized=True)
+
+                ax.set_xlabel('X (μm)', fontsize=12, fontweight='bold')
+                ax.set_ylabel('Y (μm)', fontsize=12, fontweight='bold')
+                ax.set_title(f'{sample} - {marker_name}+/- Zones\n'
+                           f'{marker_name}+ zones: {n_pos_zones}, {marker_name}- zones: {n_neg_zones}\n'
+                           f'DBSCAN: eps={eps}, min_samples={min_samples}',
+                           fontsize=13, fontweight='bold')
+                ax.set_aspect('equal')
+                ax.legend(loc='upper right', bbox_to_anchor=(1.25, 1), fontsize=8, markerscale=2)
+
+                plt.tight_layout()
+
+                plot_path = self.plots_dir / 'marker_zones' / f'{sample}_{marker_name}_zones.png'
+                plot_path.parent.mkdir(parents=True, exist_ok=True)
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)
+
+                n_plots += 1
+
+        print(f"    ✓ Generated {n_plots} marker +/- zone plots")
