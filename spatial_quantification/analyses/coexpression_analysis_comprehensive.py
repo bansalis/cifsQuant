@@ -375,6 +375,9 @@ class CoexpressionAnalysisComprehensive:
         # Coexpression heatmaps
         self._plot_coexpression_heatmaps()
 
+        # Conditional probability heatmaps (NEW!)
+        self._plot_conditional_coexpression_heatmaps()
+
         # Top coexpressing pairs
         self._plot_top_coexpressing_pairs()
 
@@ -418,6 +421,133 @@ class CoexpressionAnalysisComprehensive:
             plt.close()
 
         print(f"    ✓ Generated coexpression heatmaps for {len(matrices)} groups")
+
+    def _plot_conditional_coexpression_heatmaps(self):
+        """
+        Generate conditional coexpression heatmaps showing:
+        "Given phenotype X is positive, what % are also positive for phenotype Y?"
+
+        This creates asymmetric matrices showing directional conditional probabilities.
+        Useful for understanding dependencies like "If pERK+, what % are NINJA+?"
+        """
+        if 'pairwise_coexpression' not in self.results:
+            print("    ⚠ No pairwise coexpression data for conditional plots")
+            return
+
+        df = self.results['pairwise_coexpression']
+
+        # Create conditional probability matrices for each group
+        for group in df['main_group'].unique():
+            if pd.isna(group) or group == '':
+                continue
+
+            group_data = df[df['main_group'] == group]
+
+            # Initialize matrix: rows = "given X", columns = "also Y"
+            n_phenos = len(self.phenotypes)
+            cond_matrix = np.zeros((n_phenos, n_phenos))
+
+            # Fill matrix with conditional probabilities
+            for i, pheno_x in enumerate(self.phenotypes):
+                for j, pheno_y in enumerate(self.phenotypes):
+                    if i == j:
+                        # Diagonal: 100% (if X+, then X+ is trivially 100%)
+                        cond_matrix[i, j] = 100.0
+                    else:
+                        # Find the column for "percent of X that are also Y"
+                        col_name = f'{pheno_x}_AND_{pheno_y}_percent_of_{pheno_x}'
+
+                        if col_name in group_data.columns:
+                            # Mean across all samples in this group
+                            cond_matrix[i, j] = group_data[col_name].mean()
+
+            # Create DataFrame
+            cond_df = pd.DataFrame(
+                cond_matrix,
+                index=[f'{p}+' for p in self.phenotypes],
+                columns=[f'also\n{p}+' for p in self.phenotypes]
+            )
+
+            # Create heatmap
+            fig, ax = plt.subplots(figsize=(14, 12))
+
+            sns.heatmap(
+                cond_df,
+                annot=True,
+                fmt='.1f',
+                cmap='YlOrRd',
+                vmin=0,
+                vmax=100,
+                cbar_kws={'label': '% of Row Phenotype\nthat are also Column Phenotype'},
+                ax=ax,
+                square=True,
+                linewidths=0.5,
+                linecolor='gray'
+            )
+
+            ax.set_title(
+                f'Conditional Coexpression: {group}\n'
+                f'"If row marker is positive, what % are also column marker positive?"',
+                fontsize=14, fontweight='bold'
+            )
+            ax.set_xlabel('ALSO Positive For →', fontsize=12, fontweight='bold')
+            ax.set_ylabel('← GIVEN Positive For', fontsize=12, fontweight='bold')
+
+            # Rotate labels
+            plt.setp(ax.get_xticklabels(), rotation=45, ha='right', fontsize=9)
+            plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
+
+            plt.tight_layout()
+            plt.savefig(self.plots_dir / f'conditional_coexpression_{group}.png',
+                       dpi=300, bbox_inches='tight')
+            plt.close()
+
+            # Also create a focused version showing only high conditional probabilities (>25%)
+            # This highlights strong dependencies
+            fig, ax = plt.subplots(figsize=(14, 12))
+
+            # Mask low values
+            masked_matrix = cond_matrix.copy()
+            masked_matrix[masked_matrix < 25.0] = np.nan
+
+            masked_df = pd.DataFrame(
+                masked_matrix,
+                index=[f'{p}+' for p in self.phenotypes],
+                columns=[f'also\n{p}+' for p in self.phenotypes]
+            )
+
+            sns.heatmap(
+                masked_df,
+                annot=True,
+                fmt='.1f',
+                cmap='YlOrRd',
+                vmin=25,
+                vmax=100,
+                cbar_kws={'label': '% Conditional Probability'},
+                ax=ax,
+                square=True,
+                linewidths=0.5,
+                linecolor='gray',
+                cbar=True
+            )
+
+            ax.set_title(
+                f'Strong Conditional Coexpression: {group}\n'
+                f'(Showing only >25% conditional probability)',
+                fontsize=14, fontweight='bold'
+            )
+            ax.set_xlabel('ALSO Positive For →', fontsize=12, fontweight='bold')
+            ax.set_ylabel('← GIVEN Positive For', fontsize=12, fontweight='bold')
+
+            plt.setp(ax.get_xticklabels(), rotation=45, ha='right', fontsize=9)
+            plt.setp(ax.get_yticklabels(), rotation=0, fontsize=9)
+
+            plt.tight_layout()
+            plt.savefig(self.plots_dir / f'conditional_coexpression_strong_{group}.png',
+                       dpi=300, bbox_inches='tight')
+            plt.close()
+
+        print(f"    ✓ Generated conditional coexpression heatmaps")
 
     def _plot_top_coexpressing_pairs(self):
         """Plot top coexpressing phenotype pairs."""

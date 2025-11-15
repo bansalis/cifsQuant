@@ -120,14 +120,21 @@ class InfiltrationAnalysisSpatialCells:
         self.region_detector.assign_cells_to_regions()
 
     def _calculate_infiltration_from_boundaries(self):
-        """Calculate immune infiltration using distance from tumor boundaries."""
+        """
+        Calculate immune infiltration using distance from tumor boundaries.
+
+        Calculates two types of zones:
+        1. Outside tumor: 0-50um, 50-100um, 100-150um from boundary
+        2. Inside tumor: depth zones at 0-50um, 50-100um, 100-150um from boundary
+        """
         immune_pops = self.config.get('immune_populations', [])
-        # SIMPLIFIED: Only within tumor and small boundary (50um)
-        # This reduces output size and focuses on biologically relevant infiltration
-        boundaries = self.config.get('boundaries', [0, 50])
+
+        # Distance boundaries (extended to 150um for biological relevance)
+        boundaries = self.config.get('boundaries', [0, 50, 100, 150])
 
         print(f"  Analyzing {len(immune_pops)} immune populations...")
         print(f"  Distance boundaries: {boundaries} μm from tumor edge")
+        print(f"  Calculating both OUTSIDE and INSIDE (depth) zones")
 
         infiltration_results = []
         detected_regions = self.region_detector.tumor_boundaries
@@ -136,32 +143,35 @@ class InfiltrationAnalysisSpatialCells:
             sample_mask = self.adata.obs['sample_id'] == sample
             sample_adata = self.adata[sample_mask].copy()
 
-            # Pre-compute: Create a region column for distance calculations
-            # This reuses the already-assigned tumor_region_id instead of reassigning
-            sample_adata.obs['region_for_distance'] = 'background'
-
             for tumor_id, boundary in tumor_boundaries.items():
-                # OPTIMIZATION: Use already-assigned tumor_region_id instead of reassigning
-                # This saves significant time by avoiding redundant assignPointsToRegions calls
+                # Get tumor region mask
                 tumor_region_mask = sample_adata.obs['tumor_region_id'] == tumor_id
                 structure_size = tumor_region_mask.sum()
 
                 if structure_size < 10:
                     continue
 
-                # Mark cells in this tumor for distance calculation
-                sample_adata.obs.loc[tumor_region_mask, 'region_for_distance'] = f'tumor_{tumor_id}'
+                # Calculate SIGNED distance from boundary for ALL cells
+                # Negative distance = inside tumor, Positive distance = outside tumor
+                # NOTE: Removed region_subset to calculate for ALL cells, not just tumor cells
+                try:
+                    spc.msmt.getDistanceFromObject(
+                        sample_adata,
+                        boundary,
+                        name='distance_to_boundary',
+                        inplace=True,
+                        binned=False
+                    )
+                except Exception as e:
+                    print(f"    ⚠ Error calculating distances for tumor {tumor_id} in {sample}: {e}")
+                    continue
 
-                # Calculate distance from boundary for all cells
-                spc.msmt.getDistanceFromObject(
-                    sample_adata,
-                    boundary,
-                    region_col='region_for_distance',
-                    region_subset=[f'tumor_{tumor_id}'],
-                    name='distance_to_tumor',
-                    inplace=True,
-                    binned=False
-                )
+                # Get distances for all cells
+                all_distances = sample_adata.obs['distance_to_boundary'].values
+
+                # Determine which cells are inside vs outside tumor
+                # Cells inside tumor have been assigned tumor_region_id
+                inside_tumor = sample_adata.obs['tumor_region_id'].values == tumor_id
 
                 # Analyze each immune population
                 for immune_pop in immune_pops:
@@ -170,35 +180,67 @@ class InfiltrationAnalysisSpatialCells:
                         continue
 
                     immune_mask = sample_adata.obs[immune_col].values
-                    immune_distances = sample_adata.obs['distance_to_tumor'].values[immune_mask]
 
-                    # Count in each distance zone
-                    for i in range(len(boundaries)):
-                        if i == 0:
-                            # Within tumor (distance ~ 0, using <= 5 to account for boundary tolerance)
-                            count = (immune_distances <= 5).sum()
-                            zone_name = 'within_tumor'
-                            boundary_lower = 0
-                            boundary_upper = 5
-                        else:
-                            # Between boundaries
-                            lower = boundaries[i-1]
-                            upper = boundaries[i]
-                            count = ((immune_distances > lower) & (immune_distances <= upper)).sum()
-                            zone_name = f'{lower}_{upper}um'
-                            boundary_lower = lower
-                            boundary_upper = upper
+                    # Get immune cells with their distances and inside/outside status
+                    immune_distances = all_distances[immune_mask]
+                    immune_inside = inside_tumor[immune_mask]
+
+                    # ZONE 1: Within tumor at boundary (0-5um depth from edge)
+                    count_within = (immune_inside & (np.abs(immune_distances) <= 5)).sum()
+                    infiltration_results.append({
+                        'sample_id': sample,
+                        'structure_id': int(tumor_id),
+                        'immune_population': immune_pop,
+                        'zone': 'within_tumor',
+                        'boundary_lower': 0,
+                        'boundary_upper': 5,
+                        'count': int(count_within),
+                        'structure_size': int(structure_size),
+                        'infiltration_density': count_within / structure_size if structure_size > 0 else 0,
+                        'timepoint': sample_adata.obs['timepoint'].iloc[0] if 'timepoint' in sample_adata.obs.columns else np.nan,
+                        'group': sample_adata.obs['group'].iloc[0] if 'group' in sample_adata.obs.columns else '',
+                        'main_group': sample_adata.obs['main_group'].iloc[0] if 'main_group' in sample_adata.obs.columns else ''
+                    })
+
+                    # ZONES 2+: Outside tumor at different distances
+                    for i in range(1, len(boundaries)):
+                        lower = boundaries[i-1]
+                        upper = boundaries[i]
+
+                        # Outside tumor zones (positive distance, NOT inside)
+                        count_outside = (~immune_inside & (immune_distances >= lower) &
+                                       (immune_distances < upper)).sum()
 
                         infiltration_results.append({
                             'sample_id': sample,
                             'structure_id': int(tumor_id),
                             'immune_population': immune_pop,
-                            'zone': zone_name,
-                            'boundary_lower': boundary_lower,
-                            'boundary_upper': boundary_upper,
-                            'count': int(count),
+                            'zone': f'{lower}_{upper}um',
+                            'boundary_lower': lower,
+                            'boundary_upper': upper,
+                            'count': int(count_outside),
                             'structure_size': int(structure_size),
-                            'infiltration_density': count / structure_size if structure_size > 0 else 0,
+                            'infiltration_density': count_outside / structure_size if structure_size > 0 else 0,
+                            'timepoint': sample_adata.obs['timepoint'].iloc[0] if 'timepoint' in sample_adata.obs.columns else np.nan,
+                            'group': sample_adata.obs['group'].iloc[0] if 'group' in sample_adata.obs.columns else '',
+                            'main_group': sample_adata.obs['main_group'].iloc[0] if 'main_group' in sample_adata.obs.columns else ''
+                        })
+
+                        # DEPTH zones: Inside tumor at different depths from boundary
+                        # These are cells INSIDE the tumor but at different distances from the edge
+                        count_depth = (immune_inside & (np.abs(immune_distances) >= lower) &
+                                      (np.abs(immune_distances) < upper)).sum()
+
+                        infiltration_results.append({
+                            'sample_id': sample,
+                            'structure_id': int(tumor_id),
+                            'immune_population': immune_pop,
+                            'zone': f'{lower}_{upper}um_depth',
+                            'boundary_lower': lower,
+                            'boundary_upper': upper,
+                            'count': int(count_depth),
+                            'structure_size': int(structure_size),
+                            'infiltration_density': count_depth / structure_size if structure_size > 0 else 0,
                             'timepoint': sample_adata.obs['timepoint'].iloc[0] if 'timepoint' in sample_adata.obs.columns else np.nan,
                             'group': sample_adata.obs['group'].iloc[0] if 'group' in sample_adata.obs.columns else '',
                             'main_group': sample_adata.obs['main_group'].iloc[0] if 'main_group' in sample_adata.obs.columns else ''
@@ -208,6 +250,10 @@ class InfiltrationAnalysisSpatialCells:
             df = pd.DataFrame(infiltration_results)
             self.results['infiltration'] = df
             print(f"    ✓ Calculated infiltration for {len(infiltration_results)} structure-population-zone combinations")
+
+            # Print summary of zones detected
+            zones = df['zone'].unique()
+            print(f"    ✓ Zones detected: {', '.join(sorted(zones))}")
 
     def _detect_immune_rich_regions(self):
         """Detect immune-rich regions using SpatialCells community detection on immune cells."""
