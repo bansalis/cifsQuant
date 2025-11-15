@@ -145,6 +145,8 @@ class InfiltrationAnalysisSpatialCells:
                 spc.msmt.getDistanceFromObject(
                     sample_adata,
                     boundary,
+                    region_col='temp_region',
+                    region_subset=None,
                     name='distance_to_tumor',
                     inplace=True,
                     binned=False
