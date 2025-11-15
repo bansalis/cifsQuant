@@ -72,6 +72,13 @@ print(spc.__version__)
   - Detects immune-rich regions
   - Calculates immune isolation metrics
 
+- **`MarkerRegionAnalysisSpatialCells`** (`spatial_quantification/analyses/marker_region_analysis_spatialcells.py`) **[NEW]**
+  - Detects marker-defined spatial regions (e.g., pERK+/-, Ki67+/-)
+  - Analyzes immune enrichment in marker+ vs marker- zones
+  - Compares regional composition and heterogeneity
+  - Identifies holes/gaps within marker regions
+  - See `MARKER_REGION_ANALYSIS.md` for detailed documentation
+
 ## Configuration Updates
 
 Add SpatialCells-specific parameters to your `spatial_config.yaml`:
@@ -129,6 +136,26 @@ immune_infiltration:
       - marker: 'pERK'
         positive_phenotype: 'pERK_positive_tumor'
         negative_phenotype: 'pERK_negative_tumor'
+
+# NEW: Marker-based regional analysis
+marker_region_analysis:
+  enabled: true
+  markers:
+    - name: 'pERK'
+      positive_col: 'is_pERK_positive_tumor'
+      negative_col: 'is_pERK_negative_tumor'
+    - name: 'Ki67'
+      positive_col: 'is_Ki67_positive_tumor'
+      negative_col: 'is_Ki67_negative_tumor'
+  region_detection:
+    eps: 55                   # Community detection epsilon
+    alpha: 27                 # Alpha shape parameter
+    min_samples: 5
+    core_only: true
+  immune_populations:
+    - 'is_CD8_T_cells'
+    - 'is_CD3_positive'
+  analyze_holes: true
 ```
 
 ## Usage Examples
@@ -176,6 +203,32 @@ results = infiltration.run()
 infiltration_by_zone = results['infiltration']
 immune_isolation = results['immune_isolation']  # NEW!
 immune_rich_regions = results['immune_rich_regions']  # NEW!
+```
+
+### Using Marker Region Analysis (NEW!)
+
+```python
+from spatial_quantification.analyses import MarkerRegionAnalysisSpatialCells
+
+# Initialize marker region analysis
+marker_region = MarkerRegionAnalysisSpatialCells(adata, config, output_dir)
+
+# Run analysis
+results = marker_region.run()
+
+# Access results
+detected_regions = results['detected_marker_regions']  # All detected marker regions
+composition = results['regional_composition']          # Cell composition in each region
+comparison = results['marker_region_comparison']       # Marker+ vs marker- comparison
+enrichment = results['immune_enrichment']              # Immune enrichment analysis
+
+# Example: Find samples with high CD8 enrichment in pERK+ regions
+perk_cd8 = enrichment[
+    (enrichment['marker'] == 'pERK') &
+    (enrichment['immune_population'] == 'is_CD8_T_cells') &
+    (enrichment['enrichment_fold_change'] > 1.5)
+]
+print(f"Samples with CD8 enrichment in pERK+ regions: {len(perk_cd8)}")
 ```
 
 ### Advanced: Direct Use of Region Detector
