@@ -25,12 +25,25 @@ Refactored spatial quantification to use **SpatialCells** library instead of raw
   - NEW: Immune-rich region detection
   - NEW: Immune isolation metrics
 
+- **`spatial_quantification/analyses/marker_region_analysis_spatialcells.py`** **[NEW]**
+  - `MarkerRegionAnalysisSpatialCells` class
+  - Detects pERK+/-, Ki67+/- spatial regions
+  - Compares immune enrichment in marker+ vs marker- zones
+  - Analyzes regional heterogeneity and holes
+  - See `MARKER_REGION_ANALYSIS.md` for full documentation
+
 ### Documentation
 - **`spatial_quantification/SPATIALCELLS_MIGRATION.md`**
   - Comprehensive migration guide
   - Configuration examples
   - Usage patterns
   - Troubleshooting
+
+- **`spatial_quantification/MARKER_REGION_ANALYSIS.md`** **[NEW]**
+  - Complete guide to marker region analysis
+  - pERK+/-, Ki67+/- region detection
+  - Immune enrichment analysis
+  - Output files and interpretation
 
 - **`SPATIALCELLS_REFACTOR_SUMMARY.md`** (this file)
   - Quick reference summary
@@ -140,6 +153,20 @@ immune_infiltration:
     min_samples: 20
     alpha: 130
     min_area: 30000
+
+marker_region_analysis:  # NEW section
+  enabled: true
+  markers:
+    - name: 'pERK'
+      positive_col: 'is_pERK_positive_tumor'
+      negative_col: 'is_pERK_negative_tumor'
+    - name: 'Ki67'
+      positive_col: 'is_Ki67_positive_tumor'
+      negative_col: 'is_Ki67_negative_tumor'
+  region_detection:
+    eps: 55
+    alpha: 27
+    min_samples: 5
 ```
 
 ## Backward Compatibility
