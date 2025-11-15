@@ -318,6 +318,24 @@ def main():
             plot_manager.plot_neighborhood_analysis(all_results['neighborhood_analysis'])
 
     # =========================================================================
+    # STEP 6: Generate Spatial Visualizations
+    # =========================================================================
+    if config.get('spatial_visualization', {}).get('enabled', True):
+        print("\n" + "="*80)
+        print("STEP 6: GENERATING SPATIAL VISUALIZATIONS")
+        print("="*80)
+
+        try:
+            from spatial_quantification.visualization import SpatialVisualizationManager
+
+            spatial_viz = SpatialVisualizationManager(adata, config, output_dir)
+            spatial_viz.generate_all_spatial_plots()
+        except Exception as e:
+            print(f"  ⚠ Could not generate spatial visualizations: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # =========================================================================
     # COMPLETE
     # =========================================================================
     print("\n" + "="*80)
