@@ -465,7 +465,8 @@ class InfiltrationAnalysisSpatialCells:
                 comp = spc.msmt.getRegionComposition(
                     sample_adata,
                     [pos_col, neg_col],
-                    regions=['tumor']
+                    regions=['tumor'],
+                    regioncol='temp_region'
                 )
 
                 heterogeneity_results.append({
