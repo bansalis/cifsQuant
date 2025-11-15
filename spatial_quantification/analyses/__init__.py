@@ -13,11 +13,13 @@ from .tumor_microenvironment_analysis import TumorMicroenvironmentAnalysis
 try:
     from .per_tumor_analysis_spatialcells import PerTumorAnalysisSpatialCells
     from .infiltration_analysis_spatialcells import InfiltrationAnalysisSpatialCells
+    from .marker_region_analysis_spatialcells import MarkerRegionAnalysisSpatialCells
     HAS_SPATIALCELLS_ANALYSES = True
 except ImportError:
     HAS_SPATIALCELLS_ANALYSES = False
     PerTumorAnalysisSpatialCells = None
     InfiltrationAnalysisSpatialCells = None
+    MarkerRegionAnalysisSpatialCells = None
 
 __all__ = [
     'PopulationDynamics',
@@ -29,5 +31,6 @@ __all__ = [
     'AdvancedAnalysis',
     'TumorMicroenvironmentAnalysis',
     'PerTumorAnalysisSpatialCells',
-    'InfiltrationAnalysisSpatialCells'
+    'InfiltrationAnalysisSpatialCells',
+    'MarkerRegionAnalysisSpatialCells'
 ]
