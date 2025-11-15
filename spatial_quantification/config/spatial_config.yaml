@@ -14,7 +14,7 @@ input:
 output:
   base_directory: 'spatial_quantification_results'
   save_intermediate: true
-  formats: ['pdf', 'png']
+  formats: ['png']
   dpi: 300
 
 # ============================================================================
@@ -52,6 +52,9 @@ tumor_definition:
     min_cluster_size: 250
     boundary_buffer: 100
     use_expanded_boundary: true
+    alpha: 100                  # Alpha parameter for alpha shape boundary
+    min_edges: 20               # Minimum edges for boundary filtering
+    holes_min_edges: 200   
 
 # ============================================================================
 # METADATA CONFIGURATION
@@ -249,6 +252,7 @@ phenotypes:
 # ============================================================================
 per_tumor_analysis:
   enabled: true
+  use_spatialcells: true 
   generate_plots: true
 
   markers:
@@ -266,6 +270,13 @@ per_tumor_analysis:
       phenotype: 'PD_positive_tumor'
     - name: 'CC3'
       phenotype: 'CC3_positive_tumor'
+  
+  spatial_heterogeneity:
+    enabled: true
+    window_size: 300            # Sliding window size in microns
+    step_size: 300              # Step size in microns
+    min_cells: 10               # Minimum cells per window
+    phenotype_col: 'is_Ki67_positive_tumor'
 
 # ============================================================================
 # ANALYSIS 1: POPULATION DYNAMICS (CROSS-SECTIONAL)
@@ -394,6 +405,7 @@ distance_analysis:
 # ============================================================================
 immune_infiltration:
   enabled: true
+  use_spatialcells: true 
   use_optimized: true
   
   immune_populations:
@@ -427,6 +439,13 @@ immune_infiltration:
   comparisons:
     - name: 'Group_comparison'
       groups: ['KPT', 'KPNT', 'cis', 'trans']
+
+  immune_community_detection:
+    enabled: true
+    eps: 130                    # Larger eps for immune region detection
+    min_samples: 20
+    alpha: 130
+    min_area: 30000             # Minimum area for immune regions (μm²)
 
   marker_zone_analysis:
     enabled: true
@@ -531,6 +550,101 @@ cellular_neighborhoods:
   comparisons:
     - name: 'Group_comparison'
       groups: ['KPT', 'KPNT', 'cis', 'trans']
+
+
+marker_region_analysis:
+  enabled: true
+
+  # Markers to analyze
+  markers:
+    - marker: 'PERK'
+      positive_phenotype: 'pERK_positive_tumor'
+      negative_phenotype: 'pERK_negative_tumor'
+    
+    - marker: 'NINJA'
+      positive_phenotype: 'NINJA_positive_tumor'
+      negative_phenotype: 'NINJA_negative_tumor'
+    
+    - marker: 'PDL1'
+      positive_phenotype: 'PDL1_positive_tumor'
+      negative_phenotype: 'PDL1_negative_tumor'
+    
+    - marker: 'EPCAM'
+      positive_phenotype: 'EPCAM_positive_tumor'
+      negative_phenotype: 'EPCAM_negative_tumor'
+    
+    - marker: 'TTF1'
+      positive_phenotype: 'TTF1_positive_tumor'
+      negative_phenotype: 'TTF1_negative_tumor'
+
+    - marker: 'CC3'
+      positive_phenotype: 'CC3_positive_tumor'
+      negative_phenotype: 'CC3_negative_tumor'
+
+  # Region detection parameters
+  region_detection:
+    eps: 55                    # DBSCAN epsilon (smaller = more outliers)
+    min_samples: 5             # Minimum samples for DBSCAN
+    alpha: 27                  # Alpha shape parameter (smaller = more detailed)
+    core_only: true            # Use only core samples (more stringent)
+    min_area: 0                # Minimum area for regions (μm²)
+    min_edges: 20              # Minimum edges for boundary polygons
+    holes_min_area: 10000      # Minimum area for holes (μm²)
+    holes_min_edges: 10        # Minimum edges for holes
+
+  # Phenotypes to analyze within regions
+  phenotype_columns:
+    - 'is_Tumor'
+    - 'is_pERK_positive_tumor'
+    - 'is_pERK_negative_tumor'
+    - 'is_NINJA_positive_tumor'
+    - 'is_NINJA_negative_tumor'
+    - 'is_Ki67_positive_tumor'
+    - 'is_PDL1_positive_tumor'
+    - 'is_EPCAM_positive_tumor'
+    - 'is_TTF1_positive_tumor'
+    - 'is_pERK_NINJA_positive_tumor'
+    - 'is_CD45_positive'
+    - 'is_T_cells'
+    - 'is_CD8_T_cells'
+    - 'is_CD4_T_cells'
+    - 'is_CD4_Tregs'
+    - 'is_CD8_TRM'
+    - 'is_CD8_cytotoxic'
+    - 'is_CD8_TRM_cytotoxic'
+    - 'is_PD1_positive_CD8'
+    - 'is_KLRG1_positive_CD8'
+    - 'is_CD8_proliferating'
+    - 'is_Macrophages'
+    - 'is_M1_macrophages'
+    - 'is_M2_macrophages'
+    - 'is_B_cells'
+    - 'is_Germinal_center_B_cells'
+    - 'is_CAFs'
+
+  # Immune populations for enrichment analysis
+  immune_populations:
+    - CD45_positive
+    - T_cells
+    - CD4_T_cells
+    - CD8_T_cells
+    - CD4_Tregs
+    - CD8_TRM
+    - CD8_cytotoxic
+    - CD8_TRM_cytotoxic
+    - PD1_positive_CD8
+    - KLRG1_positive_CD8
+    - CD8_proliferating
+    - B_cells
+    - Germinal_center_B_cells
+    - Macrophages
+    - M1_macrophages
+    - M2_macrophages
+    - CAFs
+
+  # Optional hole analysis
+  analyze_holes: true
+  hole_buffer_distance: 30   # Distance for inner/outer hole zones (μm)
 
 # ============================================================================
 # ANALYSIS 5: COEXPRESSION ANALYSIS
