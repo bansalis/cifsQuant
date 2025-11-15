@@ -937,16 +937,24 @@ class SpatialPlotter:
         if sample in region_detector.tumor_boundaries:
             boundaries = region_detector.tumor_boundaries[sample]
             for tumor_id, boundary in boundaries.items():
-                boundary_coords = np.array(boundary)
-                ax.plot(boundary_coords[:, 0], boundary_coords[:, 1],
+                # Validate boundary is a proper 2D array
+                boundary_array = np.array(boundary)
+                if boundary_array.ndim != 2 or boundary_array.shape[0] < 3 or boundary_array.shape[1] != 2:
+                    warnings.warn(f"Invalid boundary shape for tumor {tumor_id} in {sample}: {boundary_array.shape}, skipping")
+                    continue
+
+                ax.plot(boundary_array[:, 0], boundary_array[:, 1],
                        'k-', linewidth=3, alpha=0.9)
 
                 # Add tumor ID label
-                centroid = spc.msmt.getRegionCentroid(boundary)
-                ax.text(centroid[0], centroid[1], f'T{tumor_id}',
-                       fontsize=12, fontweight='bold', color='white',
-                       ha='center', va='center',
-                       bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+                try:
+                    centroid = spc.msmt.getRegionCentroid(boundary)
+                    ax.text(centroid[0], centroid[1], f'T{tumor_id}',
+                           fontsize=12, fontweight='bold', color='white',
+                           ha='center', va='center',
+                           bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+                except Exception as e:
+                    warnings.warn(f"Could not add label for tumor {tumor_id}: {e}")
 
         ax.set_xlabel('X (μm)', fontsize=14, fontweight='bold')
         ax.set_ylabel('Y (μm)', fontsize=14, fontweight='bold')
