@@ -554,32 +554,33 @@ cellular_neighborhoods:
 
 marker_region_analysis:
   enabled: true
+  generate_plots: true
 
-  # Markers to analyze
+  # Markers to analyze (use is_ prefix for column names)
   markers:
-    - marker: 'PERK'
-      positive_phenotype: 'pERK_positive_tumor'
-      negative_phenotype: 'pERK_negative_tumor'
-    
-    - marker: 'NINJA'
-      positive_phenotype: 'NINJA_positive_tumor'
-      negative_phenotype: 'NINJA_negative_tumor'
-    
-    - marker: 'PDL1'
-      positive_phenotype: 'PDL1_positive_tumor'
-      negative_phenotype: 'PDL1_negative_tumor'
-    
-    - marker: 'EPCAM'
-      positive_phenotype: 'EPCAM_positive_tumor'
-      negative_phenotype: 'EPCAM_negative_tumor'
-    
-    - marker: 'TTF1'
-      positive_phenotype: 'TTF1_positive_tumor'
-      negative_phenotype: 'TTF1_negative_tumor'
+    - name: 'pERK'
+      positive_col: 'is_pERK_positive_tumor'
+      negative_col: 'is_pERK_negative_tumor'
 
-    - marker: 'CC3'
-      positive_phenotype: 'CC3_positive_tumor'
-      negative_phenotype: 'CC3_negative_tumor'
+    - name: 'NINJA'
+      positive_col: 'is_NINJA_positive_tumor'
+      negative_col: 'is_NINJA_negative_tumor'
+
+    - name: 'PDL1'
+      positive_col: 'is_PDL1_positive_tumor'
+      negative_col: 'is_PDL1_negative_tumor'
+
+    - name: 'EPCAM'
+      positive_col: 'is_EPCAM_positive_tumor'
+      negative_col: 'is_EPCAM_negative_tumor'
+
+    - name: 'TTF1'
+      positive_col: 'is_TTF1_positive_tumor'
+      negative_col: 'is_TTF1_negative_tumor'
+
+    - name: 'CC3'
+      positive_col: 'is_CC3_positive_tumor'
+      negative_col: 'is_CC3_negative_tumor'
 
   # Region detection parameters
   region_detection:
@@ -622,25 +623,25 @@ marker_region_analysis:
     - 'is_Germinal_center_B_cells'
     - 'is_CAFs'
 
-  # Immune populations for enrichment analysis
+  # Immune populations for enrichment analysis (use is_ prefix)
   immune_populations:
-    - CD45_positive
-    - T_cells
-    - CD4_T_cells
-    - CD8_T_cells
-    - CD4_Tregs
-    - CD8_TRM
-    - CD8_cytotoxic
-    - CD8_TRM_cytotoxic
-    - PD1_positive_CD8
-    - KLRG1_positive_CD8
-    - CD8_proliferating
-    - B_cells
-    - Germinal_center_B_cells
-    - Macrophages
-    - M1_macrophages
-    - M2_macrophages
-    - CAFs
+    - 'is_CD45_positive'
+    - 'is_T_cells'
+    - 'is_CD4_T_cells'
+    - 'is_CD8_T_cells'
+    - 'is_CD4_Tregs'
+    - 'is_CD8_TRM'
+    - 'is_CD8_cytotoxic'
+    - 'is_CD8_TRM_cytotoxic'
+    - 'is_PD1_positive_CD8'
+    - 'is_KLRG1_positive_CD8'
+    - 'is_CD8_proliferating'
+    - 'is_B_cells'
+    - 'is_Germinal_center_B_cells'
+    - 'is_Macrophages'
+    - 'is_M1_macrophages'
+    - 'is_M2_macrophages'
+    - 'is_CAFs'
 
   # Optional hole analysis
   analyze_holes: true
