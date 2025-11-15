@@ -972,6 +972,7 @@ umap_visualization:
 # VISUALIZATION SETTINGS
 # ============================================================================
 visualization:
+  enabled: true
   style: 'publication'
   color_palette: 'colorblind_safe'
   font_family: 'Arial'
@@ -987,6 +988,32 @@ visualization:
     show_points: true
     alpha: 0.6
     show_stats: true
+
+# ============================================================================
+# SPATIAL VISUALIZATION SETTINGS
+# ============================================================================
+spatial_visualization:
+  enabled: true
+
+  # Generate spatial plots for each individual phenotype
+  individual_phenotypes: true
+
+  # Generate tumor zone plots (DBSCAN cluster validation)
+  tumor_zones: true
+
+  # Generate marker +/- zone plots (e.g., pERK+/- spatial zones)
+  marker_zones: true
+
+  # Generate tumor structure plots per sample
+  tumor_structures: true
+
+  # Generate multi-phenotype overlay plots
+  phenotype_overlays: true
+
+  # Distance histogram settings
+  distance_histograms:
+    enabled: true
+    distance_bins: [0, 50, 100, 200, 300, 500]  # Distance bands in microns
 
 # ============================================================================
 # STATISTICAL TESTING
