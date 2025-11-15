@@ -79,17 +79,20 @@ class InfiltrationAnalysisSpatialCells:
         else:
             print("\n1. Using pre-detected tumor structures...")
 
-        # Calculate basic infiltration
+        # Calculate basic infiltration (MAIN ANALYSIS)
         print("\n2. Calculating immune infiltration from tumor boundaries...")
         self._calculate_infiltration_from_boundaries()
 
-        # Detect immune-rich regions
-        print("\n3. Detecting immune-rich regions...")
-        self._detect_immune_rich_regions()
+        # OPTIONAL: Detect immune-rich regions (disabled by default - creates 500+ regions!)
+        if self.config.get('immune_infiltration', {}).get('detect_immune_regions', False):
+            print("\n3. Detecting immune-rich regions...")
+            self._detect_immune_rich_regions()
 
-        # Calculate immune isolation metrics
-        print("\n4. Calculating immune isolation metrics...")
-        self._calculate_immune_isolation()
+            # Calculate immune isolation metrics (requires immune regions)
+            print("\n4. Calculating immune isolation metrics...")
+            self._calculate_immune_isolation()
+        else:
+            print("\n3. Skipping immune region detection (disabled - set detect_immune_regions=true to enable)")
 
         # Marker zone analysis
         if self.config.get('marker_zone_analysis', {}).get('enabled', False):
