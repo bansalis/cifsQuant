@@ -11,6 +11,13 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional
 from sklearn.cluster import DBSCAN
+import warnings
+
+try:
+    import spatialcells as spc
+    HAS_SPATIALCELLS = True
+except ImportError:
+    HAS_SPATIALCELLS = False
 
 
 class SpatialPlotter:
@@ -845,3 +852,265 @@ class SpatialPlotter:
                 n_plots += 1
 
         print(f"    ✓ Generated {n_plots} marker +/- zone plots")
+
+    def plot_sample_with_spatialcells_boundaries(self, adata, region_detector, sample: str,
+                                                 show_immune: bool = True,
+                                                 figsize: tuple = (20, 20)):
+        """
+        Plot sample with SpatialCells-detected tumor boundaries.
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data
+        region_detector : SpatialCellsRegionDetector
+            Region detector with detected boundaries
+        sample : str
+            Sample ID
+        show_immune : bool
+            Whether to show immune populations
+        figsize : tuple
+            Figure size
+        """
+        if not HAS_SPATIALCELLS:
+            warnings.warn("SpatialCells not available")
+            return
+
+        sample_mask = adata.obs['sample_id'] == sample
+        sample_adata = adata[sample_mask]
+
+        if len(sample_adata) == 0:
+            return
+
+        tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_col = f'is_{tumor_col}'
+        immune_pops = self.config.get('immune_populations', ['CD8_T_cells', 'CD3_positive', 'CD45_positive'])
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        coords = sample_adata.obsm['spatial']
+
+        # Determine cell types
+        is_tumor = sample_adata.obs[tumor_col].values if tumor_col in sample_adata.obs.columns else np.zeros(len(sample_adata), dtype=bool)
+        is_immune = np.zeros(len(sample_adata), dtype=bool)
+        for immune_pop in immune_pops:
+            immune_col = f'is_{immune_pop}'
+            if immune_col in sample_adata.obs.columns:
+                is_immune |= sample_adata.obs[immune_col].values
+
+        background_mask = ~(is_tumor | is_immune)
+
+        # Plot background
+        if background_mask.sum() > 0:
+            ax.scatter(coords[background_mask, 0], coords[background_mask, 1],
+                      s=0.5, c='#CCCCCC', alpha=0.2, rasterized=True)
+
+        # Plot tumor cells
+        if is_tumor.sum() > 0:
+            ax.scatter(coords[is_tumor, 0], coords[is_tumor, 1],
+                      s=2, c='#E41A1C', alpha=0.6, rasterized=True, label='Tumor cells')
+
+        # Plot immune populations with different colors
+        immune_colors = {
+            'CD8_T_cells': '#377EB8',
+            'T_cells': '#4DAF4A',
+            'CD3_positive': '#4DAF4A',
+            'CD45_positive': '#984EA3',
+            'CD4_T_cells': '#FF7F00',
+            'Macrophages': '#A65628'
+        }
+
+        if show_immune:
+            for immune_pop in immune_pops:
+                immune_col = f'is_{immune_pop}'
+                if immune_col not in sample_adata.obs.columns:
+                    continue
+
+                immune_mask = sample_adata.obs[immune_col].values
+                if immune_mask.sum() > 0:
+                    color = immune_colors.get(immune_pop, '#000000')
+                    ax.scatter(coords[immune_mask, 0], coords[immune_mask, 1],
+                              s=4, c=color, alpha=0.7, rasterized=True,
+                              label=immune_pop.replace('_', ' '))
+
+        # Plot boundaries
+        if sample in region_detector.tumor_boundaries:
+            boundaries = region_detector.tumor_boundaries[sample]
+            for tumor_id, boundary in boundaries.items():
+                boundary_coords = np.array(boundary)
+                ax.plot(boundary_coords[:, 0], boundary_coords[:, 1],
+                       'k-', linewidth=3, alpha=0.9)
+
+                # Add tumor ID label
+                centroid = spc.msmt.getRegionCentroid(boundary)
+                ax.text(centroid[0], centroid[1], f'T{tumor_id}',
+                       fontsize=12, fontweight='bold', color='white',
+                       ha='center', va='center',
+                       bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+
+        ax.set_xlabel('X (μm)', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Y (μm)', fontsize=14, fontweight='bold')
+        ax.set_title(f'Sample: {sample} - Tumor Boundaries and Immune Populations',
+                    fontsize=16, fontweight='bold')
+        ax.legend(loc='best', frameon=True, fontsize=11, markerscale=3)
+        ax.set_aspect('equal')
+        plt.tight_layout()
+
+        plot_path = self.plots_dir / 'spatialcells_boundaries' / f'{sample}_boundaries_immune.png'
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+    def plot_individual_tumor_with_boundary(self, adata, region_detector, sample: str,
+                                           tumor_id: int, context_radius: float = 500,
+                                           figsize: tuple = (14, 14)):
+        """
+        Plot individual tumor with boundary and immune cells.
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data
+        region_detector : SpatialCellsRegionDetector
+            Region detector
+        sample : str
+            Sample ID
+        tumor_id : int
+            Tumor region ID
+        context_radius : float
+            Radius around tumor (μm)
+        figsize : tuple
+            Figure size
+        """
+        if not HAS_SPATIALCELLS:
+            return
+
+        sample_mask = adata.obs['sample_id'] == sample
+        sample_adata = adata[sample_mask]
+
+        boundary = region_detector.get_boundary(sample, tumor_id)
+        if boundary is None:
+            return
+
+        tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_col = f'is_{tumor_col}'
+        immune_pops = self.config.get('immune_populations', ['CD8_T_cells', 'CD3_positive', 'CD45_positive'])
+
+        centroid = spc.msmt.getRegionCentroid(boundary)
+        coords = sample_adata.obsm['spatial']
+        distances = np.sqrt((coords[:, 0] - centroid[0])**2 + (coords[:, 1] - centroid[1])**2)
+        context_mask = distances <= context_radius
+
+        if context_mask.sum() == 0:
+            return
+
+        context_adata = sample_adata[context_mask]
+        context_coords = context_adata.obsm['spatial']
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        in_tumor = context_adata.obs['tumor_region_id'] == tumor_id if 'tumor_region_id' in context_adata.obs.columns else np.zeros(len(context_adata), dtype=bool)
+        is_tumor_type = context_adata.obs[tumor_col].values if tumor_col in context_adata.obs.columns else np.zeros(len(context_adata), dtype=bool)
+        is_immune = np.zeros(len(context_adata), dtype=bool)
+        for immune_pop in immune_pops:
+            immune_col = f'is_{immune_pop}'
+            if immune_col in context_adata.obs.columns:
+                is_immune |= context_adata.obs[immune_col].values
+
+        background_mask = ~(is_tumor_type | is_immune)
+        if background_mask.sum() > 0:
+            ax.scatter(context_coords[background_mask, 0], context_coords[background_mask, 1],
+                      s=1, c='#CCCCCC', alpha=0.2, rasterized=True)
+
+        # Plot tumor cells in this tumor
+        tumor_cells_mask = in_tumor & is_tumor_type
+        if tumor_cells_mask.sum() > 0:
+            ax.scatter(context_coords[tumor_cells_mask, 0], context_coords[tumor_cells_mask, 1],
+                      s=6, c='#E41A1C', alpha=0.8, rasterized=True,
+                      label=f'Tumor {tumor_id}', edgecolors='darkred', linewidths=0.5)
+
+        # Other tumor cells
+        other_tumor_mask = (~in_tumor) & is_tumor_type
+        if other_tumor_mask.sum() > 0:
+            ax.scatter(context_coords[other_tumor_mask, 0], context_coords[other_tumor_mask, 1],
+                      s=2, c='#FFA500', alpha=0.3, rasterized=True, label='Other tumors')
+
+        # Immune populations
+        immune_colors = {'CD8_T_cells': '#377EB8', 'T_cells': '#4DAF4A', 'CD3_positive': '#4DAF4A',
+                        'CD45_positive': '#984EA3', 'CD4_T_cells': '#FF7F00'}
+
+        for immune_pop in immune_pops:
+            immune_col = f'is_{immune_pop}'
+            if immune_col not in context_adata.obs.columns:
+                continue
+
+            immune_mask = context_adata.obs[immune_col].values
+            if immune_mask.sum() > 0:
+                color = immune_colors.get(immune_pop, '#000000')
+                ax.scatter(context_coords[immune_mask, 0], context_coords[immune_mask, 1],
+                          s=10, c=color, alpha=0.9, rasterized=True,
+                          label=immune_pop.replace('_', ' '),
+                          edgecolors='black', linewidths=0.3)
+
+        # Boundary
+        boundary_coords = np.array(boundary)
+        ax.plot(boundary_coords[:, 0], boundary_coords[:, 1],
+               'k-', linewidth=4, alpha=1.0, label='Tumor boundary')
+
+        # Scale bar
+        scalebar_length = 100
+        x_range = context_coords[:, 0].max() - context_coords[:, 0].min()
+        y_range = context_coords[:, 1].max() - context_coords[:, 1].min()
+        scalebar_x = context_coords[:, 0].min() + x_range * 0.1
+        scalebar_y = context_coords[:, 1].min() + y_range * 0.05
+        ax.plot([scalebar_x, scalebar_x + scalebar_length], [scalebar_y, scalebar_y],
+               'k-', linewidth=5)
+        ax.text(scalebar_x + scalebar_length/2, scalebar_y - y_range*0.03,
+               f'{scalebar_length} μm', ha='center', fontsize=11, fontweight='bold')
+
+        n_tumor_cells = tumor_cells_mask.sum()
+        area_um2 = spc.msmt.getRegionArea(boundary)
+
+        ax.set_xlabel('X (μm)', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Y (μm)', fontsize=14, fontweight='bold')
+        ax.set_title(f'Sample: {sample} | Tumor {tumor_id}\n'
+                    f'Size: {n_tumor_cells} cells | Area: {area_um2:.0f} μm²',
+                    fontsize=14, fontweight='bold')
+        ax.legend(loc='best', frameon=True, fontsize=10, markerscale=2)
+        ax.set_aspect('equal')
+        plt.tight_layout()
+
+        sample_dir = self.plots_dir / 'individual_tumors' / sample
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        plot_path = sample_dir / f'tumor_{tumor_id}_boundary_immune.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+    def generate_spatialcells_plots(self, adata, region_detector):
+        """Generate all SpatialCells-based spatial plots."""
+        if not HAS_SPATIALCELLS:
+            warnings.warn("SpatialCells not available for spatial plotting")
+            return
+
+        print("\n  Generating SpatialCells-based spatial plots...")
+
+        n_samples = 0
+        n_tumors = 0
+
+        for sample in region_detector.tumor_boundaries.keys():
+            try:
+                self.plot_sample_with_spatialcells_boundaries(adata, region_detector, sample)
+                n_samples += 1
+            except Exception as e:
+                warnings.warn(f"Error plotting sample {sample}: {e}")
+
+            boundaries = region_detector.tumor_boundaries[sample]
+            for tumor_id in boundaries.keys():
+                try:
+                    self.plot_individual_tumor_with_boundary(adata, region_detector, sample, tumor_id)
+                    n_tumors += 1
+                except Exception as e:
+                    warnings.warn(f"Error plotting tumor {tumor_id} in {sample}: {e}")
+
+        print(f"    ✓ Generated {n_samples} sample plots and {n_tumors} individual tumor plots with boundaries")
+        print(f"    Saved to: {self.plots_dir}/")
