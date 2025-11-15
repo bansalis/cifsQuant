@@ -8,8 +8,9 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import warnings
+from scipy import stats
 
 
 class InfiltrationSpatialCellsPlotter:
@@ -54,6 +55,85 @@ class InfiltrationSpatialCellsPlotter:
         plt.rcParams['figure.dpi'] = 150
         plt.rcParams['savefig.dpi'] = 300
         plt.rcParams['font.size'] = 10
+
+    def _perform_statistical_test(self, group1_data: np.ndarray, group2_data: np.ndarray,
+                                  test_type: str = 'auto') -> Tuple[float, float, str]:
+        """
+        Perform statistical test between two groups.
+
+        Parameters
+        ----------
+        group1_data : np.ndarray
+            Data for group 1
+        group2_data : np.ndarray
+            Data for group 2
+        test_type : str
+            Type of test ('ttest', 'mannwhitneyu', 'auto')
+
+        Returns
+        -------
+        tuple
+            (statistic, p_value, test_name)
+        """
+        # Remove NaNs
+        group1_clean = group1_data[~np.isnan(group1_data)]
+        group2_clean = group2_data[~np.isnan(group2_data)]
+
+        if len(group1_clean) < 3 or len(group2_clean) < 3:
+            return np.nan, np.nan, 'insufficient_data'
+
+        if test_type == 'auto':
+            # Use Shapiro-Wilk to check normality
+            try:
+                _, p1 = stats.shapiro(group1_clean)
+                _, p2 = stats.shapiro(group2_clean)
+
+                # If both p > 0.05, assume normal and use t-test
+                if p1 > 0.05 and p2 > 0.05:
+                    test_type = 'ttest'
+                else:
+                    test_type = 'mannwhitneyu'
+            except:
+                test_type = 'mannwhitneyu'
+
+        if test_type == 'ttest':
+            try:
+                stat, pval = stats.ttest_ind(group1_clean, group2_clean)
+                return stat, pval, 't-test'
+            except:
+                return np.nan, np.nan, 'test_failed'
+        elif test_type == 'mannwhitneyu':
+            try:
+                stat, pval = stats.mannwhitneyu(group1_clean, group2_clean, alternative='two-sided')
+                return stat, pval, 'Mann-Whitney U'
+            except:
+                return np.nan, np.nan, 'test_failed'
+        else:
+            return np.nan, np.nan, 'unknown_test'
+
+    def _format_pvalue(self, pval: float) -> str:
+        """Format p-value with significance stars."""
+        if np.isnan(pval):
+            return ''
+        elif pval < 0.001:
+            return '***'
+        elif pval < 0.01:
+            return '**'
+        elif pval < 0.05:
+            return '*'
+        else:
+            return 'ns'
+
+    def _add_significance_stars(self, ax, x_pos1: float, x_pos2: float, y_pos: float,
+                                pval: float, height: float = 0.02):
+        """Add significance stars/bars to plot."""
+        sig_text = self._format_pvalue(pval)
+        if sig_text and sig_text != 'ns':
+            # Draw horizontal line
+            ax.plot([x_pos1, x_pos2], [y_pos, y_pos], 'k-', linewidth=1.5)
+            # Add text
+            ax.text((x_pos1 + x_pos2) / 2, y_pos + height, sig_text,
+                   ha='center', va='bottom', fontsize=12, fontweight='bold')
 
     def plot_infiltration_by_zone_boxplots(self, infiltration_df: pd.DataFrame):
         """
@@ -116,9 +196,34 @@ class InfiltrationSpatialCellsPlotter:
             for element in ['whiskers', 'fliers', 'means', 'medians', 'caps']:
                 plt.setp(bp[element], color='black', linewidth=1.5)
 
+            # Add statistical comparisons between groups within each zone
+            if len(groups) == 2:
+                y_max = max([d.max() for d in plot_data if len(d) > 0])
+                y_range = y_max - min([d.min() for d in plot_data if len(d) > 0])
+
+                for zone_idx, zone in enumerate(zones):
+                    # Get data for both groups in this zone
+                    group1_data = pop_data[(pop_data['zone'] == zone) &
+                                          (pop_data['main_group'] == groups[0])]['infiltration_density'].values
+                    group2_data = pop_data[(pop_data['zone'] == zone) &
+                                          (pop_data['main_group'] == groups[1])]['infiltration_density'].values
+
+                    if len(group1_data) >= 3 and len(group2_data) >= 3:
+                        # Perform statistical test
+                        _, pval, _ = self._perform_statistical_test(group1_data, group2_data)
+
+                        # Add significance annotation
+                        if not np.isnan(pval) and pval < 0.05:
+                            x_pos1 = zone_idx * len(groups) + 1
+                            x_pos2 = zone_idx * len(groups) + 2
+                            y_pos = y_max + y_range * 0.05 * (zone_idx + 1)
+
+                            self._add_significance_stars(ax, x_pos1, x_pos2, y_pos, pval,
+                                                        height=y_range * 0.02)
+
             ax.set_ylabel('Infiltration Density\n(immune cells / tumor cells)',
                          fontsize=12, fontweight='bold')
-            ax.set_title(f'{immune_pop} - Infiltration by Zone and Group',
+            ax.set_title(f'{immune_pop} - Infiltration by Zone and Group\n(*, **, *** = p<0.05, 0.01, 0.001)',
                         fontsize=14, fontweight='bold')
             ax.tick_params(axis='x', rotation=45, labelsize=9)
             ax.grid(True, alpha=0.3, axis='y')
