@@ -120,22 +120,22 @@ TILE_CORRECTION_CONFIG = {
     'markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1', 'PERK'],
 
     # Grid detection parameters
-    'bin_size': 100,                   # Spatial binning for heatmap (pixels)
+    'bin_size': 400,                   # Spatial binning for heatmap (pixels)
     'peak_distance': 10,               # Minimum distance between grid lines (bins)
-    'peak_height_percentile': 65,      # Peak detection threshold (percentile)
+    'peak_height_percentile': 60,      # Peak detection threshold (percentile)
     'min_tiles': 4,                    # Minimum number of tiles to proceed
-    'min_tile_size': 200,              # Minimum cells per tile
+    'min_tile_size': 500,              # Minimum cells per tile
     'outlier_threshold': 2.0,          # MAD units for classifying dimmer/brighter tiles
 
     # UniFORM normalization parameters
-    'n_quantiles': 100,                # Number of quantiles for UniFORM
+    'n_quantiles': 75,                # Number of quantiles for UniFORM
     'correction_strength': 1.0,        # Dim tile correction strength (0-1, 1.0=full correction)
-    'bright_correction_strength': 0.3, # Bright tile correction strength (REDUCED to minimize bright tile normalization)
+    'bright_correction_strength': 1.0, # Bright tile correction strength (REDUCED to minimize bright tile normalization)
 
     # Radial artifact correction parameters (within-tile vignetting)
     'radial_correction': True,         # Enable radial artifact correction
-    'radial_bins': 3,                  # Number of radial zones (center to edge)
-    'radial_threshold': 0.15,          # Max deviation to trigger correction (15%)
+    'radial_bins': 5,                  # Number of radial zones (center to edge)
+    'radial_threshold': 0.12,          # Max deviation to trigger correction (15%)
 }
 
 # ============================================================================
@@ -171,14 +171,14 @@ LIBERAL_GATING_CONFIG = {
 
     # List markers that should use liberal (less conservative) gating
     # Example: markers where you want to capture more positive cells
-    'liberal_markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1'],
+    'liberal_markers': ['NINJA', 'PERK', 'GZMB', 'FOXP3', 'KLRG1', 'PD1'],
 
     # Liberal gating parameters (less stringent than default)
     # Default values: PEAK_MULTIPLIER=2.0, VALLEY_MAX_HEIGHT=0.20, MIN_PERCENTILE=85
-    'liberal_peak_multiplier': 1.5,      # Reduced from 2.0 (allows gates closer to negative peak)
-    'liberal_valley_max_height': 0.30,   # Increased from 0.20 (tolerates shallower valleys)
-    'liberal_min_percentile': 75,        # Reduced from 85 (allows lower percentile gates)
-    'liberal_min_absolute_gate': 0.10,   # Reduced from 0.15 (allows lower absolute gates)
+    'liberal_peak_multiplier': 1.9,      # Reduced from 2.0 (allows gates closer to negative peak)
+    'liberal_valley_max_height': 0.22,   # Increased from 0.20 (tolerates shallower valleys)
+    'liberal_min_percentile': 82,        # Reduced from 85 (allows lower percentile gates)
+    'liberal_min_absolute_gate': 0.15,   # Reduced from 0.15 (allows lower absolute gates)
 }
 
 # ============================================================================

@@ -75,6 +75,17 @@ class EnhancedNeighborhoodAnalysis:
                 'is_CD45_positive', 'is_CD3_positive', 'is_CD8_T_cells', 'is_CD4_T_cells'
             ]
 
+        # Immune cell types for neighborhood analysis - read from config
+        immune_type_list = enh_config.get('immune_cells', [])
+
+        if immune_type_list:
+            self.immunetypes = [f'is_{ct}' if not ct.startswith('is_') else ct for ct in immune_type_list]
+        else:
+            # Default cell types
+            self.immunetypes = [
+                'is_CD45_positive', 'is_CD3_positive', 'is_CD8_T_cells', 'is_CD4_T_cells'
+            ]
+
         # Neighborhood radius
         self.neighborhood_radius = 50  # μm
 
@@ -239,8 +250,8 @@ class EnhancedNeighborhoodAnalysis:
 
     def _calculate_regional_infiltration(self):
         """Calculate infiltration within marker+ and marker- regions."""
-        immune_pops = ['CD8_T_cells', 'CD3_positive', 'CD45_positive']
-
+        #immune_pops = ['CD8_T_cells', 'CD3_positive', 'CD45_positive', 'CD4_T_cells']
+        immune_pops = self.immunetypes
         for marker_def in self.markers_config:
             marker_name = marker_def['name']
 
@@ -283,7 +294,8 @@ class EnhancedNeighborhoodAnalysis:
 
                 # For each immune population
                 for immune_pop in immune_pops:
-                    immune_col = f'is_{immune_pop}'
+                    #immune_col = f'is_{immune_pop}'
+                    immune_col = immune_pop
                     if immune_col not in structure_data.columns:
                         continue
 
