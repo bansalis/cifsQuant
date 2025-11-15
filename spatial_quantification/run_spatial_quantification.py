@@ -271,11 +271,22 @@ def main():
         # Generate comprehensive summary plots
         print("\n  Generating infiltration summary visualizations...")
         try:
-            from spatial_quantification.visualization.infiltration_plotter import InfiltrationPlotter
-            infiltration_plotter = InfiltrationPlotter(output_dir / 'infiltration_analysis', config)
-            infiltration_plotter.generate_all_plots(all_results['infiltration_analysis'])
+            if use_spatialcells:
+                # Use specialized plotter for SpatialCells infiltration data
+                from spatial_quantification.visualization.infiltration_spatialcells_plotter import InfiltrationSpatialCellsPlotter
+                infiltration_plotter = InfiltrationSpatialCellsPlotter(
+                    output_dir / 'infiltration_analysis_spatialcells', config
+                )
+                infiltration_plotter.generate_all_plots(all_results['infiltration_analysis'])
+            else:
+                # Use standard plotter for optimized/standard infiltration
+                from spatial_quantification.visualization.infiltration_plotter import InfiltrationPlotter
+                infiltration_plotter = InfiltrationPlotter(output_dir / 'infiltration_analysis', config)
+                infiltration_plotter.generate_all_plots(all_results['infiltration_analysis'])
         except Exception as e:
+            import traceback
             print(f"  ⚠ Could not generate infiltration plots: {e}")
+            print(f"  {traceback.format_exc()}")
 
     # Neighborhood Analysis
     if config.get('cellular_neighborhoods', {}).get('enabled', False):
