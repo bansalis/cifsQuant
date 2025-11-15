@@ -119,7 +119,9 @@ class InfiltrationAnalysisSpatialCells:
     def _calculate_infiltration_from_boundaries(self):
         """Calculate immune infiltration using distance from tumor boundaries."""
         immune_pops = self.config.get('immune_populations', [])
-        boundaries = self.config.get('boundaries', [0, 50, 100, 200])
+        # SIMPLIFIED: Only within tumor and small boundary (50um)
+        # This reduces output size and focuses on biologically relevant infiltration
+        boundaries = self.config.get('boundaries', [0, 50])
 
         print(f"  Analyzing {len(immune_pops)} immune populations...")
         print(f"  Distance boundaries: {boundaries} μm from tumor edge")
