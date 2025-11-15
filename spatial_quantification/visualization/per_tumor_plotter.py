@@ -180,7 +180,8 @@ class PerTumorPlotter:
     def plot_all_marker_percentages(self, data: pd.DataFrame,
                                     group_col: str = 'main_group'):
         """
-        Create overview plot for all marker percentages.
+        Create overview plot for ALL marker percentages (dynamically from data columns).
+        Uses box plots for single timepoint data.
 
         Parameters
         ----------
@@ -189,69 +190,112 @@ class PerTumorPlotter:
         group_col : str
             Grouping column
         """
-        markers = ['pERK', 'NINJA', 'Ki67']
-        marker_cols = [f'percent_{m}_positive' for m in markers]
+        # Dynamically find ALL percent_*_positive columns
+        percent_cols = [col for col in data.columns if col.startswith('percent_') and col.endswith('_positive')]
 
-        # Filter to available markers
-        available_markers = [m for m, col in zip(markers, marker_cols) if col in data.columns]
-
-        if not available_markers:
+        if not percent_cols:
+            print("    ⚠ No marker percentage columns found")
             return
 
-        n_markers = len(available_markers)
-        fig, axes = plt.subplots(1, n_markers, figsize=(6*n_markers, 5))
+        # Extract marker names
+        markers = [col.replace('percent_', '').replace('_positive', '') for col in percent_cols]
 
-        if n_markers == 1:
-            axes = [axes]
+        # Check if single timepoint (use box plots) or multiple (use line plots)
+        timepoints = sorted(data['timepoint'].unique()) if 'timepoint' in data.columns else [0]
+        single_timepoint = len(timepoints) == 1
 
         groups = sorted(data[group_col].unique())
-        timepoints = sorted(data['timepoint'].unique())
 
-        for idx, marker in enumerate(available_markers):
+        # Create multi-panel figure (max 6 per row)
+        n_markers = len(markers)
+        n_cols = min(6, n_markers)
+        n_rows = int(np.ceil(n_markers / n_cols))
+
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 4*n_rows))
+        if n_markers == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten() if n_rows > 1 else axes
+
+        for idx, (marker, col) in enumerate(zip(markers, percent_cols)):
             ax = axes[idx]
-            col = f'percent_{marker}_positive'
+            plot_data = data[~data[col].isna()].copy()
 
-            plot_data = data[~data[col].isna()]
+            if len(plot_data) == 0:
+                ax.axis('off')
+                continue
 
-            for group in groups:
-                group_data = plot_data[plot_data[group_col] == group]
+            if single_timepoint:
+                # BOX PLOT for single timepoint
+                box_data = []
+                positions = []
+                colors_list = []
+                labels = []
 
-                if len(group_data) == 0:
-                    continue
+                for i, group in enumerate(groups):
+                    group_data = plot_data[plot_data[group_col] == group]
+                    if len(group_data) > 0:
+                        box_data.append(group_data[col].values)
+                        positions.append(i)
+                        colors_list.append(self.group_colors.get(group, '#000000'))
+                        labels.append(group)
 
-                # Calculate mean and SEM per timepoint
-                summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
-                tp_values = summary.index.values
-                means = summary['mean'].values
-                sems = summary['sem'].values
+                if box_data:
+                    bp = ax.boxplot(box_data, positions=positions, widths=0.6,
+                                   patch_artist=True, showfliers=True,
+                                   flierprops=dict(marker='o', markersize=4, alpha=0.5))
 
-                color = self.group_colors.get(group, '#000000')
+                    for patch, color in zip(bp['boxes'], colors_list):
+                        patch.set_facecolor(color)
+                        patch.set_alpha(0.7)
 
-                # Plot individual points
-                ax.scatter(group_data['timepoint'], group_data[col],
-                          alpha=0.15, s=15, color=color, edgecolors='none')
+                    ax.set_xticks(positions)
+                    ax.set_xticklabels(labels, fontsize=10)
+                    ax.set_ylabel(f'% {marker}+', fontsize=10, fontweight='bold')
+            else:
+                # LINE PLOT for multiple timepoints
+                for group in groups:
+                    group_data = plot_data[plot_data[group_col] == group]
 
-                # Plot line
-                ax.plot(tp_values, means, '-o', color=color, linewidth=2.5,
-                       markersize=8, label=group, zorder=10)
+                    if len(group_data) == 0:
+                        continue
 
-                # Confidence band
-                ax.fill_between(tp_values, means - sems, means + sems,
-                               alpha=0.2, color=color)
+                    summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
+                    tp_values = summary.index.values
+                    means = summary['mean'].values
+                    sems = summary['sem'].values
 
-            ax.set_xlabel(self.timepoint_label, fontsize=11, fontweight='bold')
-            ax.set_ylabel(f'% {marker}+ per tumor', fontsize=11, fontweight='bold')
-            ax.set_title(f'{marker}+ Tumor Cells', fontsize=12, fontweight='bold')
-            if idx == 0:
-                ax.legend(frameon=True, loc='best', fontsize=10)
-            ax.grid(True, alpha=0.3)
+                    color = self.group_colors.get(group, '#000000')
 
-        plt.suptitle('Marker Percentages Per Tumor', fontsize=16, fontweight='bold')
+                    ax.scatter(group_data['timepoint'], group_data[col],
+                              alpha=0.15, s=10, color=color, edgecolors='none')
+                    ax.plot(tp_values, means, '-o', color=color, linewidth=2,
+                           markersize=6, label=group, zorder=10)
+                    ax.fill_between(tp_values, means - sems, means + sems,
+                                   alpha=0.2, color=color)
+
+                ax.set_xlabel(self.timepoint_label, fontsize=10)
+                ax.set_ylabel(f'% {marker}+', fontsize=10, fontweight='bold')
+                if idx == 0:
+                    ax.legend(frameon=True, loc='best', fontsize=8)
+
+            ax.set_title(f'{marker}', fontsize=11, fontweight='bold')
+            ax.grid(True, alpha=0.3, axis='y')
+
+        # Hide unused subplots
+        for idx in range(n_markers, len(axes)):
+            axes[idx].axis('off')
+
+        plot_type = "Box Plots" if single_timepoint else "Temporal Trends"
+        plt.suptitle(f'All Marker Percentages Per Tumor ({plot_type})\nn={n_markers} markers',
+                    fontsize=16, fontweight='bold')
         plt.tight_layout()
 
-        plot_path = self.plots_dir / 'all_marker_percentages_per_tumor.png'
+        plot_path = self.plots_dir / 'all_marker_percentages_comprehensive.png'
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
+
+        print(f"    ✓ Plotted {n_markers} marker percentages ({plot_type})")
 
     def plot_growth_normalized_pERK(self, data: pd.DataFrame,
                                    group_col: str = 'main_group'):

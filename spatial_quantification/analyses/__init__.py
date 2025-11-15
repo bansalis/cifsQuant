@@ -9,6 +9,16 @@ from .neighborhoods_optimized import NeighborhoodAnalysisOptimized
 from .advanced import AdvancedAnalysis
 from .tumor_microenvironment_analysis import TumorMicroenvironmentAnalysis
 
+# Coexpression and overlap analyses
+try:
+    from .coexpression_analysis_comprehensive import CoexpressionAnalysisComprehensive
+    from .spatial_overlap_analysis import SpatialOverlapAnalysis
+    HAS_COMPREHENSIVE_ANALYSES = True
+except ImportError:
+    HAS_COMPREHENSIVE_ANALYSES = False
+    CoexpressionAnalysisComprehensive = None
+    SpatialOverlapAnalysis = None
+
 # SpatialCells-based analyses (improved region detection)
 try:
     from .per_tumor_analysis_spatialcells import PerTumorAnalysisSpatialCells
@@ -32,5 +42,7 @@ __all__ = [
     'TumorMicroenvironmentAnalysis',
     'PerTumorAnalysisSpatialCells',
     'InfiltrationAnalysisSpatialCells',
-    'MarkerRegionAnalysisSpatialCells'
+    'MarkerRegionAnalysisSpatialCells',
+    'CoexpressionAnalysisComprehensive',
+    'SpatialOverlapAnalysis'
 ]
