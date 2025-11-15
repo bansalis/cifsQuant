@@ -191,6 +191,14 @@ def main():
 
         # Generate comprehensive spatial plots (samples + individual tumors)
         if use_spatialcells and region_detector is not None:
+            # Debug: Check region detector state
+            print(f"\n  DEBUG: region_detector type: {type(region_detector)}")
+            print(f"  DEBUG: region_detector has tumor_boundaries: {hasattr(region_detector, 'tumor_boundaries')}")
+            if hasattr(region_detector, 'tumor_boundaries'):
+                print(f"  DEBUG: tumor_boundaries keys: {list(region_detector.tumor_boundaries.keys())}")
+                for sample, boundaries in region_detector.tumor_boundaries.items():
+                    print(f"  DEBUG: Sample {sample} has {len(boundaries)} tumor boundaries")
+
             if config.get('per_tumor_analysis', {}).get('generate_spatial_plots', True):
                 try:
                     from spatial_quantification.visualization.spatial_plotter import SpatialPlotter
