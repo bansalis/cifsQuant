@@ -189,6 +189,46 @@ def main():
                 print(f"  ⚠ Could not generate per-tumor plots: {e}")
                 print(f"     Traceback: {traceback.format_exc()}")
 
+        # Generate comprehensive spatial plots (samples + individual tumors)
+        if use_spatialcells and region_detector is not None:
+            if config.get('per_tumor_analysis', {}).get('generate_spatial_plots', True):
+                try:
+                    from spatial_quantification.visualization.spatial_plotter import SpatialPlotter
+                    spatial_plotter = SpatialPlotter(per_tumor.output_dir, config)
+                    spatial_plotter.generate_spatialcells_plots(adata, region_detector)
+                except Exception as e:
+                    import traceback
+                    print(f"  ⚠ Could not generate spatial plots: {e}")
+                    print(f"     Traceback: {traceback.format_exc()}")
+
+    # Comprehensive Coexpression Analysis
+    if config.get('coexpression_analysis', {}).get('enabled', True):
+        try:
+            from spatial_quantification.analyses.coexpression_analysis_comprehensive import CoexpressionAnalysisComprehensive
+            print("\n  Running comprehensive coexpression analysis...")
+            coexpression = CoexpressionAnalysisComprehensive(adata, config, output_dir)
+            all_results['coexpression_analysis'] = coexpression.run()
+        except ImportError as e:
+            print(f"  ⚠ Coexpression analysis module not available: {e}")
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Error in coexpression analysis: {e}")
+            print(f"     Traceback: {traceback.format_exc()}")
+
+    # Spatial Overlap Analysis (marker regions)
+    if region_detector is not None and config.get('spatial_overlap_analysis', {}).get('enabled', True):
+        try:
+            from spatial_quantification.analyses.spatial_overlap_analysis import SpatialOverlapAnalysis
+            print("\n  Running spatial overlap analysis...")
+            overlap_analysis = SpatialOverlapAnalysis(adata, config, output_dir, region_detector)
+            all_results['spatial_overlap_analysis'] = overlap_analysis.run()
+        except ImportError as e:
+            print(f"  ⚠ Spatial overlap analysis module not available: {e}")
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Error in spatial overlap analysis: {e}")
+            print(f"     Traceback: {traceback.format_exc()}")
+
     # Population Dynamics
     if config.get('population_dynamics', {}).get('enabled', False):
         pop_dynamics = PopulationDynamics(adata, config, output_dir)
