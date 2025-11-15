@@ -158,12 +158,24 @@ def main():
 
     all_results = {}
     tumor_structures = None  # Will be populated by per_tumor_analysis
+    region_detector = None  # For SpatialCells analyses
 
     # NEW: Per-Tumor Analysis (run first to detect tumor structures)
     if HAS_NEW_ANALYSES and config.get('per_tumor_analysis', {}).get('enabled', False):
-        per_tumor = PerTumorAnalysis(adata, config, output_dir)
-        all_results['per_tumor_analysis'] = per_tumor.run()
-        tumor_structures = per_tumor.get_tumor_structures()
+        use_spatialcells = config.get('per_tumor_analysis', {}).get('use_spatialcells', False)
+
+        if use_spatialcells:
+            print("  ✓ Using SpatialCells-based per-tumor analysis (alpha shapes + boundaries)")
+            from spatial_quantification.analyses import PerTumorAnalysisSpatialCells
+            per_tumor = PerTumorAnalysisSpatialCells(adata, config, output_dir)
+            all_results['per_tumor_analysis'] = per_tumor.run()
+            tumor_structures = per_tumor.get_tumor_structures()
+            region_detector = per_tumor.get_region_detector()  # Reuse for other analyses
+        else:
+            print("  Using DBSCAN-based per-tumor analysis (legacy)")
+            per_tumor = PerTumorAnalysis(adata, config, output_dir)
+            all_results['per_tumor_analysis'] = per_tumor.run()
+            tumor_structures = per_tumor.get_tumor_structures()
 
         # Generate plots if configured
         if config.get('per_tumor_analysis', {}).get('generate_plots', True):
@@ -186,10 +198,16 @@ def main():
 
     # Infiltration Analysis
     if config.get('immune_infiltration', {}).get('enabled', False):
-        # Use optimized version if specified (RECOMMENDED)
+        use_spatialcells = config.get('immune_infiltration', {}).get('use_spatialcells', False)
         use_optimized = config.get('immune_infiltration', {}).get('use_optimized', True)
 
-        if use_optimized:
+        if use_spatialcells:
+            print("  ✓ Using SpatialCells-based infiltration analysis (boundary distances + immune regions)")
+            from spatial_quantification.analyses import InfiltrationAnalysisSpatialCells
+            infiltration_analysis = InfiltrationAnalysisSpatialCells(
+                adata, config, output_dir, region_detector=region_detector
+            )
+        elif use_optimized:
             print("  Using OPTIMIZED infiltration analysis (Getis-Ord Gi* + Ripley's K)")
             infiltration_analysis = InfiltrationAnalysisOptimized(adata, config, output_dir)
         else:
@@ -281,6 +299,30 @@ def main():
                 pseudotime_plotter.generate_all_plots(all_results['pseudotime_analysis'])
             except Exception as e:
                 print(f"  ⚠ Could not generate pseudotime plots: {e}")
+
+    # NEW: Marker Region Analysis (SpatialCells)
+    if config.get('marker_region_analysis', {}).get('enabled', False):
+        print("\n  ✓ Running marker region analysis (pERK+/-, Ki67+/-, etc.)")
+        try:
+            from spatial_quantification.analyses import MarkerRegionAnalysisSpatialCells
+            marker_region = MarkerRegionAnalysisSpatialCells(adata, config, output_dir)
+            all_results['marker_region_analysis'] = marker_region.run()
+
+            # Generate plots if configured
+            if config.get('marker_region_analysis', {}).get('generate_plots', True):
+                print("\n  Generating marker region visualizations...")
+                try:
+                    from spatial_quantification.visualization.marker_region_plotter import MarkerRegionPlotter
+                    mr_plotter = MarkerRegionPlotter(output_dir / 'marker_region_analysis', config)
+                    mr_plotter.generate_all_plots(all_results['marker_region_analysis'], marker_region)
+                except Exception as e:
+                    print(f"  ⚠ Could not generate marker region plots: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"  ⚠ Could not run marker region analysis: {e}")
+            import traceback
+            traceback.print_exc()
 
     # NEW: UMAP Visualization
     if config.get('umap_visualization', {}).get('enabled', False):
