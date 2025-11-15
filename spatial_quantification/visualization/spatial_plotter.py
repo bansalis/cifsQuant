@@ -1094,23 +1094,45 @@ class SpatialPlotter:
 
         print("\n  Generating SpatialCells-based spatial plots...")
 
+        # Debug: Check if region_detector has boundaries
+        if not hasattr(region_detector, 'tumor_boundaries'):
+            print("    ⚠ region_detector has no tumor_boundaries attribute")
+            return
+
+        if not region_detector.tumor_boundaries:
+            print("    ⚠ region_detector.tumor_boundaries is empty")
+            return
+
+        print(f"    Found {len(region_detector.tumor_boundaries)} samples with tumor boundaries")
+
         n_samples = 0
         n_tumors = 0
+        errors = []
 
         for sample in region_detector.tumor_boundaries.keys():
             try:
                 self.plot_sample_with_spatialcells_boundaries(adata, region_detector, sample)
                 n_samples += 1
             except Exception as e:
-                warnings.warn(f"Error plotting sample {sample}: {e}")
+                import traceback
+                error_msg = f"Error plotting sample {sample}: {e}\n{traceback.format_exc()}"
+                errors.append(error_msg)
+                print(f"    ⚠ {error_msg}")
 
             boundaries = region_detector.tumor_boundaries[sample]
+            print(f"    Processing {len(boundaries)} tumors for sample {sample}")
+
             for tumor_id in boundaries.keys():
                 try:
                     self.plot_individual_tumor_with_boundary(adata, region_detector, sample, tumor_id)
                     n_tumors += 1
                 except Exception as e:
-                    warnings.warn(f"Error plotting tumor {tumor_id} in {sample}: {e}")
+                    import traceback
+                    error_msg = f"Error plotting tumor {tumor_id} in {sample}: {e}\n{traceback.format_exc()}"
+                    errors.append(error_msg)
+                    print(f"    ⚠ {error_msg}")
 
         print(f"    ✓ Generated {n_samples} sample plots and {n_tumors} individual tumor plots with boundaries")
+        if errors:
+            print(f"    ⚠ Encountered {len(errors)} errors during plotting")
         print(f"    Saved to: {self.plots_dir}/")
