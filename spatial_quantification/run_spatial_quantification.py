@@ -224,11 +224,12 @@ def main():
             print(f"     Traceback: {traceback.format_exc()}")
 
     # Spatial Overlap Analysis (marker regions)
-    if region_detector is not None and config.get('spatial_overlap_analysis', {}).get('enabled', True):
+    if config.get('spatial_overlap_analysis', {}).get('enabled', True):
         try:
             from spatial_quantification.analyses.spatial_overlap_analysis import SpatialOverlapAnalysis
             print("\n  Running spatial overlap analysis...")
-            overlap_analysis = SpatialOverlapAnalysis(adata, config, output_dir, region_detector)
+            # Note: SpatialOverlapAnalysis creates its own region detector internally
+            overlap_analysis = SpatialOverlapAnalysis(adata, config, output_dir)
             all_results['spatial_overlap_analysis'] = overlap_analysis.run()
         except ImportError as e:
             print(f"  ⚠ Spatial overlap analysis module not available: {e}")

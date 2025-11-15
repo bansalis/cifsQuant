@@ -992,6 +992,12 @@ class SpatialPlotter:
         if boundary is None:
             return
 
+        # Validate boundary is a proper 2D array
+        boundary_array = np.array(boundary)
+        if boundary_array.ndim != 2 or boundary_array.shape[0] < 3 or boundary_array.shape[1] != 2:
+            warnings.warn(f"Invalid boundary shape for tumor {tumor_id} in {sample}: {boundary_array.shape}")
+            return
+
         tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
         tumor_col = f'is_{tumor_col}'
         immune_pops = self.config.get('immune_populations', ['CD8_T_cells', 'CD3_positive', 'CD45_positive'])
@@ -1052,9 +1058,8 @@ class SpatialPlotter:
                           label=immune_pop.replace('_', ' '),
                           edgecolors='black', linewidths=0.3)
 
-        # Boundary
-        boundary_coords = np.array(boundary)
-        ax.plot(boundary_coords[:, 0], boundary_coords[:, 1],
+        # Boundary (already validated as 2D array above)
+        ax.plot(boundary_array[:, 0], boundary_array[:, 1],
                'k-', linewidth=4, alpha=1.0, label='Tumor boundary')
 
         # Scale bar
