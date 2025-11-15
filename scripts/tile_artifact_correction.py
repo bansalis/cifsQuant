@@ -939,39 +939,76 @@ def create_diagnostic_plots(marker: str,
     axes[1, 0].set_aspect('equal')
     plt.colorbar(sc1, ax=axes[1, 0], label='log10(intensity + 1)')
 
-    # 5. Tile classification (spatial view)
+    # 5. Tile classification (spatial view) - SHOW ALL THREE TYPES
     axes[1, 1].scatter(x_plot[normal_plot], y_plot[normal_plot],
                       c='blue', s=0.3, alpha=0.3, label='Normal', rasterized=True)
     axes[1, 1].scatter(x_plot[dimmer_plot], y_plot[dimmer_plot],
                       c='red', s=0.5, alpha=0.5, label='Dimmer', rasterized=True)
-    axes[1, 1].set_title(f'Tile Classification\n({np.sum(dimmer_plot):,} dimmer, {np.sum(normal_plot):,} normal)')
+    axes[1, 1].scatter(x_plot[brighter_plot], y_plot[brighter_plot],
+                      c='yellow', s=0.5, alpha=0.5, label='Brighter', rasterized=True)
+    axes[1, 1].set_title(f'Tile Classification\n({np.sum(dimmer_plot):,} dimmer, {np.sum(brighter_plot):,} brighter, {np.sum(normal_plot):,} normal)')
     axes[1, 1].set_xlabel('X Coordinate')
     axes[1, 1].set_ylabel('Y Coordinate')
     axes[1, 1].set_aspect('equal')
     axes[1, 1].legend(markerscale=5)
 
-    # 6. Before/after histograms
+    # 6. Before/after histograms - SHOW ALL THREE TYPES
     axes[1, 2].hist(np.log10(orig_plot[normal_plot] + 1), bins=50,
-                   alpha=0.5, label='Normal (Before)', color='blue', density=True)
+                   alpha=0.4, label='Normal (Before)', color='blue', density=True)
     axes[1, 2].hist(np.log10(orig_plot[dimmer_plot] + 1), bins=50,
-                   alpha=0.5, label='Dimmer (Before)', color='red', density=True)
+                   alpha=0.4, label='Dimmer (Before)', color='red', density=True)
+    axes[1, 2].hist(np.log10(orig_plot[brighter_plot] + 1), bins=50,
+                   alpha=0.4, label='Brighter (Before)', color='yellow', density=True)
     axes[1, 2].hist(np.log10(corr_plot[dimmer_plot] + 1), bins=50,
-                   alpha=0.5, label='Dimmer (After UniFORM)', color='green', density=True)
+                   alpha=0.4, label='Dimmer (After)', color='darkgreen', density=True, linestyle='--')
+    axes[1, 2].hist(np.log10(corr_plot[brighter_plot] + 1), bins=50,
+                   alpha=0.4, label='Brighter (After)', color='orange', density=True, linestyle='--')
     axes[1, 2].set_xlabel('log10(Intensity + 1)')
     axes[1, 2].set_ylabel('Density')
     axes[1, 2].set_title('UniFORM Normalization Effect')
-    axes[1, 2].legend()
+    axes[1, 2].legend(fontsize=8)
     axes[1, 2].grid(True, alpha=0.3)
 
     plt.tight_layout()
 
-    # Save figure
+    # Save main figure
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f'{marker}_tile_correction.png'
     plt.savefig(output_file, dpi=150, bbox_inches='tight')
     plt.close()
 
     print(f"    Saved diagnostic plot: {output_file}")
+
+    # Create AFTER NORMALIZATION spatial intensity figure (side-by-side comparison)
+    fig2, axes2 = plt.subplots(1, 2, figsize=(16, 7))
+    fig2.suptitle(f'{marker} - Before/After Normalization Spatial Comparison', fontsize=16, fontweight='bold')
+
+    # Left: Original intensities (before)
+    sc_before = axes2[0].scatter(x_plot, y_plot, c=np.log10(orig_plot + 1),
+                                 s=0.5, cmap='viridis', vmin=0, vmax=3, rasterized=True)
+    axes2[0].set_title('Before Normalization')
+    axes2[0].set_xlabel('X Coordinate')
+    axes2[0].set_ylabel('Y Coordinate')
+    axes2[0].set_aspect('equal')
+    plt.colorbar(sc_before, ax=axes2[0], label='log10(intensity + 1)')
+
+    # Right: Corrected intensities (after)
+    sc_after = axes2[1].scatter(x_plot, y_plot, c=np.log10(corr_plot + 1),
+                                s=0.5, cmap='viridis', vmin=0, vmax=3, rasterized=True)
+    axes2[1].set_title('After Normalization')
+    axes2[1].set_xlabel('X Coordinate')
+    axes2[1].set_ylabel('Y Coordinate')
+    axes2[1].set_aspect('equal')
+    plt.colorbar(sc_after, ax=axes2[1], label='log10(intensity + 1)')
+
+    plt.tight_layout()
+
+    # Save after normalization figure
+    output_file_after = output_dir / f'{marker}_tile_correction_after.png'
+    plt.savefig(output_file_after, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    print(f"    Saved after-normalization plot: {output_file_after}")
 
 
 def save_correction_report(report: Dict, output_dir: Path):

@@ -361,3 +361,147 @@ class DistanceAnalysisPlotter:
             plot_path = self.plots_dir / f'distance_heatmap_{group}.png'
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close(fig)
+
+    def plot_distance_histograms_binned(self, data: pd.DataFrame,
+                                        source: str, target: str,
+                                        group_col: str = 'main_group',
+                                        groups: List[str] = None,
+                                        distance_bins: List[int] = None):
+        """
+        Create binned distance histograms showing peak shifts between groups/timepoints.
+
+        Shows histograms with distance bands on x-axis (e.g., 0-50, 50-100, 100-200, etc.)
+        to visualize shifts in distance distributions.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Distance data with 'mean_distance' column
+        source : str
+            Source cell population
+        target : str
+            Target cell population
+        group_col : str
+            Column defining groups
+        groups : List[str], optional
+            Groups to plot
+        distance_bins : List[int], optional
+            Distance bin edges (e.g., [0, 50, 100, 200, 500])
+        """
+        if groups is None:
+            groups = sorted(data[group_col].unique())
+
+        if distance_bins is None:
+            distance_bins = [0, 50, 100, 200, 300, 500]
+
+        plot_data = data[data[group_col].isin(groups)].copy()
+
+        if len(plot_data) == 0:
+            return
+
+        # Create bin labels
+        bin_labels = [f'{distance_bins[i]}-{distance_bins[i+1]}' for i in range(len(distance_bins)-1)]
+        bin_labels.append(f'>{distance_bins[-1]}')
+
+        # Bin the distances
+        plot_data['distance_bin'] = pd.cut(plot_data['mean_distance'],
+                                           bins=distance_bins + [np.inf],
+                                           labels=bin_labels,
+                                           include_lowest=True)
+
+        # Check if we have timepoints
+        has_timepoints = 'timepoint' in plot_data.columns and plot_data['timepoint'].nunique() > 1
+
+        if has_timepoints:
+            # Plot per timepoint
+            timepoints = sorted(plot_data['timepoint'].unique())
+            n_timepoints = len(timepoints)
+
+            fig, axes = plt.subplots(1, n_timepoints, figsize=(6*n_timepoints, 5))
+            if n_timepoints == 1:
+                axes = [axes]
+
+            fig.suptitle(f'Distance Histograms: {source} → {target} (Binned by Distance)',
+                        fontsize=14, fontweight='bold')
+
+            for tp_idx, tp in enumerate(timepoints):
+                ax = axes[tp_idx]
+                tp_data = plot_data[plot_data['timepoint'] == tp]
+
+                # Count cells in each bin for each group
+                for group in groups:
+                    group_data = tp_data[tp_data[group_col] == group]
+
+                    if len(group_data) == 0:
+                        continue
+
+                    bin_counts = group_data['distance_bin'].value_counts()
+                    bin_counts = bin_counts.reindex(bin_labels, fill_value=0)
+
+                    # Normalize to percentages
+                    bin_percentages = (bin_counts / bin_counts.sum()) * 100
+
+                    color = self.group_colors.get(group, '#000000')
+
+                    x_positions = np.arange(len(bin_labels))
+                    width = 0.35
+                    offset = (groups.index(group) - len(groups)/2 + 0.5) * width
+
+                    ax.bar(x_positions + offset, bin_percentages.values,
+                          width=width, alpha=0.7, label=group, color=color,
+                          edgecolor='white', linewidth=1)
+
+                ax.set_xlabel('Distance Range (μm)', fontsize=11, fontweight='bold')
+                ax.set_ylabel('Percentage of Cells (%)', fontsize=11, fontweight='bold')
+                ax.set_title(f'Timepoint {tp}', fontsize=12, fontweight='bold')
+                ax.set_xticks(np.arange(len(bin_labels)))
+                ax.set_xticklabels(bin_labels, rotation=45, ha='right')
+                ax.legend(frameon=True, loc='best', fontsize=9)
+                ax.grid(True, alpha=0.3, axis='y')
+
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'{source}_to_{target}_distance_histograms_binned.png'
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+
+        else:
+            # Single plot for all groups (no timepoints)
+            fig, ax = plt.subplots(figsize=(10, 6))
+
+            for group in groups:
+                group_data = plot_data[plot_data[group_col] == group]
+
+                if len(group_data) == 0:
+                    continue
+
+                bin_counts = group_data['distance_bin'].value_counts()
+                bin_counts = bin_counts.reindex(bin_labels, fill_value=0)
+
+                # Normalize to percentages
+                bin_percentages = (bin_counts / bin_counts.sum()) * 100
+
+                color = self.group_colors.get(group, '#000000')
+
+                x_positions = np.arange(len(bin_labels))
+                width = 0.35
+                offset = (groups.index(group) - len(groups)/2 + 0.5) * width
+
+                ax.bar(x_positions + offset, bin_percentages.values,
+                      width=width, alpha=0.7, label=group, color=color,
+                      edgecolor='white', linewidth=1)
+
+            ax.set_xlabel('Distance Range (μm)', fontsize=12, fontweight='bold')
+            ax.set_ylabel('Percentage of Cells (%)', fontsize=12, fontweight='bold')
+            ax.set_title(f'Distance Distribution: {source} → {target}',
+                        fontsize=14, fontweight='bold')
+            ax.set_xticks(np.arange(len(bin_labels)))
+            ax.set_xticklabels(bin_labels, rotation=45, ha='right')
+            ax.legend(frameon=True, loc='best', fontsize=10)
+            ax.grid(True, alpha=0.3, axis='y')
+
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'{source}_to_{target}_distance_histogram_binned.png'
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
