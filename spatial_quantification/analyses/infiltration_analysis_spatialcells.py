@@ -131,33 +131,32 @@ class InfiltrationAnalysisSpatialCells:
             sample_mask = self.adata.obs['sample_id'] == sample
             sample_adata = self.adata[sample_mask].copy()
 
+            # Pre-compute: Create a region column for distance calculations
+            # This reuses the already-assigned tumor_region_id instead of reassigning
+            sample_adata.obs['region_for_distance'] = 'background'
+
             for tumor_id, boundary in tumor_boundaries.items():
-                # Assign cells to region
-                spc.spatial.assignPointsToRegions(
-                    sample_adata,
-                    [boundary],
-                    ['tumor'],
-                    assigncolumn='temp_region',
-                    default='background'
-                )
+                # OPTIMIZATION: Use already-assigned tumor_region_id instead of reassigning
+                # This saves significant time by avoiding redundant assignPointsToRegions calls
+                tumor_region_mask = sample_adata.obs['tumor_region_id'] == tumor_id
+                structure_size = tumor_region_mask.sum()
+
+                if structure_size < 10:
+                    continue
+
+                # Mark cells in this tumor for distance calculation
+                sample_adata.obs.loc[tumor_region_mask, 'region_for_distance'] = f'tumor_{tumor_id}'
 
                 # Calculate distance from boundary for all cells
                 spc.msmt.getDistanceFromObject(
                     sample_adata,
                     boundary,
-                    region_col='temp_region',
-                    region_subset=None,
+                    region_col='region_for_distance',
+                    region_subset=[f'tumor_{tumor_id}'],
                     name='distance_to_tumor',
                     inplace=True,
                     binned=False
                 )
-
-                # Count cells in tumor
-                tumor_region_mask = sample_adata.obs['temp_region'] == 'tumor'
-                structure_size = tumor_region_mask.sum()
-
-                if structure_size < 10:
-                    continue
 
                 # Analyze each immune population
                 for immune_pop in immune_pops:
