@@ -937,16 +937,24 @@ class SpatialPlotter:
         if sample in region_detector.tumor_boundaries:
             boundaries = region_detector.tumor_boundaries[sample]
             for tumor_id, boundary in boundaries.items():
-                boundary_coords = np.array(boundary)
-                ax.plot(boundary_coords[:, 0], boundary_coords[:, 1],
+                # Validate boundary is a proper 2D array
+                boundary_array = np.array(boundary)
+                if boundary_array.ndim != 2 or boundary_array.shape[0] < 3 or boundary_array.shape[1] != 2:
+                    warnings.warn(f"Invalid boundary shape for tumor {tumor_id} in {sample}: {boundary_array.shape}, skipping")
+                    continue
+
+                ax.plot(boundary_array[:, 0], boundary_array[:, 1],
                        'k-', linewidth=3, alpha=0.9)
 
                 # Add tumor ID label
-                centroid = spc.msmt.getRegionCentroid(boundary)
-                ax.text(centroid[0], centroid[1], f'T{tumor_id}',
-                       fontsize=12, fontweight='bold', color='white',
-                       ha='center', va='center',
-                       bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+                try:
+                    centroid = spc.msmt.getRegionCentroid(boundary)
+                    ax.text(centroid[0], centroid[1], f'T{tumor_id}',
+                           fontsize=12, fontweight='bold', color='white',
+                           ha='center', va='center',
+                           bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+                except Exception as e:
+                    warnings.warn(f"Could not add label for tumor {tumor_id}: {e}")
 
         ax.set_xlabel('X (μm)', fontsize=14, fontweight='bold')
         ax.set_ylabel('Y (μm)', fontsize=14, fontweight='bold')
@@ -1091,6 +1099,194 @@ class SpatialPlotter:
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
+    def plot_tumor_phenotype_overlay(self, adata, region_detector, sample: str,
+                                     tumor_id: int, context_radius: float = 500,
+                                     figsize: tuple = (16, 16)):
+        """
+        Plot comprehensive phenotype overlay for individual tumor.
+
+        Shows:
+        - Tumor boundary outlined
+        - All tumor phenotypes in different colors (pERK+, NINJA+, Ki67+, etc.)
+        - Immune populations highlighted
+        - Background cells in gray
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data
+        region_detector : SpatialCellsRegionDetector
+            Region detector
+        sample : str
+            Sample ID
+        tumor_id : int
+            Tumor region ID
+        context_radius : float
+            Radius around tumor (μm)
+        figsize : tuple
+            Figure size
+        """
+        if not HAS_SPATIALCELLS:
+            return
+
+        sample_mask = adata.obs['sample_id'] == sample
+        sample_adata = adata[sample_mask]
+
+        boundary = region_detector.get_boundary(sample, tumor_id)
+        if boundary is None:
+            return
+
+        # Validate boundary
+        boundary_array = np.array(boundary)
+        if boundary_array.ndim != 2 or boundary_array.shape[0] < 3 or boundary_array.shape[1] != 2:
+            warnings.warn(f"Invalid boundary shape for tumor {tumor_id} in {sample}: {boundary_array.shape}")
+            return
+
+        centroid = spc.msmt.getRegionCentroid(boundary)
+        coords = sample_adata.obsm['spatial']
+        distances = np.sqrt((coords[:, 0] - centroid[0])**2 + (coords[:, 1] - centroid[1])**2)
+        context_mask = distances <= context_radius
+
+        if context_mask.sum() == 0:
+            return
+
+        context_adata = sample_adata[context_mask]
+        context_coords = context_adata.obsm['spatial']
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        in_tumor = context_adata.obs['tumor_region_id'] == tumor_id if 'tumor_region_id' in context_adata.obs.columns else np.zeros(len(context_adata), dtype=bool)
+
+        # Define phenotype colors for tumor markers
+        tumor_phenotype_colors = {
+            'pERK_positive_tumor': '#00FF00',      # Green
+            'NINJA_positive_tumor': '#FFD700',     # Gold
+            'Ki67_positive_tumor': '#FF1493',      # Deep pink
+            'PDL1_positive_tumor': '#9370DB',      # Medium purple
+            'TTF1_positive_tumor': '#FF8C00',      # Dark orange
+            'CC3_positive_tumor': '#DC143C',       # Crimson
+            'EPCAM_positive_tumor': '#00CED1',     # Dark turquoise
+        }
+
+        immune_colors = {
+            'CD8_T_cells': '#0000FF',              # Blue
+            'T_cells': '#4169E1',                  # Royal blue
+            'CD3_positive': '#4169E1',
+            'CD45_positive': '#8A2BE2',            # Blue violet
+            'CD4_T_cells': '#1E90FF',              # Dodger blue
+            'CD8_cytotoxic': '#000080',            # Navy
+            'Macrophages': '#A0522D',              # Sienna
+            'M1_macrophages': '#8B4513',           # Saddle brown
+            'M2_macrophages': '#D2691E',           # Chocolate
+        }
+
+        # Plot background cells (non-tumor, non-immune)
+        tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_col = f'is_{tumor_col}'
+
+        is_tumor_type = context_adata.obs[tumor_col].values if tumor_col in context_adata.obs.columns else np.zeros(len(context_adata), dtype=bool)
+        is_immune = np.zeros(len(context_adata), dtype=bool)
+
+        # Check immune populations
+        immune_pops = self.config.get('immune_populations', [])
+        if not immune_pops:
+            immune_pops = ['CD8_T_cells', 'CD3_positive', 'CD45_positive', 'CD4_T_cells',
+                          'Macrophages', 'M1_macrophages', 'M2_macrophages']
+
+        for immune_pop in immune_pops:
+            immune_col = f'is_{immune_pop}'
+            if immune_col in context_adata.obs.columns:
+                is_immune |= context_adata.obs[immune_col].values
+
+        background_mask = ~(is_tumor_type | is_immune)
+        if background_mask.sum() > 0:
+            ax.scatter(context_coords[background_mask, 0], context_coords[background_mask, 1],
+                      s=1, c='#CCCCCC', alpha=0.2, rasterized=True, label='Other cells')
+
+        # Plot tumor cells by phenotype
+        # Get all tumor phenotype columns
+        tumor_phenotypes = [col.replace('is_', '') for col in context_adata.obs.columns
+                           if col.startswith('is_') and 'tumor' in col.lower() and col != tumor_col]
+
+        plotted_cells = np.zeros(len(context_adata), dtype=bool)
+
+        # Plot specific phenotypes we have colors for
+        for pheno, color in tumor_phenotype_colors.items():
+            pheno_col = f'is_{pheno}'
+            if pheno_col not in context_adata.obs.columns:
+                continue
+
+            pheno_mask = context_adata.obs[pheno_col].values & in_tumor & ~plotted_cells
+            if pheno_mask.sum() > 0:
+                ax.scatter(context_coords[pheno_mask, 0], context_coords[pheno_mask, 1],
+                          s=8, c=color, alpha=0.8, rasterized=True,
+                          label=pheno.replace('_', ' ').replace(' tumor', ''),
+                          edgecolors='black', linewidths=0.3)
+                plotted_cells |= pheno_mask
+
+        # Plot remaining tumor cells (no specific marker)
+        remaining_tumor = in_tumor & is_tumor_type & ~plotted_cells
+        if remaining_tumor.sum() > 0:
+            ax.scatter(context_coords[remaining_tumor, 0], context_coords[remaining_tumor, 1],
+                      s=5, c='#E41A1C', alpha=0.6, rasterized=True,
+                      label='Tumor (unmarked)', edgecolors='darkred', linewidths=0.2)
+
+        # Plot tumor cells from other tumors
+        other_tumor_mask = (~in_tumor) & is_tumor_type
+        if other_tumor_mask.sum() > 0:
+            ax.scatter(context_coords[other_tumor_mask, 0], context_coords[other_tumor_mask, 1],
+                      s=2, c='#FFA500', alpha=0.2, rasterized=True, label='Other tumors')
+
+        # Plot immune populations
+        for immune_pop in immune_pops:
+            immune_col = f'is_{immune_pop}'
+            if immune_col not in context_adata.obs.columns:
+                continue
+
+            immune_mask = context_adata.obs[immune_col].values
+            if immune_mask.sum() > 0:
+                color = immune_colors.get(immune_pop, '#000000')
+                ax.scatter(context_coords[immune_mask, 0], context_coords[immune_mask, 1],
+                          s=12, c=color, alpha=0.9, rasterized=True,
+                          label=immune_pop.replace('_', ' '),
+                          edgecolors='white', linewidths=0.5, marker='D')  # Diamond markers for immune
+
+        # Plot boundary with thick black outline
+        ax.plot(boundary_array[:, 0], boundary_array[:, 1],
+               'k-', linewidth=5, alpha=1.0, label='Tumor boundary', zorder=100)
+
+        # Scale bar
+        scalebar_length = 100
+        x_range = context_coords[:, 0].max() - context_coords[:, 0].min()
+        y_range = context_coords[:, 1].max() - context_coords[:, 1].min()
+        scalebar_x = context_coords[:, 0].min() + x_range * 0.1
+        scalebar_y = context_coords[:, 1].min() + y_range * 0.05
+        ax.plot([scalebar_x, scalebar_x + scalebar_length], [scalebar_y, scalebar_y],
+               'k-', linewidth=6)
+        ax.text(scalebar_x + scalebar_length/2, scalebar_y - y_range*0.03,
+               f'{scalebar_length} μm', ha='center', fontsize=12, fontweight='bold')
+
+        n_tumor_cells = in_tumor.sum()
+        area_um2 = spc.msmt.getRegionArea(boundary)
+
+        ax.set_xlabel('X (μm)', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Y (μm)', fontsize=14, fontweight='bold')
+        ax.set_title(f'Sample: {sample} | Tumor {tumor_id} - Phenotype Overlay\n'
+                    f'Size: {n_tumor_cells} cells | Area: {area_um2:.0f} μm²',
+                    fontsize=15, fontweight='bold')
+
+        # Place legend outside plot area
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=True,
+                 fontsize=9, markerscale=2, ncol=1)
+        ax.set_aspect('equal')
+        plt.tight_layout()
+
+        sample_dir = self.plots_dir / 'phenotype_overlays' / sample
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        plot_path = sample_dir / f'tumor_{tumor_id}_phenotypes.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
     def generate_spatialcells_plots(self, adata, region_detector):
         """Generate all SpatialCells-based spatial plots."""
         if not HAS_SPATIALCELLS:
@@ -1112,6 +1308,7 @@ class SpatialPlotter:
 
         n_samples = 0
         n_tumors = 0
+        n_phenotype_overlays = 0
         errors = []
 
         for sample in region_detector.tumor_boundaries.keys():
@@ -1137,7 +1334,17 @@ class SpatialPlotter:
                     errors.append(error_msg)
                     print(f"    ⚠ {error_msg}")
 
-        print(f"    ✓ Generated {n_samples} sample plots and {n_tumors} individual tumor plots with boundaries")
+                # Generate phenotype overlay plot
+                try:
+                    self.plot_tumor_phenotype_overlay(adata, region_detector, sample, tumor_id)
+                    n_phenotype_overlays += 1
+                except Exception as e:
+                    import traceback
+                    error_msg = f"Error plotting phenotype overlay for tumor {tumor_id} in {sample}: {e}\n{traceback.format_exc()}"
+                    errors.append(error_msg)
+                    print(f"    ⚠ {error_msg}")
+
+        print(f"    ✓ Generated {n_samples} sample plots, {n_tumors} individual tumor plots, and {n_phenotype_overlays} phenotype overlay plots")
         if errors:
             print(f"    ⚠ Encountered {len(errors)} errors during plotting")
         print(f"    Saved to: {self.plots_dir}/")
