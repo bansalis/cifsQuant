@@ -181,10 +181,13 @@ def main():
         if config.get('per_tumor_analysis', {}).get('generate_plots', True):
             try:
                 from spatial_quantification.visualization.per_tumor_plotter import PerTumorPlotter
-                plotter = PerTumorPlotter(output_dir / 'per_tumor_analysis', config)
+                # Use the actual output directory from per_tumor analysis
+                plotter = PerTumorPlotter(per_tumor.output_dir, config)
                 plotter.generate_all_plots(all_results['per_tumor_analysis'])
             except Exception as e:
+                import traceback
                 print(f"  ⚠ Could not generate per-tumor plots: {e}")
+                print(f"     Traceback: {traceback.format_exc()}")
 
     # Population Dynamics
     if config.get('population_dynamics', {}).get('enabled', False):
