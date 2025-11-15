@@ -9,6 +9,16 @@ from .neighborhoods_optimized import NeighborhoodAnalysisOptimized
 from .advanced import AdvancedAnalysis
 from .tumor_microenvironment_analysis import TumorMicroenvironmentAnalysis
 
+# SpatialCells-based analyses (improved region detection)
+try:
+    from .per_tumor_analysis_spatialcells import PerTumorAnalysisSpatialCells
+    from .infiltration_analysis_spatialcells import InfiltrationAnalysisSpatialCells
+    HAS_SPATIALCELLS_ANALYSES = True
+except ImportError:
+    HAS_SPATIALCELLS_ANALYSES = False
+    PerTumorAnalysisSpatialCells = None
+    InfiltrationAnalysisSpatialCells = None
+
 __all__ = [
     'PopulationDynamics',
     'DistanceAnalysis',
@@ -17,5 +27,7 @@ __all__ = [
     'NeighborhoodAnalysis',
     'NeighborhoodAnalysisOptimized',
     'AdvancedAnalysis',
-    'TumorMicroenvironmentAnalysis'
+    'TumorMicroenvironmentAnalysis',
+    'PerTumorAnalysisSpatialCells',
+    'InfiltrationAnalysisSpatialCells'
 ]
