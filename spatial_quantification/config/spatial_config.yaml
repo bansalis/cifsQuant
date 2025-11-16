@@ -794,6 +794,16 @@ statistics:
   save_all_tests: true
 
 # ============================================================================
+# KPNT CORRELATION ANALYSIS
+# ============================================================================
+kpnt_correlation_analysis:
+  enabled: true
+  # Analyzes correlations for KPNT samples only:
+  # 1. Tumor size vs marker positivity
+  # 2. Infiltration vs marker positivity
+  # Creates box plots with statistical and non-statistical versions
+
+# ============================================================================
 # PERFORMANCE
 # ============================================================================
 performance:
