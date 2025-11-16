@@ -178,11 +178,6 @@ phenotypes:
     positive: ['CD3E', 'CD4', 'FOXP3']
     negative: []
 
-  CD8_cytotoxic:
-    description: "Cytotoxic CD8+ (GZMB+)"
-    positive: ['CD3E', 'CD8A', 'GZMB']
-    negative: []
-
   PD1_positive_CD8:
     description: "Exhausted CD8+ T cells"
     positive: ['CD3E', 'CD8A', 'PD1']
@@ -212,11 +207,6 @@ phenotypes:
   B_cells:
     description: "B cells"
     positive: ['B220']
-    negative: []
-  
-  Germinal_center_B_cells:
-    description: "Germinal center B cells"
-    positive: ['B220', 'BCL6']
     negative: []
 
 # ============================================================================
@@ -267,13 +257,12 @@ population_dynamics:
     - TTF1_positive_tumor
     - pERK_NINJA_positive_tumor
     
-    # T cells (5)
+    # T cells (4)
     - CD45_positive
     - T_cells
     - CD8_T_cells
     - CD4_T_cells
     - CD4_Tregs
-    - CD8_cytotoxic
     - PD1_positive_CD8
 
     # Myeloid (3)
@@ -281,10 +270,9 @@ population_dynamics:
     - M1_macrophages
     - M2_macrophages
 
-    # Other (2)
+    # Other (1)
     - B_cells
-    - Germinal_center_B_cells
-  
+
   fractional_populations:
     pERK_positive_tumor: Tumor
     NINJA_positive_tumor: Tumor
@@ -295,11 +283,9 @@ population_dynamics:
     CD8_T_cells: T_cells
     CD4_T_cells: T_cells
     CD4_Tregs: CD4_T_cells
-    CD8_cytotoxic: CD8_T_cells
     PD1_positive_CD8: CD8_T_cells
     M1_macrophages: Macrophages
     M2_macrophages: Macrophages
-    Germinal_center_B_cells: B_cells
 
   comparisons:
     - name: 'Group_comparison'
@@ -326,15 +312,12 @@ distance_analysis:
     - source: 'CD8_T_cells'
       targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
                 'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor']
-    
-    - source: 'CD8_cytotoxic'
-      targets: ['pERK_positive_tumor', 'NINJA_positive_tumor', 'Ki67_positive_tumor']
 
     - source: 'PD1_positive_CD8'
       targets: ['PDL1_positive_tumor']
 
     - source: 'CD4_Tregs'
-      targets: ['CD8_T_cells', 'CD8_cytotoxic', 'Tumor']
+      targets: ['CD8_T_cells', 'Tumor']
 
     - source: 'M1_macrophages'
       targets: ['Tumor', 'pERK_positive_tumor']
@@ -372,10 +355,8 @@ immune_infiltration:
     - CD4_T_cells
     - CD8_T_cells
     - CD4_Tregs
-    - CD8_cytotoxic
     - PD1_positive_CD8
     - B_cells
-    - Germinal_center_B_cells
     - Macrophages
     - M1_macrophages
     - M2_macrophages
@@ -436,7 +417,6 @@ immune_infiltration:
       enabled: true
       immune_populations:
         - CD8_T_cells
-        - CD8_cytotoxic
         - PD1_positive_CD8
         - CD4_Tregs
         - T_cells
@@ -471,10 +451,8 @@ cellular_neighborhoods:
     - CD4_T_cells
     - CD8_T_cells
     - CD4_Tregs
-    - CD8_cytotoxic
     - PD1_positive_CD8
     - B_cells
-    - Germinal_center_B_cells
     - Macrophages
     - M1_macrophages
     - M2_macrophages
@@ -554,13 +532,11 @@ marker_region_analysis:
     - 'is_CD8_T_cells'
     - 'is_CD4_T_cells'
     - 'is_CD4_Tregs'
-    - 'is_CD8_cytotoxic'
     - 'is_PD1_positive_CD8'
     - 'is_Macrophages'
     - 'is_M1_macrophages'
     - 'is_M2_macrophages'
     - 'is_B_cells'
-    - 'is_Germinal_center_B_cells'
 
   # Immune populations for enrichment analysis (use is_ prefix)
   immune_populations:
@@ -569,10 +545,8 @@ marker_region_analysis:
     - 'is_CD4_T_cells'
     - 'is_CD8_T_cells'
     - 'is_CD4_Tregs'
-    - 'is_CD8_cytotoxic'
     - 'is_PD1_positive_CD8'
     - 'is_B_cells'
-    - 'is_Germinal_center_B_cells'
     - 'is_Macrophages'
     - 'is_M1_macrophages'
     - 'is_M2_macrophages'
@@ -637,7 +611,6 @@ enhanced_neighborhoods:
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD8_cytotoxic
     - PD1_positive_CD8
     - CD4_Tregs
     - Macrophages
@@ -650,7 +623,6 @@ enhanced_neighborhoods:
       - T_cells
       - CD4_T_cells
       - CD8_T_cells
-      - CD8_cytotoxic
       - PD1_positive_CD8
       - CD4_Tregs
       - Macrophages
@@ -691,7 +663,6 @@ tumor_microenvironment:
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD8_cytotoxic
     - PD1_positive_CD8
     - CD4_Tregs
     - Macrophages
@@ -738,7 +709,6 @@ umap_visualization:
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD8_cytotoxic
     - PD1_positive_CD8
     - CD4_Tregs
     - B_cells
