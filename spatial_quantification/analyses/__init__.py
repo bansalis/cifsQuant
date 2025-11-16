@@ -24,12 +24,14 @@ try:
     from .per_tumor_analysis_spatialcells import PerTumorAnalysisSpatialCells
     from .infiltration_analysis_spatialcells import InfiltrationAnalysisSpatialCells
     from .marker_region_analysis_spatialcells import MarkerRegionAnalysisSpatialCells
+    from .kpnt_correlation_analysis import KPNTCorrelationAnalysis
     HAS_SPATIALCELLS_ANALYSES = True
 except ImportError:
     HAS_SPATIALCELLS_ANALYSES = False
     PerTumorAnalysisSpatialCells = None
     InfiltrationAnalysisSpatialCells = None
     MarkerRegionAnalysisSpatialCells = None
+    KPNTCorrelationAnalysis = None
 
 __all__ = [
     'PopulationDynamics',
@@ -43,6 +45,7 @@ __all__ = [
     'PerTumorAnalysisSpatialCells',
     'InfiltrationAnalysisSpatialCells',
     'MarkerRegionAnalysisSpatialCells',
+    'KPNTCorrelationAnalysis',
     'CoexpressionAnalysisComprehensive',
     'SpatialOverlapAnalysis'
 ]
