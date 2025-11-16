@@ -209,6 +209,23 @@ def main():
                     print(f"  ⚠ Could not generate spatial plots: {e}")
                     print(f"     Traceback: {traceback.format_exc()}")
 
+    # KPNT Correlation Analysis (tumor size and infiltration vs marker positivity)
+    if config.get('kpnt_correlation_analysis', {}).get('enabled', True):
+        try:
+            from spatial_quantification.analyses.kpnt_correlation_analysis import KPNTCorrelationAnalysis
+            print("\n  Running KPNT correlation analysis...")
+            kpnt_corr = KPNTCorrelationAnalysis(
+                adata, config, output_dir,
+                per_tumor_results=all_results.get('per_tumor_analysis')
+            )
+            all_results['kpnt_correlation_analysis'] = kpnt_corr.run()
+        except ImportError as e:
+            print(f"  ⚠ KPNT correlation analysis module not available: {e}")
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Error in KPNT correlation analysis: {e}")
+            print(f"     Traceback: {traceback.format_exc()}")
+
     # Comprehensive Coexpression Analysis
     if config.get('coexpression_analysis', {}).get('enabled', True):
         try:
