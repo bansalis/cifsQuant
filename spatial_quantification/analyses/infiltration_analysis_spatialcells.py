@@ -143,6 +143,9 @@ class InfiltrationAnalysisSpatialCells:
             sample_mask = self.adata.obs['sample_id'] == sample
             sample_adata = self.adata[sample_mask].copy()
 
+            # Initialize region column for ALL cells in sample (required by getDistanceFromObject)
+            sample_adata.obs['temp_region_all'] = 'all_cells'
+
             for tumor_id, boundary in tumor_boundaries.items():
                 # Get tumor region mask
                 tumor_region_mask = sample_adata.obs['tumor_region_id'] == tumor_id
@@ -153,11 +156,13 @@ class InfiltrationAnalysisSpatialCells:
 
                 # Calculate SIGNED distance from boundary for ALL cells
                 # Negative distance = inside tumor, Positive distance = outside tumor
-                # NOTE: Removed region_subset to calculate for ALL cells, not just tumor cells
+                # Use region_col to specify which cells to calculate (all_cells = everyone)
                 try:
                     spc.msmt.getDistanceFromObject(
                         sample_adata,
                         boundary,
+                        region_col='temp_region_all',
+                        region_subset=['all_cells'],
                         name='distance_to_boundary',
                         inplace=True,
                         binned=False

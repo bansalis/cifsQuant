@@ -172,42 +172,22 @@ phenotypes:
     description: "CD4+ helper T cells"
     positive: ['CD3E', 'CD4']
     negative: []
-  
+
   CD4_Tregs:
     description: "CD4+ regulatory T cells"
     positive: ['CD3E', 'CD4', 'FOXP3']
     negative: []
-  
-  CD8_TRM:
-    description: "CD8+ tissue resident memory"
-    positive: ['CD3E', 'CD8A', 'CD103']
-    negative: []
-  
+
   CD8_cytotoxic:
     description: "Cytotoxic CD8+ (GZMB+)"
     positive: ['CD3E', 'CD8A', 'GZMB']
     negative: []
-  
-  CD8_TRM_cytotoxic:
-    description: "Cytotoxic tissue resident CD8+"
-    positive: ['CD3E', 'CD8A', 'CD103', 'GZMB']
-    negative: []
-  
+
   PD1_positive_CD8:
     description: "Exhausted CD8+ T cells"
     positive: ['CD3E', 'CD8A', 'PD1']
     negative: []
-  
-  KLRG1_positive_CD8:
-    description: "Terminal effector CD8+"
-    positive: ['CD3E', 'CD8A', 'KLRG1']
-    negative: []
-  
-  CD8_proliferating:
-    description: "Proliferating CD8+"
-    positive: ['CD3E', 'CD8A', 'KI67']
-    negative: []
-  
+
   # ============================================================================
   # MACROPHAGES
   # ============================================================================
@@ -238,14 +218,6 @@ phenotypes:
     description: "Germinal center B cells"
     positive: ['B220', 'BCL6']
     negative: []
-  
-  # ============================================================================
-  # STROMAL
-  # ============================================================================
-  CAFs:
-    description: "Cancer-associated fibroblasts"
-    positive: ['ASMA']
-    negative: ['CD45']
 
 # ============================================================================
 # ANALYSIS 0: PER-TUMOR ANALYSIS
@@ -295,28 +267,23 @@ population_dynamics:
     - TTF1_positive_tumor
     - pERK_NINJA_positive_tumor
     
-    # T cells (9)
+    # T cells (5)
     - CD45_positive
     - T_cells
     - CD8_T_cells
     - CD4_T_cells
     - CD4_Tregs
-    - CD8_TRM
     - CD8_cytotoxic
-    - CD8_TRM_cytotoxic
     - PD1_positive_CD8
-    - KLRG1_positive_CD8
-    - CD8_proliferating
-    
+
     # Myeloid (3)
     - Macrophages
     - M1_macrophages
     - M2_macrophages
-    
-    # Other (3)
+
+    # Other (2)
     - B_cells
     - Germinal_center_B_cells
-    - CAFs
   
   fractional_populations:
     pERK_positive_tumor: Tumor
@@ -328,11 +295,8 @@ population_dynamics:
     CD8_T_cells: T_cells
     CD4_T_cells: T_cells
     CD4_Tregs: CD4_T_cells
-    CD8_TRM: CD8_T_cells
     CD8_cytotoxic: CD8_T_cells
-    CD8_TRM_cytotoxic: CD8_T_cells
     PD1_positive_CD8: CD8_T_cells
-    KLRG1_positive_CD8: CD8_T_cells
     M1_macrophages: Macrophages
     M2_macrophages: Macrophages
     Germinal_center_B_cells: B_cells
@@ -365,24 +329,18 @@ distance_analysis:
     
     - source: 'CD8_cytotoxic'
       targets: ['pERK_positive_tumor', 'NINJA_positive_tumor', 'Ki67_positive_tumor']
-    
-    - source: 'CD8_TRM_cytotoxic'
-      targets: ['pERK_positive_tumor', 'NINJA_positive_tumor']
-    
+
     - source: 'PD1_positive_CD8'
       targets: ['PDL1_positive_tumor']
-    
+
     - source: 'CD4_Tregs'
       targets: ['CD8_T_cells', 'CD8_cytotoxic', 'Tumor']
-    
+
     - source: 'M1_macrophages'
       targets: ['Tumor', 'pERK_positive_tumor']
-    
+
     - source: 'M2_macrophages'
       targets: ['Tumor', 'pERK_positive_tumor']
-    
-    - source: 'CAFs'
-      targets: ['CD8_T_cells', 'Tumor']
 
   metrics:
     - 'mean_nearest_neighbor'
@@ -479,10 +437,7 @@ immune_infiltration:
       immune_populations:
         - CD8_T_cells
         - CD8_cytotoxic
-        - CD8_TRM
-        - CD8_TRM_cytotoxic
         - PD1_positive_CD8
-        - KLRG1_positive_CD8
         - CD4_Tregs
         - T_cells
         - CD45_positive
@@ -516,18 +471,13 @@ cellular_neighborhoods:
     - CD4_T_cells
     - CD8_T_cells
     - CD4_Tregs
-    - CD8_TRM
     - CD8_cytotoxic
-    - CD8_TRM_cytotoxic
     - PD1_positive_CD8
-    - KLRG1_positive_CD8
-    - CD8_proliferating
     - B_cells
     - Germinal_center_B_cells
     - Macrophages
     - M1_macrophages
     - M2_macrophages
-    - CAFs
 
   window_size: 100
   k_neighbors: 30
@@ -604,18 +554,13 @@ marker_region_analysis:
     - 'is_CD8_T_cells'
     - 'is_CD4_T_cells'
     - 'is_CD4_Tregs'
-    - 'is_CD8_TRM'
     - 'is_CD8_cytotoxic'
-    - 'is_CD8_TRM_cytotoxic'
     - 'is_PD1_positive_CD8'
-    - 'is_KLRG1_positive_CD8'
-    - 'is_CD8_proliferating'
     - 'is_Macrophages'
     - 'is_M1_macrophages'
     - 'is_M2_macrophages'
     - 'is_B_cells'
     - 'is_Germinal_center_B_cells'
-    - 'is_CAFs'
 
   # Immune populations for enrichment analysis (use is_ prefix)
   immune_populations:
@@ -624,18 +569,13 @@ marker_region_analysis:
     - 'is_CD4_T_cells'
     - 'is_CD8_T_cells'
     - 'is_CD4_Tregs'
-    - 'is_CD8_TRM'
     - 'is_CD8_cytotoxic'
-    - 'is_CD8_TRM_cytotoxic'
     - 'is_PD1_positive_CD8'
-    - 'is_KLRG1_positive_CD8'
-    - 'is_CD8_proliferating'
     - 'is_B_cells'
     - 'is_Germinal_center_B_cells'
     - 'is_Macrophages'
     - 'is_M1_macrophages'
     - 'is_M2_macrophages'
-    - 'is_CAFs'
 
   # Optional hole analysis
   analyze_holes: true
@@ -697,34 +637,26 @@ enhanced_neighborhoods:
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD8_TRM
     - CD8_cytotoxic
-    - CD8_TRM_cytotoxic
     - PD1_positive_CD8
-    - KLRG1_positive_CD8
     - CD4_Tregs
     - Macrophages
     - M1_macrophages
     - M2_macrophages
     - B_cells
-    - CAFs
 
   immune_cells:
       - CD45_positive
       - T_cells
       - CD4_T_cells
       - CD8_T_cells
-      - CD8_TRM
       - CD8_cytotoxic
-      - CD8_TRM_cytotoxic
       - PD1_positive_CD8
-      - KLRG1_positive_CD8
       - CD4_Tregs
       - Macrophages
       - M1_macrophages
       - M2_macrophages
       - B_cells
-      - CAFs
 
 # ============================================================================
 # ANALYSIS 7: TUMOR MICROENVIRONMENT
@@ -759,17 +691,13 @@ tumor_microenvironment:
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD8_TRM
     - CD8_cytotoxic
-    - CD8_TRM_cytotoxic
     - PD1_positive_CD8
-    - KLRG1_positive_CD8
     - CD4_Tregs
     - Macrophages
     - M1_macrophages
     - M2_macrophages
     - B_cells
-    - CAFs
 
 # ============================================================================
 # ANALYSIS 8: UMAP VISUALIZATION
@@ -810,17 +738,13 @@ umap_visualization:
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD8_TRM
     - CD8_cytotoxic
-    - CD8_TRM_cytotoxic
     - PD1_positive_CD8
-    - KLRG1_positive_CD8
     - CD4_Tregs
     - B_cells
     - Macrophages
     - M1_macrophages
     - M2_macrophages
-    - CAFs
 
   n_neighbors: 30
   min_dist: 0.3
