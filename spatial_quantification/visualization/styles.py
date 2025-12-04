@@ -9,7 +9,7 @@ import seaborn as sns
 
 
 def setup_publication_style():
-    """Set up publication-quality plot style."""
+    """Set up publication-quality plot style - Prism-like clean appearance."""
     # Use seaborn with custom settings
     sns.set_style('ticks')
 
@@ -18,25 +18,31 @@ def setup_publication_style():
     mpl.rcParams['ps.fonttype'] = 42
 
     mpl.rcParams['font.family'] = 'Arial'
-    mpl.rcParams['font.size'] = 12
-    mpl.rcParams['axes.labelsize'] = 14
-    mpl.rcParams['axes.titlesize'] = 14
-    mpl.rcParams['xtick.labelsize'] = 12
-    mpl.rcParams['ytick.labelsize'] = 12
-    mpl.rcParams['legend.fontsize'] = 11
-    mpl.rcParams['figure.titlesize'] = 16
+    mpl.rcParams['font.size'] = 14  # Larger base font
+    mpl.rcParams['axes.labelsize'] = 16  # Bigger axis labels
+    mpl.rcParams['axes.titlesize'] = 16  # Bigger titles
+    mpl.rcParams['xtick.labelsize'] = 14  # Bigger tick labels
+    mpl.rcParams['ytick.labelsize'] = 14
+    mpl.rcParams['legend.fontsize'] = 13  # Bigger legend
+    mpl.rcParams['figure.titlesize'] = 18
 
-    # Line widths
-    mpl.rcParams['axes.linewidth'] = 1.5
-    mpl.rcParams['grid.linewidth'] = 1.0
-    mpl.rcParams['lines.linewidth'] = 2.0
-    mpl.rcParams['patch.linewidth'] = 1.0
+    # Line widths - bolder for publication
+    mpl.rcParams['axes.linewidth'] = 2.0  # Bolder axes
+    mpl.rcParams['grid.linewidth'] = 0.0  # No grid
+    mpl.rcParams['lines.linewidth'] = 3.0  # Bolder lines
+    mpl.rcParams['patch.linewidth'] = 2.5  # Bolder box edges
 
-    # Remove top and right spines
+    # Tick parameters
+    mpl.rcParams['xtick.major.width'] = 2.0  # Bolder ticks
+    mpl.rcParams['ytick.major.width'] = 2.0
+    mpl.rcParams['xtick.major.size'] = 6  # Longer ticks
+    mpl.rcParams['ytick.major.size'] = 6
+
+    # Remove top and right spines for clean look
     mpl.rcParams['axes.spines.top'] = False
     mpl.rcParams['axes.spines.right'] = False
 
-    # Grid
+    # Grid - OFF for publication
     mpl.rcParams['axes.grid'] = False
 
     # Figure
