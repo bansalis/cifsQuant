@@ -47,8 +47,8 @@ tumor_definition:
   required_negative: []
   structure_detection:
     method: 'DBSCAN'
-    eps: 800
-    min_samples: 250
+    eps: 1000
+    min_samples: 500
     min_cluster_size: 250
     boundary_buffer: 100
     use_expanded_boundary: true
@@ -145,6 +145,16 @@ phenotypes:
     base: 'Tumor'
     negative: ['CC3']
   
+  MHCII_positive_tumor:
+    description: "MHCII tumor"
+    base: 'Tumor'
+    positive: ['MHCII']
+  
+  MHCII_negative_tumor:
+    description: "Non-MHCII tumor"
+    base: 'Tumor'
+    negative: ['MHCII']
+  
   pERK_NINJA_positive_tumor:
     description: "Double positive"
     base: 'Tumor'
@@ -191,12 +201,12 @@ phenotypes:
     positive: ['F480']
     negative: []
   
-  M1_macrophages:
+  MHCII+_macrophages:
     description: "M1 anti-tumor macrophages"
     positive: ['F480', 'MHCII']
     negative: []
   
-  M2_macrophages:
+  MHCII-_macrophages:
     description: "M2 pro-tumor macrophages"
     positive: ['F480']
     negative: ['MHCII']
@@ -232,6 +242,8 @@ per_tumor_analysis:
       phenotype: 'PD_positive_tumor'
     - name: 'CC3'
       phenotype: 'CC3_positive_tumor'
+    - name: 'MHCII'
+      phenotype: 'MHCII_positive_tumor'
   
   spatial_heterogeneity:
     enabled: true
@@ -255,6 +267,9 @@ population_dynamics:
     - PDL1_positive_tumor
     - EPCAM_positive_tumor
     - TTF1_positive_tumor
+    - CC3_positive_tumor
+    - MHCII_positive_tumor
+    - MHCII_negative_tumor
     - pERK_NINJA_positive_tumor
     
     # T cells (4)
@@ -267,8 +282,8 @@ population_dynamics:
 
     # Myeloid (3)
     - Macrophages
-    - M1_macrophages
-    - M2_macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
 
     # Other (1)
     - B_cells
@@ -280,12 +295,15 @@ population_dynamics:
     PDL1_positive_tumor: Tumor
     EPCAM_positive_tumor: Tumor
     TTF1_positive_tumor: Tumor
+    CC3_positive_tumor: Tumor
+    MHCII_positive_tumor: Tumor
+    MHCII_negative_tumor: Tumor
     CD8_T_cells: T_cells
     CD4_T_cells: T_cells
     CD4_Tregs: CD4_T_cells
     PD1_positive_CD8: CD8_T_cells
-    M1_macrophages: Macrophages
-    M2_macrophages: Macrophages
+    MHCII+_macrophages: Macrophages
+    MHCII-_macrophages: Macrophages
 
   comparisons:
     - name: 'Group_comparison'
@@ -311,19 +329,23 @@ distance_analysis:
   pairings:
     - source: 'CD8_T_cells'
       targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
-                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor']
+                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
 
     - source: 'PD1_positive_CD8'
-      targets: ['PDL1_positive_tumor']
+      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
+                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
 
     - source: 'CD4_Tregs'
-      targets: ['CD8_T_cells', 'Tumor']
+      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
+                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
 
-    - source: 'M1_macrophages'
-      targets: ['Tumor', 'pERK_positive_tumor']
+    - source: 'MHCII+_macrophages'
+      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
+                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
 
-    - source: 'M2_macrophages'
-      targets: ['Tumor', 'pERK_positive_tumor']
+    - source: 'MHCII-_macrophages'
+      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
+                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
 
   metrics:
     - 'mean_nearest_neighbor'
@@ -358,8 +380,8 @@ immune_infiltration:
     - PD1_positive_CD8
     - B_cells
     - Macrophages
-    - M1_macrophages
-    - M2_macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
 
   boundaries:
     - 0
@@ -408,6 +430,10 @@ immune_infiltration:
         positive_phenotype: 'CC3_positive_tumor'
         negative_phenotype: 'CC3_negative_tumor'
 
+      - marker: 'MHCII'
+        positive_phenotype: 'MHCII_positive_tumor'
+        negative_phenotype: 'MHCII_negative_tumor'
+
     heterogeneity_metrics:
       - 'getis_ord_gi_star'
       - 'ripleys_k'
@@ -422,8 +448,8 @@ immune_infiltration:
         - T_cells
         - CD45_positive
         - Macrophages
-        - M1_macrophages
-        - M2_macrophages
+        - MHCII+_macrophages
+        - MHCII-_macrophages
         - B_cells
 
 # ============================================================================
@@ -445,6 +471,8 @@ cellular_neighborhoods:
     - EPCAM_positive_tumor
     - TTF1_positive_tumor
     - CC3_positive_tumor
+    - MHCII_positive_tumor
+    - MHCII_negative_tumor
     # Immune populations
     - CD45_positive
     - T_cells
@@ -454,8 +482,8 @@ cellular_neighborhoods:
     - PD1_positive_CD8
     - B_cells
     - Macrophages
-    - M1_macrophages
-    - M2_macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
 
   window_size: 100
   k_neighbors: 30
@@ -503,6 +531,10 @@ marker_region_analysis:
     - name: 'CC3'
       positive_col: 'is_CC3_positive_tumor'
       negative_col: 'is_CC3_negative_tumor'
+    
+    - name: 'MHCII'
+      positive_col: 'is_MHCII_positive_tumor'
+      negative_col: 'is_MHCII_negative_tumor'
 
   # Region detection parameters
   region_detection:
@@ -527,6 +559,9 @@ marker_region_analysis:
     - 'is_EPCAM_positive_tumor'
     - 'is_TTF1_positive_tumor'
     - 'is_pERK_NINJA_positive_tumor'
+    - 'is_CC3_positive_tumor'
+    - 'is_MHCII_positive_tumor'
+    - 'is_MHCII_negative_tumor'
     - 'is_CD45_positive'
     - 'is_T_cells'
     - 'is_CD8_T_cells'
@@ -534,8 +569,8 @@ marker_region_analysis:
     - 'is_CD4_Tregs'
     - 'is_PD1_positive_CD8'
     - 'is_Macrophages'
-    - 'is_M1_macrophages'
-    - 'is_M2_macrophages'
+    - 'is_MHCII+_macrophages'
+    - 'is_MHCII-_macrophages'
     - 'is_B_cells'
 
   # Immune populations for enrichment analysis (use is_ prefix)
@@ -548,8 +583,8 @@ marker_region_analysis:
     - 'is_PD1_positive_CD8'
     - 'is_B_cells'
     - 'is_Macrophages'
-    - 'is_M1_macrophages'
-    - 'is_M2_macrophages'
+    - 'is_MHCII+_macrophages'
+    - 'is_MHCII-_macrophages'
 
   # Optional hole analysis
   analyze_holes: true
@@ -569,6 +604,7 @@ coexpression_analysis:
     EPCAM: 'is_EPCAM'
     TTF1: 'is_TTF1'
     CC3: 'is_CC3'
+    MHCII: 'is_MHCII'
 
 # ============================================================================
 # ANALYSIS 6: ENHANCED NEIGHBORHOODS
@@ -599,6 +635,14 @@ enhanced_neighborhoods:
       pos_col: 'is_TTF1_positive_tumor'
       neg_col: 'is_TTF1_negative_tumor'
 
+    - name: 'CC3'
+      pos_col: 'is_CC3_positive_tumor'
+      neg_col: 'is_CC3_negative_tumor'
+
+    - name: 'MHCII'
+      pos_col: 'is_MHCII_positive_tumor'
+      neg_col: 'is_MHCII_negative_tumor'
+
   cell_types:
     - Tumor
     - pERK_positive_tumor
@@ -607,6 +651,9 @@ enhanced_neighborhoods:
     - PDL1_positive_tumor
     - EPCAM_positive_tumor
     - TTF1_positive_tumor
+    - CC3_positive_tumor
+    - MHCII_positive_tumor
+    - MHCII_negative_tumor
     - CD45_positive
     - T_cells
     - CD4_T_cells
@@ -614,8 +661,8 @@ enhanced_neighborhoods:
     - PD1_positive_CD8
     - CD4_Tregs
     - Macrophages
-    - M1_macrophages
-    - M2_macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
     - B_cells
 
   immune_cells:
@@ -626,8 +673,8 @@ enhanced_neighborhoods:
       - PD1_positive_CD8
       - CD4_Tregs
       - Macrophages
-      - M1_macrophages
-      - M2_macrophages
+      - MHCII+_macrophages
+      - MHCII-_macrophages
       - B_cells
 
 # ============================================================================
@@ -657,6 +704,8 @@ tumor_microenvironment:
       phenotype: 'PDL1_positive_tumor'
     - name: 'CC3'
       phenotype: 'CC3_positive_tumor'
+    - name: 'MHCII'
+      phenotype: 'MHCII_positive_tumor'
     
   immune_populations:
     - CD45_positive
@@ -666,8 +715,8 @@ tumor_microenvironment:
     - PD1_positive_CD8
     - CD4_Tregs
     - Macrophages
-    - M1_macrophages
-    - M2_macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
     - B_cells
 
 # ============================================================================
@@ -713,8 +762,8 @@ umap_visualization:
     - CD4_Tregs
     - B_cells
     - Macrophages
-    - M1_macrophages
-    - M2_macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
 
   n_neighbors: 30
   min_dist: 0.3
