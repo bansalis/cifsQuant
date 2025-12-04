@@ -237,7 +237,7 @@ def plot_with_stats(data: pd.DataFrame,
             color = group_colors.get(group, '#000000')
 
             ax.plot(summary[timepoint_col], summary['mean'],
-                   '-o', color=color, linewidth=2.5, markersize=8,
+                   '-o', color=color, linewidth=3.0, markersize=10,
                    label=group, zorder=10)
             ax.fill_between(summary[timepoint_col],
                            summary['mean'] - summary['sem'],
@@ -256,11 +256,11 @@ def plot_with_stats(data: pd.DataFrame,
                     if row['pvalue'] < 0.05:
                         tp = row['timepoint']
                         ax.text(tp, ymax * 0.95, row['sig_symbol'],
-                               ha='center', va='top', fontsize=10, fontweight='bold')
+                               ha='center', va='top', fontsize=12, fontweight='bold')
 
         if not xlabel:
             xlabel = 'Timepoint'
-        ax.set_xlabel(xlabel, fontsize=11, fontweight='bold')
+        ax.set_xlabel(xlabel, fontsize=14, fontweight='bold')
 
     else:
         # Single timepoint - use box/column plot
@@ -278,18 +278,20 @@ def plot_with_stats(data: pd.DataFrame,
                 labels.append(group)
                 colors.append(group_colors.get(group, '#000000'))
 
-        # Create box plots
-        bp = ax.boxplot(box_data, positions=positions, widths=0.6,
+        # Create box plots with narrower boxes and bolder lines
+        bp = ax.boxplot(box_data, positions=positions, widths=0.5,
                        patch_artist=True, showfliers=True,
-                       boxprops=dict(linewidth=1.5),
-                       whiskerprops=dict(linewidth=1.5),
-                       capprops=dict(linewidth=1.5),
-                       medianprops=dict(linewidth=2, color='black'))
+                       boxprops=dict(linewidth=2.5),
+                       whiskerprops=dict(linewidth=2.5),
+                       capprops=dict(linewidth=2.5),
+                       medianprops=dict(linewidth=3, color='black'),
+                       flierprops=dict(marker='o', markersize=6, alpha=0.5))
 
         # Color boxes
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.7)
+            patch.set_edgecolor('black')
 
         # Add individual points
         for idx, (group, color) in enumerate(zip(labels, colors)):
@@ -299,7 +301,7 @@ def plot_with_stats(data: pd.DataFrame,
             ax.scatter(x, group_data, alpha=0.4, s=30, color=color, zorder=5)
 
         ax.set_xticks(positions)
-        ax.set_xticklabels(labels)
+        ax.set_xticklabels(labels, fontsize=13)
 
         # Add statistical annotations for box plots
         if show_stats and len(groups) == 2:
@@ -315,19 +317,153 @@ def plot_with_stats(data: pd.DataFrame,
                 h = y_range * 0.02
 
                 ax.plot([0, 0, 1, 1], [y_bracket, y_bracket+h, y_bracket+h, y_bracket],
-                       lw=1.5, c='black')
+                       lw=2.5, c='black')
                 ax.text(0.5, y_bracket+h, row['sig_symbol'],
-                       ha='center', va='bottom', fontsize=12, fontweight='bold')
+                       ha='center', va='bottom', fontsize=14, fontweight='bold')
 
         if not xlabel:
             xlabel = ''  # No label for single timepoint boxplots
         if xlabel:
-            ax.set_xlabel(xlabel, fontsize=11, fontweight='bold')
+            ax.set_xlabel(xlabel, fontsize=14, fontweight='bold')
 
-    ax.set_ylabel(ylabel, fontsize=11, fontweight='bold')
-    ax.set_title(title, fontsize=12, fontweight='bold')
-    ax.legend(frameon=True, loc='best', fontsize=10)
-    ax.grid(True, alpha=0.3)
+    ax.set_ylabel(ylabel, fontsize=14, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend(frameon=True, loc='best', fontsize=12)
+    ax.grid(False)  # No grid for clean publication look
+
+    # Make tick labels bigger
+    ax.tick_params(axis='both', which='major', labelsize=12)
+
+    # Increase spine thickness
+    for spine in ax.spines.values():
+        spine.set_linewidth(2)
+
+    return ax
+
+
+def plot_with_stats_clean(data: pd.DataFrame,
+                         value_col: str,
+                         group_col: str = 'main_group',
+                         timepoint_col: str = 'timepoint',
+                         ax: plt.Axes = None,
+                         group_colors: Dict = None,
+                         title: str = '',
+                         ylabel: str = '',
+                         xlabel: str = '',
+                         show_stats: bool = True,
+                         test_method: str = 'mannwhitneyu') -> plt.Axes:
+    """
+    Create clean plot with stats - boxplot/line but NO raw data overlay.
+    This is the publication-ready "clean stats" version.
+
+    Parameters are same as plot_with_stats but this version excludes raw data points.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+    if group_colors is None:
+        group_colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
+
+    plot_type = detect_plot_type(data, timepoint_col)
+    groups = sorted(data[group_col].unique())
+
+    if plot_type == 'line':
+        # Same as regular line plot (no raw data to remove)
+        for group in groups:
+            group_data = data[data[group_col] == group]
+
+            if len(group_data) == 0:
+                continue
+
+            summary = group_data.groupby(timepoint_col)[value_col].agg(['mean', 'sem']).reset_index()
+            color = group_colors.get(group, '#000000')
+
+            ax.plot(summary[timepoint_col], summary['mean'],
+                   '-o', color=color, linewidth=3.0, markersize=10,
+                   label=group, zorder=10)
+            ax.fill_between(summary[timepoint_col],
+                           summary['mean'] - summary['sem'],
+                           summary['mean'] + summary['sem'],
+                           alpha=0.2, color=color)
+
+        if show_stats and len(groups) == 2:
+            stats_df = calculate_statistics(data, value_col, group_col, timepoint_col,
+                                           test_method, per_timepoint=True)
+
+            if len(stats_df) > 0:
+                ymax = ax.get_ylim()[1]
+                for _, row in stats_df.iterrows():
+                    if row['pvalue'] < 0.05:
+                        tp = row['timepoint']
+                        ax.text(tp, ymax * 0.95, row['sig_symbol'],
+                               ha='center', va='top', fontsize=12, fontweight='bold')
+
+        if not xlabel:
+            xlabel = 'Timepoint'
+        ax.set_xlabel(xlabel, fontsize=14, fontweight='bold')
+
+    else:
+        # Boxplot without scatter points
+        positions = []
+        box_data = []
+        labels = []
+        colors = []
+
+        for idx, group in enumerate(groups):
+            group_data = data[data[group_col] == group][value_col].dropna()
+            if len(group_data) > 0:
+                box_data.append(group_data)
+                positions.append(idx)
+                labels.append(group)
+                colors.append(group_colors.get(group, '#000000'))
+
+        # Create box plots - NO scatter points added
+        bp = ax.boxplot(box_data, positions=positions, widths=0.5,
+                       patch_artist=True, showfliers=True,
+                       boxprops=dict(linewidth=2.5),
+                       whiskerprops=dict(linewidth=2.5),
+                       capprops=dict(linewidth=2.5),
+                       medianprops=dict(linewidth=3, color='black'),
+                       flierprops=dict(marker='o', markersize=6, alpha=0.5))
+
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+            patch.set_edgecolor('black')
+
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, fontsize=13)
+
+        if show_stats and len(groups) == 2:
+            stats_df = calculate_statistics(data, value_col, group_col, timepoint_col,
+                                           test_method, per_timepoint=False)
+
+            if len(stats_df) > 0 and len(stats_df) == 1:
+                row = stats_df.iloc[0]
+                y_max = max([d.max() for d in box_data])
+                y_range = y_max - min([d.min() for d in box_data])
+                y_bracket = y_max + y_range * 0.05
+                h = y_range * 0.02
+
+                ax.plot([0, 0, 1, 1], [y_bracket, y_bracket+h, y_bracket+h, y_bracket],
+                       lw=2.5, c='black')
+                ax.text(0.5, y_bracket+h, row['sig_symbol'],
+                       ha='center', va='bottom', fontsize=14, fontweight='bold')
+
+        if not xlabel:
+            xlabel = ''
+        if xlabel:
+            ax.set_xlabel(xlabel, fontsize=14, fontweight='bold')
+
+    ax.set_ylabel(ylabel, fontsize=14, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend(frameon=True, loc='best', fontsize=12)
+    ax.grid(False)
+
+    ax.tick_params(axis='both', which='major', labelsize=12)
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(2)
 
     return ax
 
@@ -341,9 +477,12 @@ def create_dual_plots(data: pd.DataFrame,
                      ylabel: str = '',
                      xlabel: str = '',
                      test_method: str = 'mannwhitneyu',
-                     output_path_base: str = None) -> Tuple[plt.Figure, plt.Figure]:
+                     output_path_base: str = None) -> Tuple[plt.Figure, plt.Figure, plt.Figure]:
     """
-    Create two versions of the same plot: with and without statistics.
+    Create THREE versions of the same plot:
+    1. With statistics and raw data overlay
+    2. Without statistics
+    3. Clean stats version (stats but NO raw data overlay) - publication ready
 
     Parameters
     ----------
@@ -366,12 +505,12 @@ def create_dual_plots(data: pd.DataFrame,
     test_method : str
         Statistical test method
     output_path_base : str, optional
-        Base path for saving (will append _with_stats.png and _no_stats.png)
+        Base path for saving (will append _with_stats.png, _no_stats.png, _clean_stats.png)
 
     Returns
     -------
     tuple
-        (fig_with_stats, fig_no_stats)
+        (fig_with_stats, fig_no_stats, fig_clean_stats)
     """
     # Plot with stats
     fig1, ax1 = plt.subplots(figsize=(10, 6))
@@ -393,8 +532,19 @@ def create_dual_plots(data: pd.DataFrame,
     if output_path_base:
         fig2.savefig(f"{output_path_base}_no_stats.png", dpi=300, bbox_inches='tight')
 
+    # Plot with stats but NO raw data overlay (clean stats version)
+    fig3, ax3 = plt.subplots(figsize=(10, 6))
+    plot_with_stats_clean(data, value_col, group_col, timepoint_col, ax3,
+                         group_colors, title_base, ylabel, xlabel,
+                         show_stats=True, test_method=test_method)
+    plt.tight_layout()
+
+    if output_path_base:
+        fig3.savefig(f"{output_path_base}_clean_stats.png", dpi=300, bbox_inches='tight')
+
     if output_path_base:
         plt.close(fig1)
         plt.close(fig2)
+        plt.close(fig3)
 
-    return fig1, fig2
+    return fig1, fig2, fig3

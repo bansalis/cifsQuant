@@ -404,6 +404,34 @@ def main():
             import traceback
             traceback.print_exc()
 
+    # NEW: Marker Clustering Analysis with Randomization Testing
+    if config.get('marker_clustering_analysis', {}).get('enabled', False):
+        print("\n  ✓ Running marker clustering analysis with randomization testing")
+        try:
+            from spatial_quantification.analyses.marker_clustering_analysis import MarkerClusteringAnalysis
+            marker_clustering = MarkerClusteringAnalysis(adata, config, output_dir)
+            all_results['marker_clustering_analysis'] = marker_clustering.run()
+
+            # Generate plots if configured
+            if config.get('marker_clustering_analysis', {}).get('generate_plots', True):
+                print("\n  Generating marker clustering visualizations...")
+                try:
+                    from spatial_quantification.visualization.marker_clustering_plotter import MarkerClusteringPlotter
+                    mc_plotter = MarkerClusteringPlotter(
+                        all_results['marker_clustering_analysis'],
+                        output_dir / 'marker_clustering_analysis',
+                        config
+                    )
+                    mc_plotter.plot_all()
+                except Exception as e:
+                    print(f"  ⚠ Could not generate marker clustering plots: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"  ⚠ Could not run marker clustering analysis: {e}")
+            import traceback
+            traceback.print_exc()
+
     # NEW: UMAP Visualization
     if config.get('umap_visualization', {}).get('enabled', False):
         print("\n  Generating UMAP visualizations...")
