@@ -778,6 +778,42 @@ pseudotime_analysis:
   generate_plots: true
 
 # ============================================================================
+# ANALYSIS 10: MARKER CLUSTERING ANALYSIS WITH RANDOMIZATION TESTING
+# ============================================================================
+marker_clustering_analysis:
+  enabled: true
+  generate_plots: true
+
+  # Number of random permutations to test against null model
+  n_permutations: 500
+
+  # Significance level for testing
+  alpha: 0.05
+
+  # Tumor markers to analyze for spatial clustering
+  tumor_markers:
+    - 'pERK'
+    - 'NINJA'
+    - 'Ki67'
+    - 'PD-L1'
+    - 'MHC-II'
+
+# ============================================================================
+# ANALYSIS 11: SPATIAL OVERLAP ANALYSIS (MARKER REGIONS)
+# ============================================================================
+spatial_overlap_analysis:
+  enabled: true
+
+  # Region detection parameters (SpatialCells)
+  region_detection:
+    eps: 50                    # DBSCAN epsilon for clustering
+    min_samples: 10            # Minimum samples per cluster
+    alpha: 50                  # Alpha shape parameter
+    core_only: true            # Use only core samples
+    min_area: 5000             # Minimum area for regions (μm²)
+    min_edges: 15              # Minimum edges for boundary polygons
+
+# ============================================================================
 # VISUALIZATION SETTINGS
 # ============================================================================
 visualization:
