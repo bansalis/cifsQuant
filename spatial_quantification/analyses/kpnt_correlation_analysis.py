@@ -149,7 +149,7 @@ class KPNTCorrelationAnalysis:
                 }
 
                 # Get marker positivity percentages
-                markers = ['pERK', 'NINJA', 'Ki67', 'PDL1', 'EPCAM', 'TTF1', 'CC3']
+                markers = ['pERK', 'NINJA', 'Ki67', 'PDL1', 'EPCAM', 'TTF1', 'CC3', 'MHCII']
                 for marker in markers:
                     col = f'is_{marker}_positive_tumor'
                     if col in actual_tumor_cells.columns:
