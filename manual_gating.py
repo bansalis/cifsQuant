@@ -2089,6 +2089,128 @@ def create_spatial_triple_panel(adata, gates, output_dir):
     
     print(f"✓ Spatial triple panels saved to {plots_dir}")
 
+def create_normalization_kde_comparison(adata, output_dir):
+    """
+    Create KDE density comparison plots showing the effect of different normalization methods.
+    For each marker, shows three KDE curves:
+    1. Before normalization (raw)
+    2. After hierarchical UniFORM normalization (aligned)
+    3. After 99th percentile normalization (for comparison)
+    """
+    plots_dir = Path(output_dir) / "normalization_comparison"
+    plots_dir.mkdir(exist_ok=True, parents=True)
+
+    print("\nCreating normalization KDE comparison plots...")
+
+    from scipy.ndimage import gaussian_filter1d
+
+    for marker in adata.var_names:
+        marker_idx = adata.var_names.get_loc(marker)
+
+        print(f"  Processing {marker}...")
+
+        # Collect data for each normalization method
+        raw_vals = []
+        aligned_vals = []
+        percentile_vals = []
+
+        for sample in adata.obs['sample_id'].unique():
+            mask = adata.obs['sample_id'] == sample
+
+            # Raw (before normalization)
+            raw_sample = adata.layers['raw'][mask, marker_idx]
+            raw_sample = raw_sample[raw_sample > 0]
+
+            # Aligned (after hierarchical UniFORM)
+            aligned_sample = adata.layers['aligned'][mask, marker_idx]
+            aligned_sample = aligned_sample[aligned_sample > 0]
+
+            # 99th percentile normalization
+            p99 = np.percentile(raw_sample, 99) if len(raw_sample) > 0 else 1.0
+            percentile_sample = raw_sample / p99 * 1000  # Scale to 0-1000 range
+            percentile_sample = percentile_sample[percentile_sample > 0]
+
+            # Subsample for plotting
+            if len(raw_sample) > 5000:
+                raw_sample = np.random.choice(raw_sample, 5000, replace=False)
+            if len(aligned_sample) > 5000:
+                aligned_sample = np.random.choice(aligned_sample, 5000, replace=False)
+            if len(percentile_sample) > 5000:
+                percentile_sample = np.random.choice(percentile_sample, 5000, replace=False)
+
+            raw_vals.extend(raw_sample)
+            aligned_vals.extend(aligned_sample)
+            percentile_vals.extend(percentile_sample)
+
+        raw_vals = np.array(raw_vals)
+        aligned_vals = np.array(aligned_vals)
+        percentile_vals = np.array(percentile_vals)
+
+        # Remove saturation for plotting
+        raw_vals = raw_vals[raw_vals <= 65000]
+        aligned_vals = aligned_vals[aligned_vals <= 65000]
+        percentile_vals = percentile_vals[percentile_vals <= 5000]  # Different range for percentile
+
+        # Create figure with 3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(24, 6))
+        fig.suptitle(f'{marker} - Normalization Method Comparison (KDE)', fontsize=16, fontweight='bold')
+
+        # Helper function to compute KDE-like density
+        def compute_kde_density(vals, n_bins=200):
+            if len(vals) < 10:
+                return None, None, None
+
+            bins = np.logspace(np.log10(max(1, vals.min())),
+                              np.log10(vals.max()), n_bins)
+            hist, bin_edges = np.histogram(vals, bins=bins)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+            density = hist_smooth / (hist_smooth.sum() + 1e-10)
+
+            return bin_centers, density, bins
+
+        # Plot 1: Raw (before normalization)
+        bin_centers, density, bins = compute_kde_density(raw_vals)
+        if density is not None:
+            axes[0].plot(bin_centers, density, 'b-', linewidth=2.5, label='Raw')
+            axes[0].fill_between(bin_centers, density, alpha=0.3, color='blue')
+        axes[0].set_xlabel('Intensity', fontsize=12)
+        axes[0].set_ylabel('Density', fontsize=12)
+        axes[0].set_title('Before Normalization (Raw)', fontsize=13, fontweight='bold')
+        axes[0].set_xscale('log')
+        axes[0].legend(fontsize=11)
+        axes[0].grid(True, alpha=0.3)
+
+        # Plot 2: Hierarchical UniFORM (aligned)
+        bin_centers, density, bins = compute_kde_density(aligned_vals)
+        if density is not None:
+            axes[1].plot(bin_centers, density, 'g-', linewidth=2.5, label='UniFORM')
+            axes[1].fill_between(bin_centers, density, alpha=0.3, color='green')
+        axes[1].set_xlabel('Intensity', fontsize=12)
+        axes[1].set_ylabel('Density', fontsize=12)
+        axes[1].set_title('After Hierarchical UniFORM', fontsize=13, fontweight='bold')
+        axes[1].set_xscale('log')
+        axes[1].legend(fontsize=11)
+        axes[1].grid(True, alpha=0.3)
+
+        # Plot 3: 99th percentile normalization
+        bin_centers, density, bins = compute_kde_density(percentile_vals)
+        if density is not None:
+            axes[2].plot(bin_centers, density, 'r-', linewidth=2.5, label='99th Percentile')
+            axes[2].fill_between(bin_centers, density, alpha=0.3, color='red')
+        axes[2].set_xlabel('Intensity (scaled to 0-1000)', fontsize=12)
+        axes[2].set_ylabel('Density', fontsize=12)
+        axes[2].set_title('99th Percentile Normalization', fontsize=13, fontweight='bold')
+        axes[2].set_xscale('log')
+        axes[2].legend(fontsize=11)
+        axes[2].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(plots_dir / f'{marker}_normalization_comparison.png', dpi=150, bbox_inches='tight')
+        plt.close('all')
+
+    print(f"✓ Normalization comparison plots saved to {plots_dir}")
+
 def create_diagnostic_plots(adata, gates, output_dir):
     """Create diagnostic plots showing gating quality"""
     plots_dir = Path(output_dir) / "gating_diagnostics"
@@ -3049,6 +3171,9 @@ def main():
     print("\n" + "="*70)
     print("GATING WORKFLOW")
     print("="*70)
+
+    # Normalization comparison KDE plots (FIRST - can resume from checkpoint after this)
+    create_normalization_kde_comparison(adata, output_dir)
 
     # Visualize tile correction
     visualize_tile_artifacts(adata, output_dir)
