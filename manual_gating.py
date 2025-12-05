@@ -2118,65 +2118,104 @@ def create_normalization_kde_comparison(adata, output_dir):
         fig, axes = plt.subplots(1, 3, figsize=(24, 6))
         fig.suptitle(f'{marker} - Normalization Method Comparison (Per-Sample KDE)', fontsize=16, fontweight='bold')
 
-        # Helper function to compute KDE-like density for a single sample
-        def compute_kde_density(vals, n_bins=200):
-            if len(vals) < 10:
-                return None, None
+        # Collect all data to determine global bins for each normalization method
+        all_raw = []
+        all_aligned = []
+        all_percentile = []
 
-            bins = np.logspace(np.log10(max(1, vals.min())),
-                              np.log10(vals.max()), n_bins)
-            hist, bin_edges = np.histogram(vals, bins=bins)
-            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
-            density = hist_smooth / (hist_smooth.sum() + 1e-10)
+        for sample in samples:
+            mask = adata.obs['sample_id'] == sample
 
-            return bin_centers, density
+            # Raw
+            raw_vals = adata.layers['raw'][mask, marker_idx]
+            raw_vals = raw_vals[raw_vals > 0]
+            raw_vals = raw_vals[raw_vals <= 65000]
+            if len(raw_vals) > 5000:
+                raw_vals = np.random.choice(raw_vals, 5000, replace=False)
+            all_raw.extend(raw_vals)
 
-        # Plot per-sample KDE curves for each normalization method
+            # Aligned
+            aligned_vals = adata.layers['aligned'][mask, marker_idx]
+            aligned_vals = aligned_vals[aligned_vals > 0]
+            aligned_vals = aligned_vals[aligned_vals <= 65000]
+            if len(aligned_vals) > 5000:
+                aligned_vals = np.random.choice(aligned_vals, 5000, replace=False)
+            all_aligned.extend(aligned_vals)
+
+            # 99th percentile
+            raw_for_p99 = adata.layers['raw'][mask, marker_idx]
+            raw_for_p99 = raw_for_p99[raw_for_p99 > 0]
+            p99 = np.percentile(raw_for_p99, 99) if len(raw_for_p99) > 0 else 1.0
+            percentile_vals = raw_for_p99 / p99 * 1000
+            percentile_vals = percentile_vals[percentile_vals > 0]
+            percentile_vals = percentile_vals[percentile_vals <= 5000]
+            if len(percentile_vals) > 5000:
+                percentile_vals = np.random.choice(percentile_vals, 5000, replace=False)
+            all_percentile.extend(percentile_vals)
+
+        all_raw = np.array(all_raw)
+        all_aligned = np.array(all_aligned)
+        all_percentile = np.array(all_percentile)
+
+        # Compute global bins for each normalization method (EXACT COPY FROM DIAGNOSTIC PLOTS)
+        bins_raw = np.logspace(np.log10(max(1, all_raw.min())), np.log10(all_raw.max()), 200) if len(all_raw) > 0 else None
+        bins_aligned = np.logspace(np.log10(max(1, all_aligned.min())), np.log10(all_aligned.max()), 200) if len(all_aligned) > 0 else None
+        bins_percentile = np.logspace(np.log10(max(1, all_percentile.min())), np.log10(all_percentile.max()), 200) if len(all_percentile) > 0 else None
+
+        # Now plot per-sample KDE curves using global bins
         for sample_idx, sample in enumerate(samples):
             mask = adata.obs['sample_id'] == sample
             color = colors[sample_idx]
 
-            # Raw (before normalization)
-            raw_sample = adata.layers['raw'][mask, marker_idx]
-            raw_sample = raw_sample[raw_sample > 0]
-            if len(raw_sample) > 5000:
-                raw_sample = np.random.choice(raw_sample, 5000, replace=False)
-            raw_sample = raw_sample[raw_sample <= 65000]
+            # RAW
+            if bins_raw is not None:
+                raw_vals = adata.layers['raw'][mask, marker_idx]
+                raw_vals = raw_vals[raw_vals > 0]
+                raw_vals = raw_vals[raw_vals <= 65000]
+                if len(raw_vals) > 5000:
+                    raw_vals = np.random.choice(raw_vals, 5000, replace=False)
 
-            if len(raw_sample) >= 10:
-                bin_centers, density = compute_kde_density(raw_sample)
-                if density is not None:
+                if len(raw_vals) > 10:
+                    hist, bin_edges = np.histogram(raw_vals, bins=bins_raw)
+                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                    hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+                    density = hist_smooth / hist_smooth.sum()
                     axes[0].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
 
-            # Aligned (after hierarchical UniFORM)
-            aligned_sample = adata.layers['aligned'][mask, marker_idx]
-            aligned_sample = aligned_sample[aligned_sample > 0]
-            if len(aligned_sample) > 5000:
-                aligned_sample = np.random.choice(aligned_sample, 5000, replace=False)
-            aligned_sample = aligned_sample[aligned_sample <= 65000]
+            # ALIGNED
+            if bins_aligned is not None:
+                aligned_vals = adata.layers['aligned'][mask, marker_idx]
+                aligned_vals = aligned_vals[aligned_vals > 0]
+                aligned_vals = aligned_vals[aligned_vals <= 65000]
+                if len(aligned_vals) > 5000:
+                    aligned_vals = np.random.choice(aligned_vals, 5000, replace=False)
 
-            if len(aligned_sample) >= 10:
-                bin_centers, density = compute_kde_density(aligned_sample)
-                if density is not None:
+                if len(aligned_vals) > 10:
+                    hist, bin_edges = np.histogram(aligned_vals, bins=bins_aligned)
+                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                    hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+                    density = hist_smooth / hist_smooth.sum()
                     axes[1].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
 
-            # 99th percentile normalization
-            raw_for_percentile = adata.layers['raw'][mask, marker_idx]
-            raw_for_percentile = raw_for_percentile[raw_for_percentile > 0]
-            p99 = np.percentile(raw_for_percentile, 99) if len(raw_for_percentile) > 0 else 1.0
-            percentile_sample = raw_for_percentile / p99 * 1000  # Scale to 0-1000 range
-            percentile_sample = percentile_sample[percentile_sample > 0]
-            if len(percentile_sample) > 5000:
-                percentile_sample = np.random.choice(percentile_sample, 5000, replace=False)
-            percentile_sample = percentile_sample[percentile_sample <= 5000]
+            # 99TH PERCENTILE
+            if bins_percentile is not None:
+                raw_for_p99 = adata.layers['raw'][mask, marker_idx]
+                raw_for_p99 = raw_for_p99[raw_for_p99 > 0]
+                p99 = np.percentile(raw_for_p99, 99) if len(raw_for_p99) > 0 else 1.0
+                percentile_vals = raw_for_p99 / p99 * 1000
+                percentile_vals = percentile_vals[percentile_vals > 0]
+                percentile_vals = percentile_vals[percentile_vals <= 5000]
+                if len(percentile_vals) > 5000:
+                    percentile_vals = np.random.choice(percentile_vals, 5000, replace=False)
 
-            if len(percentile_sample) >= 10:
-                bin_centers, density = compute_kde_density(percentile_sample)
-                if density is not None:
+                if len(percentile_vals) > 10:
+                    hist, bin_edges = np.histogram(percentile_vals, bins=bins_percentile)
+                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                    hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+                    density = hist_smooth / hist_smooth.sum()
                     axes[2].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
 
-        # Style plot 1: Raw
+        # Style plots
         axes[0].set_xlabel('Intensity', fontsize=12)
         axes[0].set_ylabel('Density', fontsize=12)
         axes[0].set_title('Before Normalization (Raw)', fontsize=13, fontweight='bold')
@@ -2184,7 +2223,6 @@ def create_normalization_kde_comparison(adata, output_dir):
         axes[0].legend(fontsize=9, loc='upper right')
         axes[0].grid(True, alpha=0.3)
 
-        # Style plot 2: UniFORM
         axes[1].set_xlabel('Intensity', fontsize=12)
         axes[1].set_ylabel('Density', fontsize=12)
         axes[1].set_title('After Hierarchical UniFORM (Aligned)', fontsize=13, fontweight='bold')
@@ -2192,7 +2230,6 @@ def create_normalization_kde_comparison(adata, output_dir):
         axes[1].legend(fontsize=9, loc='upper right')
         axes[1].grid(True, alpha=0.3)
 
-        # Style plot 3: 99th percentile
         axes[2].set_xlabel('Intensity (scaled to 0-1000)', fontsize=12)
         axes[2].set_ylabel('Density', fontsize=12)
         axes[2].set_title('99th Percentile Normalization', fontsize=13, fontweight='bold')
