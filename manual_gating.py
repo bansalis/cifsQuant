@@ -2118,6 +2118,18 @@ def create_normalization_kde_comparison(adata, output_dir):
         fig, axes = plt.subplots(1, 3, figsize=(24, 6))
         fig.suptitle(f'{marker} - Normalization Method Comparison (Per-Sample KDE)', fontsize=16, fontweight='bold')
 
+        # Compute scaling factor to rescale UniFORM back to original intensity range
+        # Use median of raw 99th percentiles across samples
+        raw_p99_values = []
+        for sample in samples:
+            mask = adata.obs['sample_id'] == sample
+            raw_vals = adata.layers['raw'][mask, marker_idx]
+            raw_vals = raw_vals[raw_vals > 0]
+            if len(raw_vals) > 0:
+                raw_p99_values.append(np.percentile(raw_vals, 99))
+
+        rescale_factor = np.median(raw_p99_values) if len(raw_p99_values) > 0 else 1000.0
+
         # Collect all data to determine global bins for each normalization method
         all_raw = []
         all_aligned = []
@@ -2134,21 +2146,22 @@ def create_normalization_kde_comparison(adata, output_dir):
                 raw_vals = np.random.choice(raw_vals, 5000, replace=False)
             all_raw.extend(raw_vals)
 
-            # Aligned
+            # Aligned - RESCALE BACK TO ORIGINAL INTENSITY RANGE
             aligned_vals = adata.layers['aligned'][mask, marker_idx]
             aligned_vals = aligned_vals[aligned_vals > 0]
+            aligned_vals = aligned_vals * rescale_factor  # Rescale from 0-1 to original range
             aligned_vals = aligned_vals[aligned_vals <= 65000]
             if len(aligned_vals) > 5000:
                 aligned_vals = np.random.choice(aligned_vals, 5000, replace=False)
             all_aligned.extend(aligned_vals)
 
-            # 99th percentile
+            # 99th percentile - RESCALE TO SAME RANGE AS RAW
             raw_for_p99 = adata.layers['raw'][mask, marker_idx]
             raw_for_p99 = raw_for_p99[raw_for_p99 > 0]
             p99 = np.percentile(raw_for_p99, 99) if len(raw_for_p99) > 0 else 1.0
-            percentile_vals = raw_for_p99 / p99 * 1000
+            percentile_vals = raw_for_p99 / p99 * rescale_factor  # Scale to same range
             percentile_vals = percentile_vals[percentile_vals > 0]
-            percentile_vals = percentile_vals[percentile_vals <= 5000]
+            percentile_vals = percentile_vals[percentile_vals <= 65000]
             if len(percentile_vals) > 5000:
                 percentile_vals = np.random.choice(percentile_vals, 5000, replace=False)
             all_percentile.extend(percentile_vals)
@@ -2157,65 +2170,63 @@ def create_normalization_kde_comparison(adata, output_dir):
         all_aligned = np.array(all_aligned)
         all_percentile = np.array(all_percentile)
 
-        # Compute global bins for each normalization method (EXACT COPY FROM DIAGNOSTIC PLOTS)
-        bins_raw = np.logspace(np.log10(max(1, all_raw.min())), np.log10(all_raw.max()), 200) if len(all_raw) > 0 else None
-        bins_aligned = np.logspace(np.log10(max(1, all_aligned.min())), np.log10(all_aligned.max()), 200) if len(all_aligned) > 0 else None
-        bins_percentile = np.logspace(np.log10(max(1, all_percentile.min())), np.log10(all_percentile.max()), 200) if len(all_percentile) > 0 else None
+        # Use SAME global bins for all three plots (same intensity scale)
+        global_min = min(all_raw.min(), all_aligned.min(), all_percentile.min()) if len(all_raw) > 0 else 1
+        global_max = max(all_raw.max(), all_aligned.max(), all_percentile.max()) if len(all_raw) > 0 else 65000
+        global_bins = np.logspace(np.log10(max(1, global_min)), np.log10(global_max), 200)
 
-        # Now plot per-sample KDE curves using global bins
+        # Now plot per-sample KDE curves using SAME global bins for all plots
         for sample_idx, sample in enumerate(samples):
             mask = adata.obs['sample_id'] == sample
             color = colors[sample_idx]
 
             # RAW
-            if bins_raw is not None:
-                raw_vals = adata.layers['raw'][mask, marker_idx]
-                raw_vals = raw_vals[raw_vals > 0]
-                raw_vals = raw_vals[raw_vals <= 65000]
-                if len(raw_vals) > 5000:
-                    raw_vals = np.random.choice(raw_vals, 5000, replace=False)
+            raw_vals = adata.layers['raw'][mask, marker_idx]
+            raw_vals = raw_vals[raw_vals > 0]
+            raw_vals = raw_vals[raw_vals <= 65000]
+            if len(raw_vals) > 5000:
+                raw_vals = np.random.choice(raw_vals, 5000, replace=False)
 
-                if len(raw_vals) > 10:
-                    hist, bin_edges = np.histogram(raw_vals, bins=bins_raw)
-                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-                    hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
-                    density = hist_smooth / hist_smooth.sum()
-                    axes[0].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
+            if len(raw_vals) > 10:
+                hist, bin_edges = np.histogram(raw_vals, bins=global_bins)
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+                density = hist_smooth / hist_smooth.sum()
+                axes[0].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
 
-            # ALIGNED
-            if bins_aligned is not None:
-                aligned_vals = adata.layers['aligned'][mask, marker_idx]
-                aligned_vals = aligned_vals[aligned_vals > 0]
-                aligned_vals = aligned_vals[aligned_vals <= 65000]
-                if len(aligned_vals) > 5000:
-                    aligned_vals = np.random.choice(aligned_vals, 5000, replace=False)
+            # ALIGNED - RESCALE BACK TO ORIGINAL INTENSITY RANGE
+            aligned_vals = adata.layers['aligned'][mask, marker_idx]
+            aligned_vals = aligned_vals[aligned_vals > 0]
+            aligned_vals = aligned_vals * rescale_factor  # Rescale from 0-1 to original range
+            aligned_vals = aligned_vals[aligned_vals <= 65000]
+            if len(aligned_vals) > 5000:
+                aligned_vals = np.random.choice(aligned_vals, 5000, replace=False)
 
-                if len(aligned_vals) > 10:
-                    hist, bin_edges = np.histogram(aligned_vals, bins=bins_aligned)
-                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-                    hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
-                    density = hist_smooth / hist_smooth.sum()
-                    axes[1].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
+            if len(aligned_vals) > 10:
+                hist, bin_edges = np.histogram(aligned_vals, bins=global_bins)
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+                density = hist_smooth / hist_smooth.sum()
+                axes[1].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
 
-            # 99TH PERCENTILE
-            if bins_percentile is not None:
-                raw_for_p99 = adata.layers['raw'][mask, marker_idx]
-                raw_for_p99 = raw_for_p99[raw_for_p99 > 0]
-                p99 = np.percentile(raw_for_p99, 99) if len(raw_for_p99) > 0 else 1.0
-                percentile_vals = raw_for_p99 / p99 * 1000
-                percentile_vals = percentile_vals[percentile_vals > 0]
-                percentile_vals = percentile_vals[percentile_vals <= 5000]
-                if len(percentile_vals) > 5000:
-                    percentile_vals = np.random.choice(percentile_vals, 5000, replace=False)
+            # 99TH PERCENTILE - RESCALE TO SAME RANGE
+            raw_for_p99 = adata.layers['raw'][mask, marker_idx]
+            raw_for_p99 = raw_for_p99[raw_for_p99 > 0]
+            p99 = np.percentile(raw_for_p99, 99) if len(raw_for_p99) > 0 else 1.0
+            percentile_vals = raw_for_p99 / p99 * rescale_factor  # Scale to same range
+            percentile_vals = percentile_vals[percentile_vals > 0]
+            percentile_vals = percentile_vals[percentile_vals <= 65000]
+            if len(percentile_vals) > 5000:
+                percentile_vals = np.random.choice(percentile_vals, 5000, replace=False)
 
-                if len(percentile_vals) > 10:
-                    hist, bin_edges = np.histogram(percentile_vals, bins=bins_percentile)
-                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-                    hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
-                    density = hist_smooth / hist_smooth.sum()
-                    axes[2].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
+            if len(percentile_vals) > 10:
+                hist, bin_edges = np.histogram(percentile_vals, bins=global_bins)
+                bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+                hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+                density = hist_smooth / hist_smooth.sum()
+                axes[2].plot(bin_centers, density, linewidth=2, label=sample, color=color, alpha=0.8)
 
-        # Style plots
+        # Style plots (all on same intensity scale for comparison)
         axes[0].set_xlabel('Intensity', fontsize=12)
         axes[0].set_ylabel('Density', fontsize=12)
         axes[0].set_title('Before Normalization (Raw)', fontsize=13, fontweight='bold')
@@ -2223,14 +2234,14 @@ def create_normalization_kde_comparison(adata, output_dir):
         axes[0].legend(fontsize=9, loc='upper right')
         axes[0].grid(True, alpha=0.3)
 
-        axes[1].set_xlabel('Intensity', fontsize=12)
+        axes[1].set_xlabel('Intensity (rescaled from 0-1)', fontsize=12)
         axes[1].set_ylabel('Density', fontsize=12)
         axes[1].set_title('After Hierarchical UniFORM (Aligned)', fontsize=13, fontweight='bold')
         axes[1].set_xscale('log')
         axes[1].legend(fontsize=9, loc='upper right')
         axes[1].grid(True, alpha=0.3)
 
-        axes[2].set_xlabel('Intensity (scaled to 0-1000)', fontsize=12)
+        axes[2].set_xlabel('Intensity (rescaled)', fontsize=12)
         axes[2].set_ylabel('Density', fontsize=12)
         axes[2].set_title('99th Percentile Normalization', fontsize=13, fontweight='bold')
         axes[2].set_xscale('log')
