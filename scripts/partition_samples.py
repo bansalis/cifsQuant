@@ -63,11 +63,11 @@ def create_coordinate_grid_from_display(display_image: np.ndarray, output_path: 
     print(f"   Display dimensions: {display_image.shape[1]} x {display_image.shape[0]} pixels")
 
     # Create smaller figure
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.imshow(display_image, cmap='gray', interpolation='nearest')
 
-    # Add coordinate grid (every 2000 pixels in original coordinates)
-    grid_spacing = 2000
+    # Add coordinate grid (every 10000 pixels in original coordinates)
+    grid_spacing = 10000
 
     # Vertical lines
     for x in range(0, orig_width, grid_spacing):
@@ -107,7 +107,7 @@ def create_coordinate_grid_from_display(display_image: np.ndarray, output_path: 
 
     # Save high-res version
     plt.tight_layout()
-    plt.savefig(output_path, dpi=75, bbox_inches='tight')  # Reduced DPI further
+    plt.savefig(output_path, dpi=50, bbox_inches='tight')  # Minimal DPI to save memory
     print(f"   ✓ Saved coordinate grid to: {output_path}")
     plt.close()
 
@@ -219,7 +219,7 @@ def create_partition_visualization_from_display(display_image: np.ndarray, parti
         scale: Scale factor used for downsampling
     """
     # Create smaller figure
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.imshow(display_image, cmap='gray', interpolation='nearest')
 
     # Draw partition rectangles
@@ -259,7 +259,7 @@ def create_partition_visualization_from_display(display_image: np.ndarray, parti
     ax.set_ylabel('Y coordinate (pixels)', fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=75, bbox_inches='tight')  # Reduced DPI further
+    plt.savefig(output_path, dpi=50, bbox_inches='tight')  # Minimal DPI to save memory
     print(f"   ✓ Saved partition visualization to: {output_path}")
     plt.close()
 
@@ -297,15 +297,17 @@ def collect_sample_partitions(sample_name: str, source_dir: Path,
 
     # IMMEDIATELY downsample to prevent memory explosion
     print(f"⏳ Downsampling for visualization to prevent memory issues...")
-    max_display_size = 800
+    max_display_size = 400  # Very aggressive to prevent WSL crash
     scale = min(max_display_size / max(image_height, image_width), 1.0)
 
     if scale < 1.0:
-        from skimage.transform import resize
-        display_height = int(image_height * scale)
-        display_width = int(image_width * scale)
-        dapi_data_display = resize(dapi_data_full, (display_height, display_width),
-                                   preserve_range=True, anti_aliasing=True)
+        # Use simple decimation instead of resize - much faster and lower memory
+        step_y = max(1, int(1.0 / scale))
+        step_x = max(1, int(1.0 / scale))
+        dapi_data_display = dapi_data_full[::step_y, ::step_x]
+        display_height, display_width = dapi_data_display.shape[:2]
+        # Recalculate actual scale after integer decimation
+        scale = display_width / image_width
         print(f"✓ Downsampled to {display_width} x {display_height} pixels ({scale:.2%} of original)")
     else:
         dapi_data_display = dapi_data_full.copy()
