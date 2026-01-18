@@ -45,55 +45,39 @@ def find_dapi_channel(sample_dir: Path) -> Path:
 
     raise FileNotFoundError(f"No DAPI channel found in {sample_dir}")
 
-def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_name: str):
-    """Create a visualization of the DAPI image with coordinate grid overlay."""
+def create_coordinate_grid_from_display(display_image: np.ndarray, output_path: Path,
+                                        sample_name: str, orig_width: int, orig_height: int,
+                                        scale: float):
+    """Create a visualization of the DAPI image with coordinate grid overlay.
+
+    Args:
+        display_image: Pre-downsampled and normalized uint8 image
+        output_path: Path to save the visualization
+        sample_name: Name of the sample
+        orig_width: Original image width (before downsampling)
+        orig_height: Original image height (before downsampling)
+        scale: Scale factor used for downsampling
+    """
     print(f"\n📐 Creating coordinate grid for {sample_name}")
-    print(f"   Image dimensions: {image_data.shape[1]} x {image_data.shape[0]} pixels")
-
-    # Downsample aggressively to prevent memory issues
-    max_display_size = 800  # Reduced from 2000 to save memory
-    height, width = image_data.shape[:2]
-
-    # Always downsample for safety
-    scale = min(max_display_size / max(height, width), 1.0)
-    display_height = int(height * scale)
-    display_width = int(width * scale)
-
-    if scale < 1.0:
-        from skimage.transform import resize
-        display_image = resize(image_data, (display_height, display_width),
-                             preserve_range=True, anti_aliasing=True)
-        print(f"   Display size: {display_width} x {display_height} pixels (scaled {scale:.2%} for memory)")
-    else:
-        display_image = image_data.copy()
-
-    # Delete original to free memory immediately
-    del image_data
-    gc.collect()
-
-    # Normalize for display
-    p2, p98 = np.percentile(display_image, (2, 98))
-    display_image = np.clip((display_image - p2) / (p98 - p2), 0, 1)
-
-    # Convert to uint8 to save memory
-    display_image = (display_image * 255).astype(np.uint8)
+    print(f"   Original dimensions: {orig_width} x {orig_height} pixels")
+    print(f"   Display dimensions: {display_image.shape[1]} x {display_image.shape[0]} pixels")
 
     # Create smaller figure
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.imshow(display_image, cmap='gray', interpolation='nearest')
 
-    # Add coordinate grid (every 2000 pixels)
+    # Add coordinate grid (every 2000 pixels in original coordinates)
     grid_spacing = 2000
 
     # Vertical lines
-    for x in range(0, width, grid_spacing):
+    for x in range(0, orig_width, grid_spacing):
         x_display = x * scale
         ax.axvline(x=x_display, color='cyan', alpha=0.4, linewidth=1, linestyle='--')
         ax.text(x_display, 50, f'x={x}', color='cyan', fontsize=8,
                bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
 
     # Horizontal lines
-    for y in range(0, height, grid_spacing):
+    for y in range(0, orig_height, grid_spacing):
         y_display = y * scale
         ax.axhline(y=y_display, color='yellow', alpha=0.4, linewidth=1, linestyle='--')
         ax.text(50, y_display, f'y={y}', color='yellow', fontsize=8,
@@ -102,9 +86,9 @@ def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_nam
     # Add corner coordinates
     corners = [
         (0, 0, 'topleft'),
-        (width, 0, 'topright'),
-        (0, height, 'bottomleft'),
-        (width, height, 'bottomright')
+        (orig_width, 0, 'topright'),
+        (0, orig_height, 'bottomleft'),
+        (orig_width, orig_height, 'bottomright')
     ]
 
     for x, y, label in corners:
@@ -117,7 +101,7 @@ def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_nam
                bbox=dict(boxstyle='round', facecolor='black', alpha=0.8))
 
     ax.set_title(f'{sample_name} - DAPI Channel with Coordinate Grid\n'
-                f'Original size: {width} x {height} pixels', fontsize=14, fontweight='bold')
+                f'Original size: {orig_width} x {orig_height} pixels', fontsize=14, fontweight='bold')
     ax.set_xlabel('X coordinate (pixels)', fontsize=12)
     ax.set_ylabel('Y coordinate (pixels)', fontsize=12)
 
@@ -128,10 +112,8 @@ def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_nam
     plt.close()
 
     # Clean up memory
-    del display_image, fig, ax
+    del fig, ax
     gc.collect()
-
-    return width, height
 
 def get_partition_info(sample_name: str, image_width: int, image_height: int) -> List[Dict]:
     """Interactively get partition information from user."""
@@ -225,35 +207,17 @@ def partition_channel_file(source_file: Path, partition: Dict, output_dir: Path,
 
     return output_path
 
-def create_partition_visualization(dapi_data: np.ndarray, partitions: List[Dict],
-                                  output_path: Path, sample_name: str):
-    """Create a visualization showing all partitions on the DAPI image."""
-    height, width = dapi_data.shape[:2]
+def create_partition_visualization_from_display(display_image: np.ndarray, partitions: List[Dict],
+                                                output_path: Path, sample_name: str, scale: float):
+    """Create a visualization showing all partitions on the DAPI image.
 
-    # Downsample aggressively to prevent memory issues
-    max_display_size = 800  # Reduced from 2000 to save memory
-    scale = min(max_display_size / max(height, width), 1.0)
-    display_height = int(height * scale)
-    display_width = int(width * scale)
-
-    if scale < 1.0:
-        from skimage.transform import resize
-        display_image = resize(dapi_data, (display_height, display_width),
-                             preserve_range=True, anti_aliasing=True)
-    else:
-        display_image = dapi_data.copy()
-
-    # Delete original to free memory
-    del dapi_data
-    gc.collect()
-
-    # Normalize for display
-    p2, p98 = np.percentile(display_image, (2, 98))
-    display_image = np.clip((display_image - p2) / (p98 - p2), 0, 1)
-
-    # Convert to uint8 to save memory
-    display_image = (display_image * 255).astype(np.uint8)
-
+    Args:
+        display_image: Pre-downsampled and normalized uint8 image
+        partitions: List of partition dictionaries
+        output_path: Path to save the visualization
+        sample_name: Name of the sample
+        scale: Scale factor used for downsampling
+    """
     # Create smaller figure
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.imshow(display_image, cmap='gray', interpolation='nearest')
@@ -300,7 +264,7 @@ def create_partition_visualization(dapi_data: np.ndarray, partitions: List[Dict]
     plt.close()
 
     # Clean up memory
-    del display_image, fig, ax
+    del fig, ax
     gc.collect()
 
 def collect_sample_partitions(sample_name: str, source_dir: Path,
@@ -325,18 +289,44 @@ def collect_sample_partitions(sample_name: str, source_dir: Path,
 
     # Load DAPI data with memory-efficient approach
     print(f"⏳ Loading DAPI image (this may take a moment for large files)...")
-    dapi_data = tifffile.imread(dapi_file)
-    print(f"✓ Loaded DAPI image: {dapi_data.shape}")
+    dapi_data_full = tifffile.imread(dapi_file)
+    print(f"✓ Loaded DAPI image: {dapi_data_full.shape}")
 
-    # Get dimensions before we potentially delete dapi_data
-    image_height, image_width = dapi_data.shape[:2]
+    # Get dimensions from original before downsampling
+    image_height, image_width = dapi_data_full.shape[:2]
+
+    # IMMEDIATELY downsample to prevent memory explosion
+    print(f"⏳ Downsampling for visualization to prevent memory issues...")
+    max_display_size = 800
+    scale = min(max_display_size / max(image_height, image_width), 1.0)
+
+    if scale < 1.0:
+        from skimage.transform import resize
+        display_height = int(image_height * scale)
+        display_width = int(image_width * scale)
+        dapi_data_display = resize(dapi_data_full, (display_height, display_width),
+                                   preserve_range=True, anti_aliasing=True)
+        print(f"✓ Downsampled to {display_width} x {display_height} pixels ({scale:.2%} of original)")
+    else:
+        dapi_data_display = dapi_data_full.copy()
+
+    # Delete the full resolution image immediately to free memory
+    del dapi_data_full
+    gc.collect()
+    print(f"✓ Released full-resolution image from memory")
+
+    # Normalize once for all visualizations
+    p2, p98 = np.percentile(dapi_data_display, (2, 98))
+    dapi_data_display = np.clip((dapi_data_display - p2) / (p98 - p2), 0, 1)
+    dapi_data_display = (dapi_data_display * 255).astype(np.uint8)
 
     # Create coordinate grid visualization
     vis_dir = visualization_dir / sample_name
     vis_dir.mkdir(parents=True, exist_ok=True)
 
     grid_path = vis_dir / f"{sample_name}_coordinate_grid.png"
-    _ = create_coordinate_grid(dapi_data.copy(), grid_path, sample_name)
+    create_coordinate_grid_from_display(dapi_data_display, grid_path, sample_name,
+                                       image_width, image_height, scale)
 
     print(f"\n📍 Please open the coordinate grid image to view coordinates:")
     print(f"   {grid_path}")
@@ -347,12 +337,13 @@ def collect_sample_partitions(sample_name: str, source_dir: Path,
 
     # Create partition visualization
     partition_vis_path = vis_dir / f"{sample_name}_partitions.png"
-    create_partition_visualization(dapi_data.copy(), partitions, partition_vis_path, sample_name)
+    create_partition_visualization_from_display(dapi_data_display, partitions,
+                                                partition_vis_path, sample_name, scale)
 
-    # Delete DAPI data to free memory immediately
-    del dapi_data
+    # Delete display data to free memory
+    del dapi_data_display
     gc.collect()
-    print(f"✓ Released DAPI image from memory")
+    print(f"✓ Released display image from memory")
 
     # Get all channel files
     channel_files = sorted(sample_source_dir.glob('*.ome.tif'))
