@@ -49,7 +49,7 @@ def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_nam
     print(f"   Image dimensions: {image_data.shape[1]} x {image_data.shape[0]} pixels")
 
     # Downsample if image is very large to make visualization manageable
-    max_display_size = 4000
+    max_display_size = 2000
     height, width = image_data.shape[:2]
 
     if max(height, width) > max_display_size:
@@ -73,8 +73,8 @@ def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_nam
     fig, ax = plt.subplots(figsize=(16, 12))
     ax.imshow(display_image, cmap='gray', interpolation='nearest')
 
-    # Add coordinate grid (every 1000 pixels)
-    grid_spacing = 1000
+    # Add coordinate grid (every 2000 pixels)
+    grid_spacing = 2000
 
     # Vertical lines
     for x in range(0, width, grid_spacing):
@@ -114,7 +114,7 @@ def create_coordinate_grid(image_data: np.ndarray, output_path: Path, sample_nam
 
     # Save high-res version
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=100, bbox_inches='tight')
     print(f"   ✓ Saved coordinate grid to: {output_path}")
     plt.close()
 
@@ -218,7 +218,7 @@ def create_partition_visualization(dapi_data: np.ndarray, partitions: List[Dict]
     height, width = dapi_data.shape[:2]
 
     # Downsample for display if needed
-    max_display_size = 4000
+    max_display_size = 2000
     if max(height, width) > max_display_size:
         scale = max_display_size / max(height, width)
         display_height = int(height * scale)
@@ -275,7 +275,7 @@ def create_partition_visualization(dapi_data: np.ndarray, partitions: List[Dict]
     ax.set_ylabel('Y coordinate (pixels)', fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=100, bbox_inches='tight')
     print(f"   ✓ Saved partition visualization to: {output_path}")
     plt.close()
 
