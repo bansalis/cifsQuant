@@ -26,16 +26,25 @@ def parse_markers_csv(markers_csv):
     
     return marker_names
 
-def find_matching_channels(sample_dir, marker_names):
-    """Find channel files that match marker names with flexible matching."""
+def find_matching_channels(sample_dir, marker_names, allow_missing=False):
+    """Find channel files that match marker names with flexible matching.
+
+    Args:
+        sample_dir: Directory containing .ome.tif files
+        marker_names: List of marker names to match
+        allow_missing: If True, return None for missing channels instead of raising error
+
+    Returns:
+        List of file paths (or None for missing channels if allow_missing=True)
+    """
     all_files = sorted(Path(sample_dir).glob('*.ome.tif'))
-    
+
     # Filter out non-image files
     all_files = [f for f in all_files if 'DAPI' in f.stem or any(x in f.stem for x in ['Cy3', 'Cy5', 'Cy7', 'FITC'])]
-    
+
     matched_files = []
     missing_markers = []
-    
+
     for marker_name in marker_names:
         # Extract key components from marker name
         # e.g., "R1.0.4_CY5_CD45" -> round="1.0.4", fluor="Cy5", protein="CD45"
@@ -43,40 +52,47 @@ def find_matching_channels(sample_dir, marker_names):
         round_num = parts[0].replace('R', '')  # "1.0.4"
         fluor = parts[1].upper() if len(parts) > 1 else ''  # "CY5"
         protein = parts[2] if len(parts) > 2 else ''  # "CD45"
-        
+
         # Normalize fluorophore name
         fluor_norm = fluor.replace('CY', 'Cy')  # CY5 -> Cy5
-        
+
         found = False
         for fpath in all_files:
             fname = fpath.stem
-            
+
             # Check if round number matches
             if round_num not in fname:
                 continue
-            
+
             # Check if fluorophore matches (case-insensitive)
             if fluor_norm.lower() not in fname.lower():
                 continue
-            
+
             # If protein specified, check for it (flexible matching)
             if protein and protein.lower() not in fname.lower():
                 continue
-            
+
             # Found a match!
             matched_files.append(fpath)
             found = True
             print(f"  ✓ {marker_name} -> {fpath.name}")
             break
-        
+
         if not found:
             missing_markers.append(marker_name)
-            print(f"  ✗ No match for '{marker_name}'")
-    
-    if missing_markers:
+            if allow_missing:
+                matched_files.append(None)  # Placeholder for missing channel
+                print(f"  ⚠ No match for '{marker_name}' - will fill with zeros")
+            else:
+                print(f"  ✗ No match for '{marker_name}'")
+
+    if missing_markers and not allow_missing:
         print(f"\n⚠ {len(missing_markers)} markers not found")
         raise ValueError(f"Missing {len(missing_markers)} required markers")
-    
+
+    if missing_markers and allow_missing:
+        print(f"\n⚠ {len(missing_markers)} markers will be filled with zeros")
+
     return matched_files
 
 def extract_tile_from_channel(args):
@@ -114,6 +130,8 @@ def main():
     parser.add_argument('--dapi_channel', type=int, default=3, help='DAPI channel index for prescreening')
     parser.add_argument('--max_workers', type=int, default=8, help='Max parallel workers')
     parser.add_argument('--batch_size', type=int, default=20, help='Tiles per batch (controls memory)')
+    parser.add_argument('--allow_missing_channels', action='store_true',
+                        help='Allow missing channels and fill with zeros instead of failing')
     args = parser.parse_args()
     
     # Create output directory
@@ -122,15 +140,20 @@ def main():
     # Get channel files
     #channel_files = sorted(Path(args.sample_dir).glob('*.ome.tif'))
     marker_names = parse_markers_csv(args.markers_csv)
-    channel_files = find_matching_channels(args.sample_dir, marker_names)
+    channel_files = find_matching_channels(args.sample_dir, marker_names, allow_missing=args.allow_missing_channels)
     if not channel_files:
         print(f"❌ No .ome.tif files found in {args.sample_dir}")
         sys.exit(1)
-    
+
     print(f"FAST MODE: Using {len(channel_files)} per-channel TIFF files")
-    
-    # Get dimensions from first file
-    with tifffile.TiffFile(channel_files[0]) as tif:
+
+    # Get dimensions from first non-None file
+    first_valid_file = next((f for f in channel_files if f is not None), None)
+    if first_valid_file is None:
+        print(f"❌ All channels are missing - cannot determine image dimensions")
+        sys.exit(1)
+
+    with tifffile.TiffFile(first_valid_file) as tif:
         height, width = tif.pages[0].shape
     
     print(f"Image: {len(channel_files)} channels, {height}x{width} pixels")
@@ -188,9 +211,13 @@ def main():
     
     # Prescreen with DAPI to avoid processing empty tiles
     print(f"Prescreening {len(coords_to_process)} tile locations from DAPI channel...")
-    dapi_data = tifffile.imread(channel_files[args.dapi_channel])
-    valid_coords = prescreen_dapi(dapi_data, coords_to_process)
-    del dapi_data
+    if channel_files[args.dapi_channel] is None:
+        print(f"⚠ DAPI channel {args.dapi_channel} is missing - skipping prescreening, processing all tiles")
+        valid_coords = coords_to_process
+    else:
+        dapi_data = tifffile.imread(channel_files[args.dapi_channel])
+        valid_coords = prescreen_dapi(dapi_data, coords_to_process)
+        del dapi_data
     
     empty_count = len(coords_to_process) - len(valid_coords)
     print(f"Prescreening complete:")
@@ -239,25 +266,30 @@ def main():
 
     for batch_idx, coord_batch in enumerate(coord_batches):
         print(f"\nBatch {batch_idx+1}/{len(coord_batches)}: {len(coord_batch)} tiles")
-        
+
         # Process each channel
         for ch_idx, ch_file in enumerate(channel_files):
             print(f"  Ch {ch_idx+1}/{len(channel_files)}...", end='', flush=True)
-            
-            # Load channel ONCE
-            channel_data = tifffile.imread(ch_file)
-            
+
+            # Load channel ONCE (or create zeros if missing)
+            if ch_file is None:
+                # Missing channel - create zero-filled array with correct dimensions
+                channel_data = np.zeros((height, width), dtype=np.uint16)
+                print(" [ZEROS]", end='', flush=True)
+            else:
+                channel_data = tifffile.imread(ch_file)
+
             # ThreadPoolExecutor - shares memory, no copying
             with ThreadPoolExecutor(max_workers=4) as executor:
-                tasks = [(channel_data, coord, 
+                tasks = [(channel_data, coord,
                         str(Path(args.output_dir) / coord['name']),
-                        ch_idx, len(channel_files)) 
+                        ch_idx, len(channel_files))
                         for coord in coord_batch]
                 list(executor.map(extract_and_append_channel, tasks))
-            
+
             del channel_data
             print(" ✓", flush=True)
-        
+
         print(f"  Batch {batch_idx+1} complete!")
 
     # Save metadata for ALL tiles (existing + newly created)
