@@ -436,6 +436,7 @@ for sample_entry in "${samples_to_process[@]}"; do
                 --overlap 1024 \
                 --dapi_channel 3 \
                 --max_workers 18 \
+                --allow_missing_channels \
                 $fast_temp_flag
 
             if [ $? -ne 0 ]; then
