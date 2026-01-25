@@ -52,6 +52,10 @@ class PerTumorAnalysisSpatialCells:
         self.output_dir = Path(output_dir) / 'per_tumor_analysis_spatialcells'
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Get grouping column from metadata config
+        meta_config = config.get('metadata', {})
+        self.group_col = meta_config.get('primary_grouping') or meta_config.get('group_column', 'group')
+
         # Initialize SpatialCells region detector
         self.region_detector = SpatialCellsRegionDetector(adata, config)
 
@@ -165,7 +169,7 @@ class PerTumorAnalysisSpatialCells:
                     'centroid_y': centroid[1],
                     'timepoint': region_cells['timepoint'].iloc[0] if 'timepoint' in region_cells.columns else np.nan,
                     'group': region_cells['group'].iloc[0] if 'group' in region_cells.columns else '',
-                    'main_group': region_cells['main_group'].iloc[0] if 'main_group' in region_cells.columns else ''
+                    'group': region_cells[self.group_col].iloc[0] if self.group_col in region_cells.columns else ''
                 })
 
         if per_tumor_results:
@@ -214,7 +218,7 @@ class PerTumorAnalysisSpatialCells:
                     'n_tumor_cells': int(n_tumor_cells),
                     'timepoint': region_cells['timepoint'].iloc[0] if 'timepoint' in region_cells.columns else np.nan,
                     'group': region_cells['group'].iloc[0] if 'group' in region_cells.columns else '',
-                    'main_group': region_cells['main_group'].iloc[0] if 'main_group' in region_cells.columns else ''
+                    'group': region_cells[self.group_col].iloc[0] if self.group_col in region_cells.columns else ''
                 }
 
                 # Calculate percentage for each marker
@@ -259,34 +263,38 @@ class PerTumorAnalysisSpatialCells:
         # Residual after Ki67 regression
         growth_norm_results = []
 
-        for (timepoint, group), group_df in df.groupby(['timepoint', 'main_group']):
-            if len(group_df) < 5:
-                continue
+        # Use group column from config, with fallback
+        group_col_to_use = 'group' if 'group' in df.columns else (self.group_col if self.group_col in df.columns else None)
 
-            ki67 = group_df['percent_Ki67_positive'].values
-            perk = group_df['percent_pERK_positive'].values
+        if group_col_to_use:
+            for (timepoint, group), group_df in df.groupby(['timepoint', group_col_to_use]):
+                if len(group_df) < 5:
+                    continue
 
-            valid_mask = ~(np.isnan(ki67) | np.isnan(perk))
-            if valid_mask.sum() < 3:
-                continue
+                ki67 = group_df['percent_Ki67_positive'].values
+                perk = group_df['percent_pERK_positive'].values
 
-            ki67_valid = ki67[valid_mask]
-            perk_valid = perk[valid_mask]
+                valid_mask = ~(np.isnan(ki67) | np.isnan(perk))
+                if valid_mask.sum() < 3:
+                    continue
 
-            # Fit line
-            slope, intercept = np.polyfit(ki67_valid, perk_valid, 1)
-            predicted_perk = slope * ki67 + intercept
-            residuals = perk - predicted_perk
+                ki67_valid = ki67[valid_mask]
+                perk_valid = perk[valid_mask]
 
-            for idx, (sample_id, tumor_id) in enumerate(zip(group_df['sample_id'], group_df['tumor_id'])):
-                growth_norm_results.append({
-                    'sample_id': sample_id,
-                    'tumor_id': tumor_id,
-                    'timepoint': timepoint,
-                    'main_group': group,
-                    'pERK_residual_from_Ki67': residuals[idx],
-                    'predicted_pERK_from_Ki67': predicted_perk[idx]
-                })
+                # Fit line
+                slope, intercept = np.polyfit(ki67_valid, perk_valid, 1)
+                predicted_perk = slope * ki67 + intercept
+                residuals = perk - predicted_perk
+
+                for idx, (sample_id, tumor_id) in enumerate(zip(group_df['sample_id'], group_df['tumor_id'])):
+                    growth_norm_results.append({
+                        'sample_id': sample_id,
+                        'tumor_id': tumor_id,
+                        'timepoint': timepoint,
+                        'group': group,
+                        'pERK_residual_from_Ki67': residuals[idx],
+                        'predicted_pERK_from_Ki67': predicted_perk[idx]
+                    })
 
         if growth_norm_results:
             residuals_df = pd.DataFrame(growth_norm_results)
@@ -298,7 +306,9 @@ class PerTumorAnalysisSpatialCells:
 
     def _calculate_per_tumor_infiltration(self):
         """Calculate immune infiltration per tumor structure using distance from boundaries."""
-        immune_pops = ['CD8_T_cells', 'CD3_positive', 'CD45_positive']
+        # Get immune populations from config, with sensible defaults
+        per_struct_config = self.config.get('per_structure_analysis', self.config.get('per_tumor_analysis', {}))
+        immune_pops = per_struct_config.get('immune_populations', ['T_cells', 'CD4_T_cells', 'CD8_T_cells'])
         infiltration_results = []
         tumor_pheno = self.tumor_config.get('base_phenotype', 'Tumor')
         tumor_col = f'is_{tumor_pheno}'
@@ -331,8 +341,7 @@ class PerTumorAnalysisSpatialCells:
                     'tumor_id': int(tumor_id),
                     'n_tumor_cells': int(n_tumor_cells),
                     'timepoint': tumor_cells['timepoint'].iloc[0] if 'timepoint' in tumor_cells.columns else np.nan,
-                    'group': tumor_cells['group'].iloc[0] if 'group' in tumor_cells.columns else '',
-                    'main_group': tumor_cells['main_group'].iloc[0] if 'main_group' in tumor_cells.columns else ''
+                    'group': tumor_cells[self.group_col].iloc[0] if self.group_col in tumor_cells.columns else ''
                 }
 
                 # Mark cells in this tumor for distance calculation
