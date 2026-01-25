@@ -105,7 +105,7 @@ class NeighborhoodPlotter:
         print(f"    ✓ Saved composition heatmap")
 
     def plot_neighborhood_abundance_over_time(self, data: pd.DataFrame,
-                                             group_col: str = 'main_group',
+                                             group_col: str = 'group',
                                              groups: List[str] = None):
         """
         Plot how neighborhood type abundance changes over time.
@@ -168,7 +168,7 @@ class NeighborhoodPlotter:
 
     def plot_neighborhood_comparison(self, data: pd.DataFrame,
                                     nh_type: int,
-                                    group_col: str = 'main_group',
+                                    group_col: str = 'group',
                                     groups: List[str] = None):
         """
         Compare specific neighborhood type between groups over time.
@@ -194,7 +194,9 @@ class NeighborhoodPlotter:
         fig.suptitle(f'Neighborhood Type {nh_type} - Group Comparison',
                     fontsize=16, fontweight='bold', y=0.995)
 
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
+        # Dynamic color assignment
+        default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#A65628']
+        colors = {g: default_colors[i % len(default_colors)] for i, g in enumerate(groups)}
 
         # Panel 1: Time series
         ax = axes[0, 0]
@@ -325,7 +327,7 @@ class NeighborhoodPlotter:
 
     def plot_all_neighborhoods_summary(self, data: pd.DataFrame,
                                       phenotypes: List[str],
-                                      group_col: str = 'main_group',
+                                      group_col: str = 'group',
                                       groups: List[str] = None):
         """
         Create comprehensive summary figure showing:
@@ -433,7 +435,7 @@ class NeighborhoodPlotter:
         print(f"    ✓ Generated {len(groups)} summary plots")
 
     def plot_neighborhood_stacked_area(self, data: pd.DataFrame,
-                                      group_col: str = 'main_group',
+                                      group_col: str = 'group',
                                       groups: List[str] = None):
         """
         Create stacked area chart showing neighborhood evolution over time.
