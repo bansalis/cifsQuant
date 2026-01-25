@@ -118,7 +118,7 @@ class DistanceAnalysis:
             distances_dict['n_target_cells'] = int(target_mask.sum())
 
             # Add sample metadata
-            for col in ['timepoint', 'group', 'main_group', 'genotype', 'treatment']:
+            for col in ['timepoint', 'group', 'genotype', 'treatment']:
                 if col in sample_data.columns:
                     distances_dict[col] = sample_data[col].iloc[0]
 
