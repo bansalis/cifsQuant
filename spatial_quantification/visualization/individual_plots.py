@@ -37,6 +37,10 @@ class IndividualPlots:
         self.formats = config['output'].get('formats', ['pdf', 'png'])
         self.dpi = config['output'].get('dpi', 300)
 
+        # Get timepoint label from config
+        plotting_config = config.get('plotting', {})
+        self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
+
         # Set up styles
         if self.config.get('style') == 'publication':
             setup_publication_style()
@@ -128,14 +132,14 @@ class IndividualPlots:
                           marker='o', markersize=8, linewidth=2.5,
                           capsize=5, capthick=2)
 
-                # Add raw data points if exploratory
+                # Add raw data points if exploratory (smaller points)
                 if style == 'exploratory':
                     ax.scatter(group_data['timepoint'], group_data[value_col],
-                             alpha=0.3, s=30, color=color)
+                             alpha=0.4, s=15, color=color, edgecolors='none')
 
             # Labels
             ylabel = value_col.replace('_', ' ').title()
-            ax.set_xlabel('Timepoint (days)', fontsize=14)
+            ax.set_xlabel(self.timepoint_label, fontsize=14)
             ax.set_ylabel(f'{population}\n{ylabel}', fontsize=14)
             ax.set_title(f'{population} Over Time', fontsize=16)
 

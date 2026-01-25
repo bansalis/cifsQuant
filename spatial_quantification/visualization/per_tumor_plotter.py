@@ -22,13 +22,17 @@ except ImportError:
 
 class PerTumorPlotter:
     """
-    Comprehensive plotting for per-tumor metrics.
+    Comprehensive plotting for per-tumor/per-structure metrics.
 
     Generates:
-    - Boxplots showing distribution of metrics across tumors
+    - Boxplots showing distribution of metrics across structures
     - Line plots showing temporal trends
-    - Scatter plots with individual tumor data points
+    - Scatter plots with individual structure data points
     """
+
+    # Default colors for dynamic assignment
+    DEFAULT_COLORS = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3',
+                      '#A65628', '#F781BF', '#999999', '#66C2A5', '#FC8D62']
 
     def __init__(self, output_dir: Path, config: Dict):
         """
@@ -46,11 +50,13 @@ class PerTumorPlotter:
         self.plots_dir.mkdir(parents=True, exist_ok=True)
         self.config = config
 
+        # Get grouping column from metadata config
+        meta_config = config.get('metadata', {})
+        self.group_col = meta_config.get('primary_grouping') or meta_config.get('group_column', 'group')
+
         # Get plotting settings
         plotting_config = config.get('plotting', {})
-        self.group_colors = plotting_config.get('group_colors', {
-            'KPT': '#E41A1C', 'KPNT': '#377EB8'
-        })
+        self.group_colors = plotting_config.get('group_colors', {})
         self.show_stats = plotting_config.get('show_stats', True)
         self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
@@ -59,9 +65,19 @@ class PerTumorPlotter:
         plt.rcParams['figure.dpi'] = 150
         plt.rcParams['savefig.dpi'] = 300
 
+    def _get_color(self, group: str, groups: List[str] = None) -> str:
+        """Get color for a group, dynamically assigning if not predefined."""
+        if group in self.group_colors:
+            return self.group_colors[group]
+        if groups is not None and group in groups:
+            idx = groups.index(group) % len(self.DEFAULT_COLORS)
+        else:
+            idx = hash(group) % len(self.DEFAULT_COLORS)
+        return self.DEFAULT_COLORS[idx]
+
     def plot_per_tumor_metric(self, data: pd.DataFrame, metric_col: str,
                               ylabel: str, title: str,
-                              group_col: str = 'main_group'):
+                              group_col: str = None):
         """
         Create boxplot + line plot for a per-tumor metric.
 
@@ -81,15 +97,28 @@ class PerTumorPlotter:
         if metric_col not in data.columns:
             return
 
+        # Use config group_col if not specified
+        if group_col is None:
+            group_col = self.group_col
+
         # Filter out invalid values
         plot_data = data[~data[metric_col].isna()].copy()
 
         if len(plot_data) == 0:
             return
 
+        # Check if group_col exists in data
+        if group_col not in plot_data.columns:
+            # Try 'group' as fallback
+            if 'group' in plot_data.columns:
+                group_col = 'group'
+            else:
+                print(f"  ⚠ Group column '{group_col}' not found in data")
+                return
+
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-        groups = sorted(plot_data[group_col].unique())
+        groups = sorted(plot_data[group_col].dropna().unique())
         timepoints = sorted(plot_data['timepoint'].unique())
 
         # Panel 1: Boxplots per timepoint
@@ -109,7 +138,7 @@ class PerTumorPlotter:
                 if len(group_tp_data) > 0:
                     box_data.append(group_tp_data[metric_col].values)
                     box_positions.append(i + j * width)
-                    box_colors.append(self.group_colors.get(group, '#000000'))
+                    box_colors.append(self._get_color(group, groups))
                     labels.append(f'{tp}\n{group}')
 
         if box_data:
@@ -124,11 +153,11 @@ class PerTumorPlotter:
             ax.set_xticklabels([str(tp) for tp in timepoints])
             ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
             ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
-            ax.set_title('Distribution Across Tumors', fontsize=13, fontweight='bold')
+            ax.set_title('Distribution Across Structures', fontsize=13, fontweight='bold')
 
             # Add legend
             from matplotlib.patches import Patch
-            legend_elements = [Patch(facecolor=self.group_colors.get(g, '#000000'),
+            legend_elements = [Patch(facecolor=self._get_color(g, groups),
                                     alpha=0.6, label=g) for g in groups]
             ax.legend(handles=legend_elements, loc='best', frameon=True)
             ax.grid(True, alpha=0.3, axis='y')
@@ -148,7 +177,7 @@ class PerTumorPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = self.group_colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             # Plot individual points (semi-transparent)
             ax.scatter(group_data['timepoint'], group_data[metric_col],
@@ -178,7 +207,7 @@ class PerTumorPlotter:
         plt.close(fig)
 
     def plot_all_marker_percentages(self, data: pd.DataFrame,
-                                    group_col: str = 'main_group'):
+                                    group_col: str = None):
         """
         Create overview plot for ALL marker percentages (dynamically from data columns).
         Uses box plots for single timepoint data.
@@ -190,6 +219,18 @@ class PerTumorPlotter:
         group_col : str
             Grouping column
         """
+        # Use config group_col if not specified
+        if group_col is None:
+            group_col = self.group_col
+
+        # Check if group_col exists
+        if group_col not in data.columns:
+            if 'group' in data.columns:
+                group_col = 'group'
+            else:
+                print(f"    ⚠ Group column '{group_col}' not found")
+                return
+
         # Dynamically find ALL percent_*_positive columns
         percent_cols = [col for col in data.columns if col.startswith('percent_') and col.endswith('_positive')]
 
@@ -204,7 +245,7 @@ class PerTumorPlotter:
         timepoints = sorted(data['timepoint'].unique()) if 'timepoint' in data.columns else [0]
         single_timepoint = len(timepoints) == 1
 
-        groups = sorted(data[group_col].unique())
+        groups = sorted(data[group_col].dropna().unique())
 
         # Create multi-panel figure (max 6 per row)
         n_markers = len(markers)
@@ -237,7 +278,7 @@ class PerTumorPlotter:
                     if len(group_data) > 0:
                         box_data.append(group_data[col].values)
                         positions.append(i)
-                        colors_list.append(self.group_colors.get(group, '#000000'))
+                        colors_list.append(self._get_color(group, groups))
                         labels.append(group)
 
                 if box_data:
@@ -265,7 +306,7 @@ class PerTumorPlotter:
                     means = summary['mean'].values
                     sems = summary['sem'].values
 
-                    color = self.group_colors.get(group, '#000000')
+                    color = self._get_color(group, groups)
 
                     ax.scatter(group_data['timepoint'], group_data[col],
                               alpha=0.15, s=10, color=color, edgecolors='none')
@@ -298,7 +339,7 @@ class PerTumorPlotter:
         print(f"    ✓ Plotted {n_markers} marker percentages ({plot_type})")
 
     def plot_growth_normalized_pERK(self, data: pd.DataFrame,
-                                   group_col: str = 'main_group'):
+                                   group_col: str = None):
         """
         Plot growth-normalized pERK metrics.
 
@@ -345,7 +386,7 @@ class PerTumorPlotter:
                 means = summary['mean'].values
                 sems = summary['sem'].values
 
-                color = self.group_colors.get(group, '#000000')
+                color = self._get_color(group, groups)
 
                 ax.scatter(group_data['timepoint'], group_data[metric_col],
                           alpha=0.15, s=15, color=color, edgecolors='none')
@@ -376,40 +417,129 @@ class PerTumorPlotter:
 
     def generate_all_plots(self, results: Dict):
         """
-        Generate all per-tumor plots.
+        Generate all per-structure plots.
 
         Parameters
         ----------
         results : dict
-            Results dictionary from PerTumorAnalysis
+            Results dictionary from PerTumorAnalysis/PerStructureAnalysis
         """
-        print("  Generating per-tumor plots...")
+        print("  Generating per-structure plots...")
 
         # Plot basic metrics
         if 'per_tumor_metrics' in results:
             data = results['per_tumor_metrics']
+
+            # Structure size (cells per structure)
             self.plot_per_tumor_metric(data, 'n_tumor_cells',
-                                      'Number of Tumor Cells',
-                                      'Tumor Size (cells per tumor)')
+                                      'Number of Cells',
+                                      'Structure Size (cells per structure)')
+
+            # Area if available
+            if 'area_um2' in data.columns:
+                self.plot_per_tumor_metric(data, 'area_um2',
+                                          'Area (μm²)',
+                                          'Structure Area Over Time')
+
+            # Density if available
+            if 'density_cells_per_um2' in data.columns:
+                self.plot_per_tumor_metric(data, 'density_cells_per_um2',
+                                          'Density (cells/μm²)',
+                                          'Structure Density Over Time')
+
+            # Number of structures per sample over time
+            self.plot_structure_counts_over_time(data)
 
         # Plot marker percentages
         if 'per_tumor_marker_percentages' in results:
             data = results['per_tumor_marker_percentages']
             self.plot_all_marker_percentages(data)
 
-        # Plot growth-normalized metrics
+        # Plot growth-normalized metrics (if pERK/Ki67 present)
         if 'per_tumor_growth_normalized' in results:
             data = results['per_tumor_growth_normalized']
             self.plot_growth_normalized_pERK(data)
 
-        # Plot infiltration metrics
+        # Plot infiltration metrics - dynamically find columns
         if 'per_tumor_infiltration' in results:
             data = results['per_tumor_infiltration']
-            for immune_pop in ['CD8_T_cells', 'CD3_positive', 'CD45_positive']:
-                col = f'{immune_pop}_density_per_tumor_cell'
-                if col in data.columns:
-                    self.plot_per_tumor_metric(data, col,
-                                              f'{immune_pop} per Tumor Cell',
-                                              f'{immune_pop} Infiltration Density')
+            # Find all density columns dynamically
+            density_cols = [col for col in data.columns if col.endswith('_density_per_tumor_cell')]
+            for col in density_cols:
+                immune_pop = col.replace('_density_per_tumor_cell', '')
+                self.plot_per_tumor_metric(data, col,
+                                          f'{immune_pop} per Structure Cell',
+                                          f'{immune_pop} Infiltration Density')
 
-        print(f"  ✓ Generated per-tumor plots in {self.plots_dir}/")
+        print(f"  ✓ Generated per-structure plots in {self.plots_dir}/")
+
+    def plot_structure_counts_over_time(self, data: pd.DataFrame):
+        """
+        Plot number of structures per sample over time.
+
+        Parameters
+        ----------
+        data : pd.DataFrame
+            Per-structure data with sample_id and timepoint columns
+        """
+        if 'sample_id' not in data.columns or 'timepoint' not in data.columns:
+            return
+
+        # Count structures per sample
+        counts = data.groupby(['sample_id', 'timepoint']).size().reset_index(name='n_structures')
+
+        # Add group info
+        group_col = self.group_col
+        if group_col in data.columns:
+            sample_to_group = data.drop_duplicates('sample_id').set_index('sample_id')[group_col].to_dict()
+            counts['group'] = counts['sample_id'].map(sample_to_group)
+        elif 'group' in data.columns:
+            group_col = 'group'
+            sample_to_group = data.drop_duplicates('sample_id').set_index('sample_id')[group_col].to_dict()
+            counts['group'] = counts['sample_id'].map(sample_to_group)
+        else:
+            counts['group'] = 'All'
+
+        groups = sorted(counts['group'].dropna().unique())
+        timepoints = sorted(counts['timepoint'].unique())
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        for group in groups:
+            group_data = counts[counts['group'] == group]
+
+            if len(group_data) == 0:
+                continue
+
+            summary = group_data.groupby('timepoint')['n_structures'].agg(['mean', 'sem', 'sum'])
+            tp_values = summary.index.values
+            means = summary['mean'].values
+            sems = summary['sem'].values
+
+            color = self._get_color(group, groups)
+
+            # Individual points (smaller)
+            ax.scatter(group_data['timepoint'], group_data['n_structures'],
+                      alpha=0.4, s=25, color=color, edgecolors='none')
+
+            # Line
+            ax.plot(tp_values, means, '-o', color=color, linewidth=2.5,
+                   markersize=10, label=group, zorder=10)
+
+            # Confidence band
+            ax.fill_between(tp_values, means - sems, means + sems,
+                           alpha=0.2, color=color)
+
+        ax.set_xlabel(self.timepoint_label, fontsize=12, fontweight='bold')
+        ax.set_ylabel('Number of Structures per Sample', fontsize=12, fontweight='bold')
+        ax.set_title('Structure Count Over Time', fontsize=14, fontweight='bold')
+        ax.legend(frameon=True, loc='best')
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+
+        plot_path = self.plots_dir / 'structure_count_over_time.png'
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+
+        print(f"    ✓ Plotted structure count over time")
