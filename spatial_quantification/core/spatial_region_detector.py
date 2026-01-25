@@ -44,7 +44,8 @@ class SpatialCellsRegionDetector:
 
         self.adata = adata
         self.config = config
-        self.tumor_config = config.get('tumor_definition', {})
+        # Support both 'structure_definition' (generic) and 'tumor_definition' (legacy)
+        self.tumor_config = config.get('structure_definition', config.get('tumor_definition', {}))
 
         # Prepare coordinate columns for SpatialCells (expects X_centroid, Y_centroid)
         if 'spatial' in self.adata.obsm:

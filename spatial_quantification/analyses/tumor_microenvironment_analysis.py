@@ -128,7 +128,7 @@ class TumorMicroenvironmentAnalysis:
         """
         pheno_name = pheno_def['name']
         pheno_col = f"is_{pheno_def['phenotype']}"
-        tumor_col = f"is_{self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')}"
+        tumor_col = f"is_{self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')}"
 
         if pheno_col not in self.adata.obs.columns:
             print(f"  ⚠ Phenotype column '{pheno_col}' not found, skipping")
