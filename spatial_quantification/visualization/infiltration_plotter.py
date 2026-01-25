@@ -48,9 +48,8 @@ class InfiltrationPlotter:
 
         # Get plotting settings
         plotting_config = config.get('plotting', {})
-        self.group_colors = plotting_config.get('group_colors', {
-            'KPT': '#E41A1C', 'KPNT': '#377EB8'
-        })
+        self.group_colors = plotting_config.get('group_colors', {})
+        self.default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#A65628']
         self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
         # Set style
@@ -93,7 +92,7 @@ class InfiltrationPlotter:
         if n_zones == 1:
             axes = axes.reshape(-1, 1)
 
-        groups = sorted(infiltration_df['main_group'].unique())
+        groups = sorted(infiltration_df['group'].unique())
 
         for pop_idx, immune_pop in enumerate(immune_pops):
             pop_data = infiltration_df[infiltration_df['immune_population'] == immune_pop]
@@ -110,7 +109,7 @@ class InfiltrationPlotter:
                     continue
 
                 # Aggregate by sample (mean across structures)
-                agg_data = zone_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
+                agg_data = zone_data.groupby(['sample_id', 'timepoint', 'group']).agg({
                     'count': 'sum',  # Total infiltration
                     'structure_size': 'sum'  # Total tumor cells
                 }).reset_index()
@@ -119,7 +118,7 @@ class InfiltrationPlotter:
                 agg_data['density'] = agg_data['count'] / agg_data['structure_size']
 
                 for group in groups:
-                    group_data = agg_data[agg_data['main_group'] == group]
+                    group_data = agg_data[agg_data['group'] == group]
 
                     if len(group_data) == 0:
                         continue
@@ -201,7 +200,7 @@ class InfiltrationPlotter:
         if n_metrics == 1:
             axes = axes.reshape(-1, 1)
 
-        groups = sorted(heterogeneity_df['main_group'].unique())
+        groups = sorted(heterogeneity_df['group'].unique())
 
         for marker_idx, marker in enumerate(markers):
             marker_data = heterogeneity_df[heterogeneity_df['marker'] == marker]
@@ -218,12 +217,12 @@ class InfiltrationPlotter:
                     continue
 
                 # Aggregate by sample (mean across structures)
-                agg_data = plot_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
+                agg_data = plot_data.groupby(['sample_id', 'timepoint', 'group']).agg({
                     metric_col: 'mean'
                 }).reset_index()
 
                 for group in groups:
-                    group_data = agg_data[agg_data['main_group'] == group]
+                    group_data = agg_data[agg_data['group'] == group]
 
                     if len(group_data) == 0:
                         continue
@@ -291,7 +290,7 @@ class InfiltrationPlotter:
         if n_markers == 1:
             axes = axes.reshape(-1, 1)
 
-        groups = sorted(zone_infiltration_df['main_group'].unique())
+        groups = sorted(zone_infiltration_df['group'].unique())
 
         for pop_idx, immune_pop in enumerate(immune_pops):
             pop_data = zone_infiltration_df[zone_infiltration_df['immune_population'] == immune_pop]
@@ -313,14 +312,14 @@ class InfiltrationPlotter:
                 marker_data['neg_density'] = marker_data['zone_negative_infiltration'] / marker_data['n_negative_cells']
 
                 # Aggregate by sample
-                agg_data = marker_data.groupby(['sample_id', 'timepoint', 'main_group']).agg({
+                agg_data = marker_data.groupby(['sample_id', 'timepoint', 'group']).agg({
                     'pos_density': 'mean',
                     'neg_density': 'mean'
                 }).reset_index()
 
                 # Plot both pos and neg with different line styles
                 for group in groups:
-                    group_data = agg_data[agg_data['main_group'] == group]
+                    group_data = agg_data[agg_data['group'] == group]
 
                     if len(group_data) == 0:
                         continue
@@ -388,7 +387,7 @@ class InfiltrationPlotter:
         zone_data = infiltration_df[infiltration_df['zone'] == key_zone]
 
         # Aggregate by group and timepoint
-        agg_data = zone_data.groupby(['main_group', 'timepoint', 'immune_population']).agg({
+        agg_data = zone_data.groupby(['group', 'timepoint', 'immune_population']).agg({
             'count': 'sum',
             'structure_size': 'sum'
         }).reset_index()
@@ -396,7 +395,7 @@ class InfiltrationPlotter:
         agg_data['density'] = agg_data['count'] / agg_data['structure_size']
 
         # Create pivot table for each group
-        groups = sorted(agg_data['main_group'].unique())
+        groups = sorted(agg_data['group'].unique())
         immune_pops = sorted(agg_data['immune_population'].unique())
 
         fig, axes = plt.subplots(1, len(groups), figsize=(8*len(groups), 6))
@@ -405,7 +404,7 @@ class InfiltrationPlotter:
 
         for idx, group in enumerate(groups):
             ax = axes[idx]
-            group_data = agg_data[agg_data['main_group'] == group]
+            group_data = agg_data[agg_data['group'] == group]
 
             # Pivot: rows = immune populations, columns = timepoints
             pivot = group_data.pivot_table(

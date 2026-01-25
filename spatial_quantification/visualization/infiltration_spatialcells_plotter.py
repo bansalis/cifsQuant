@@ -45,9 +45,8 @@ class InfiltrationSpatialCellsPlotter:
 
         # Get plotting settings
         plotting_config = config.get('plotting', {})
-        self.group_colors = plotting_config.get('group_colors', {
-            'KPT': '#E41A1C', 'KPNT': '#377EB8'
-        })
+        self.group_colors = plotting_config.get('group_colors', {})
+        self.default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#A65628']
         self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
         # Set style
@@ -150,7 +149,7 @@ class InfiltrationSpatialCellsPlotter:
 
         immune_pops = sorted(infiltration_df['immune_population'].unique())
         zones = sorted(infiltration_df['zone'].unique())
-        groups = sorted(infiltration_df['main_group'].unique())
+        groups = sorted(infiltration_df['group'].unique())
 
         # Create subplots: one row per immune population
         n_pops = len(immune_pops)
@@ -171,7 +170,7 @@ class InfiltrationSpatialCellsPlotter:
             for zone in zones:
                 for group in groups:
                     subset = pop_data[(pop_data['zone'] == zone) &
-                                     (pop_data['main_group'] == group)]
+                                     (pop_data['group'] == group)]
                     if len(subset) > 0:
                         plot_data.append(subset['infiltration_density'].values)
                         labels.append(f"{zone}\n{group}")
@@ -204,9 +203,9 @@ class InfiltrationSpatialCellsPlotter:
                 for zone_idx, zone in enumerate(zones):
                     # Get data for both groups in this zone
                     group1_data = pop_data[(pop_data['zone'] == zone) &
-                                          (pop_data['main_group'] == groups[0])]['infiltration_density'].values
+                                          (pop_data['group'] == groups[0])]['infiltration_density'].values
                     group2_data = pop_data[(pop_data['zone'] == zone) &
-                                          (pop_data['main_group'] == groups[1])]['infiltration_density'].values
+                                          (pop_data['group'] == groups[1])]['infiltration_density'].values
 
                     if len(group1_data) >= 3 and len(group2_data) >= 3:
                         # Perform statistical test
@@ -247,7 +246,7 @@ class InfiltrationSpatialCellsPlotter:
         if infiltration_df is None or len(infiltration_df) == 0:
             return
 
-        groups = sorted(infiltration_df['main_group'].unique())
+        groups = sorted(infiltration_df['group'].unique())
 
         # Create subplots: one per group
         fig, axes = plt.subplots(1, len(groups), figsize=(10*len(groups), 8))
@@ -257,7 +256,7 @@ class InfiltrationSpatialCellsPlotter:
 
         for idx, group in enumerate(groups):
             ax = axes[idx]
-            group_data = infiltration_df[infiltration_df['main_group'] == group]
+            group_data = infiltration_df[infiltration_df['group'] == group]
 
             # Aggregate across samples and structures
             agg = group_data.groupby(['immune_population', 'zone']).agg({
@@ -304,7 +303,7 @@ class InfiltrationSpatialCellsPlotter:
             return
 
         immune_pops = sorted(infiltration_df['immune_population'].unique())
-        groups = sorted(infiltration_df['main_group'].unique())
+        groups = sorted(infiltration_df['group'].unique())
 
         # Extract zone midpoints for plotting
         infiltration_df = infiltration_df.copy()
@@ -326,7 +325,7 @@ class InfiltrationSpatialCellsPlotter:
             pop_data = infiltration_df[infiltration_df['immune_population'] == immune_pop]
 
             for group in groups:
-                group_data = pop_data[pop_data['main_group'] == group]
+                group_data = pop_data[pop_data['group'] == group]
 
                 if len(group_data) == 0:
                     continue
@@ -381,7 +380,7 @@ class InfiltrationSpatialCellsPlotter:
         # Calculate total infiltration per tumor
         tumor_totals = infiltration_df.groupby(['sample_id', 'structure_id']).agg({
             'count': 'sum',
-            'main_group': 'first'
+            'group': 'first'
         }).reset_index()
         tumor_totals = tumor_totals.sort_values('count', ascending=False).head(top_n)
 
@@ -402,7 +401,7 @@ class InfiltrationSpatialCellsPlotter:
             ax = axes[idx]
             sample = tumor_row['sample_id']
             structure = tumor_row['structure_id']
-            group = tumor_row['main_group']
+            group = tumor_row['group']
 
             tumor_data = infiltration_df[
                 (infiltration_df['sample_id'] == sample) &
@@ -474,7 +473,7 @@ class InfiltrationSpatialCellsPlotter:
 
             # Violin plot
             sns.violinplot(data=zone_data, x='immune_population', y='infiltration_density',
-                          hue='main_group', ax=ax, palette=self.group_colors,
+                          hue='group', ax=ax, palette=self.group_colors,
                           split=False, inner='quartile', cut=0)
 
             ax.set_xlabel('Immune Population', fontsize=12, fontweight='bold')
@@ -504,13 +503,13 @@ class InfiltrationSpatialCellsPlotter:
             return
 
         # Aggregate total counts
-        totals = infiltration_df.groupby(['immune_population', 'main_group', 'zone']).agg({
+        totals = infiltration_df.groupby(['immune_population', 'group', 'zone']).agg({
             'count': 'sum'
         }).reset_index()
 
         immune_pops = sorted(totals['immune_population'].unique())
         zones = sorted(totals['zone'].unique())
-        groups = sorted(totals['main_group'].unique())
+        groups = sorted(totals['group'].unique())
 
         # Create subplots: one per zone
         n_zones = len(zones)
@@ -524,7 +523,7 @@ class InfiltrationSpatialCellsPlotter:
             zone_data = totals[totals['zone'] == zone]
 
             # Pivot for grouped bar chart
-            pivot = zone_data.pivot(index='immune_population', columns='main_group',
+            pivot = zone_data.pivot(index='immune_population', columns='group',
                                    values='count').fillna(0)
 
             if len(pivot) == 0:
@@ -578,7 +577,7 @@ class InfiltrationSpatialCellsPlotter:
             return
 
         immune_pops = sorted(infiltration_df['immune_population'].unique())
-        groups = sorted(infiltration_df['main_group'].unique())
+        groups = sorted(infiltration_df['group'].unique())
 
         # Focus on key zones
         key_zones = ['within_tumor', '0_50um']
@@ -614,7 +613,7 @@ class InfiltrationSpatialCellsPlotter:
                     continue
 
                 for group in groups:
-                    group_data = zone_data[zone_data['main_group'] == group]
+                    group_data = zone_data[zone_data['group'] == group]
 
                     if len(group_data) == 0:
                         continue
@@ -669,7 +668,7 @@ class InfiltrationSpatialCellsPlotter:
 
         # Aggregate per sample
         sample_summary = infiltration_df.groupby(['sample_id', 'immune_population',
-                                                  'main_group']).agg({
+                                                  'group']).agg({
             'infiltration_density': 'mean',
             'count': 'sum'
         }).reset_index()
@@ -700,7 +699,7 @@ class InfiltrationSpatialCellsPlotter:
             pivot = sample_data.pivot_table(
                 values='infiltration_density',
                 index='immune_population',
-                columns='main_group',
+                columns='group',
                 aggfunc='mean'
             ).fillna(0)
 
@@ -710,7 +709,7 @@ class InfiltrationSpatialCellsPlotter:
                                                      for g in pivot.columns],
                           alpha=0.8, width=0.8)
 
-                group = sample_data['main_group'].iloc[0]
+                group = sample_data['group'].iloc[0]
                 ax.set_title(f'{sample}\n({group})', fontsize=11, fontweight='bold')
                 ax.set_xlabel('', fontsize=9)
                 ax.set_ylabel('Mean Density', fontsize=9)
