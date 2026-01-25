@@ -1,5 +1,11 @@
 sample_id,group,treatment,timepoint
-JL216_Final, KPT trans, none, 10
-JL217_Final, KPT cis, none, 10
-JL218_Final, KPNT trans, none, 10
-JL219_Final, KPNT cis, none, 10
+CR36_Final, flu, none, 2
+CR41_Final, flu, none, 2
+CR42_Final, flu, none, 2
+CR43_Final, flu, none, 2
+CR31_Final, flu, none, 3
+CR32_Final, flu, none, 3
+CR38_Final, flu, none, 3
+ZY42_Final, flu, none, 5
+ZY43_Final, flu, none, 5
+ZY44_Final, flu, none, 5
