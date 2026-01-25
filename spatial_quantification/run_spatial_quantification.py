@@ -160,36 +160,38 @@ def main():
     tumor_structures = None  # Will be populated by per_tumor_analysis
     region_detector = None  # For SpatialCells analyses
 
-    # NEW: Per-Tumor Analysis (run first to detect tumor structures)
-    if HAS_NEW_ANALYSES and config.get('per_tumor_analysis', {}).get('enabled', False):
-        use_spatialcells = config.get('per_tumor_analysis', {}).get('use_spatialcells', False)
+    # NEW: Per-Structure Analysis (run first to detect structures - B cell clusters, tumors, etc.)
+    # Support both 'per_structure_analysis' and legacy 'per_tumor_analysis' config keys
+    per_structure_config = config.get('per_structure_analysis', config.get('per_tumor_analysis', {}))
+    if HAS_NEW_ANALYSES and per_structure_config.get('enabled', False):
+        use_spatialcells = per_structure_config.get('use_spatialcells', False)
 
         if use_spatialcells:
-            print("  ✓ Using SpatialCells-based per-tumor analysis (alpha shapes + boundaries)")
+            print("  ✓ Using SpatialCells-based per-structure analysis (alpha shapes + boundaries)")
             from spatial_quantification.analyses import PerTumorAnalysisSpatialCells
-            per_tumor = PerTumorAnalysisSpatialCells(adata, config, output_dir)
-            all_results['per_tumor_analysis'] = per_tumor.run()
-            tumor_structures = per_tumor.get_tumor_structures()
-            region_detector = per_tumor.get_region_detector()  # Reuse for other analyses
+            per_structure = PerTumorAnalysisSpatialCells(adata, config, output_dir)
+            all_results['per_structure_analysis'] = per_structure.run()
+            tumor_structures = per_structure.get_tumor_structures()
+            region_detector = per_structure.get_region_detector()  # Reuse for other analyses
         else:
-            print("  Using DBSCAN-based per-tumor analysis (legacy)")
-            per_tumor = PerTumorAnalysis(adata, config, output_dir)
-            all_results['per_tumor_analysis'] = per_tumor.run()
-            tumor_structures = per_tumor.get_tumor_structures()
+            print("  Using DBSCAN-based per-structure analysis (legacy)")
+            per_structure = PerTumorAnalysis(adata, config, output_dir)
+            all_results['per_structure_analysis'] = per_structure.run()
+            tumor_structures = per_structure.get_tumor_structures()
 
         # Generate plots if configured
-        if config.get('per_tumor_analysis', {}).get('generate_plots', True):
+        if per_structure_config.get('generate_plots', True):
             try:
                 from spatial_quantification.visualization.per_tumor_plotter import PerTumorPlotter
-                # Use the actual output directory from per_tumor analysis
-                plotter = PerTumorPlotter(per_tumor.output_dir, config)
-                plotter.generate_all_plots(all_results['per_tumor_analysis'])
+                # Use the actual output directory from per_structure analysis
+                plotter = PerTumorPlotter(per_structure.output_dir, config)
+                plotter.generate_all_plots(all_results['per_structure_analysis'])
             except Exception as e:
                 import traceback
-                print(f"  ⚠ Could not generate per-tumor plots: {e}")
+                print(f"  ⚠ Could not generate per-structure plots: {e}")
                 print(f"     Traceback: {traceback.format_exc()}")
 
-        # Generate comprehensive spatial plots (samples + individual tumors)
+        # Generate comprehensive spatial plots (samples + individual structures)
         if use_spatialcells and region_detector is not None:
             # Debug: Check region detector state
             print(f"\n  DEBUG: region_detector type: {type(region_detector)}")
@@ -197,26 +199,54 @@ def main():
             if hasattr(region_detector, 'tumor_boundaries'):
                 print(f"  DEBUG: tumor_boundaries keys: {list(region_detector.tumor_boundaries.keys())}")
                 for sample, boundaries in region_detector.tumor_boundaries.items():
-                    print(f"  DEBUG: Sample {sample} has {len(boundaries)} tumor boundaries")
+                    print(f"  DEBUG: Sample {sample} has {len(boundaries)} structure boundaries")
 
-            if config.get('per_tumor_analysis', {}).get('generate_spatial_plots', True):
+            if per_structure_config.get('generate_spatial_plots', True):
                 try:
                     from spatial_quantification.visualization.spatial_plotter import SpatialPlotter
-                    spatial_plotter = SpatialPlotter(per_tumor.output_dir, config)
+                    spatial_plotter = SpatialPlotter(per_structure.output_dir, config)
                     spatial_plotter.generate_spatialcells_plots(adata, region_detector)
                 except Exception as e:
                     import traceback
                     print(f"  ⚠ Could not generate spatial plots: {e}")
                     print(f"     Traceback: {traceback.format_exc()}")
 
-    # KPNT Correlation Analysis (tumor size and infiltration vs marker positivity)
-    if config.get('kpnt_correlation_analysis', {}).get('enabled', True):
+    # Temporal Analysis (cluster metrics over time)
+    if config.get('temporal_analysis', {}).get('enabled', False):
+        print("\n  Running temporal analysis...")
+        try:
+            from spatial_quantification.stats.temporal import TemporalAnalysis
+            temporal = TemporalAnalysis(adata, config, output_dir)
+            all_results['temporal_analysis'] = temporal.run()
+        except ImportError as e:
+            print(f"  ⚠ Temporal analysis module not available: {e}")
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Error in temporal analysis: {e}")
+            print(f"     Traceback: {traceback.format_exc()}")
+
+    # Cluster Composition Analysis (stacked bar charts)
+    if config.get('cluster_composition_analysis', {}).get('enabled', False):
+        print("\n  Running cluster composition analysis...")
+        try:
+            from spatial_quantification.analyses.cluster_composition_analysis import ClusterCompositionAnalysis
+            cluster_comp = ClusterCompositionAnalysis(adata, config, output_dir, tumor_structures=tumor_structures)
+            all_results['cluster_composition_analysis'] = cluster_comp.run()
+        except ImportError as e:
+            print(f"  ⚠ Cluster composition analysis module not available: {e}")
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Error in cluster composition analysis: {e}")
+            print(f"     Traceback: {traceback.format_exc()}")
+
+    # KPNT Correlation Analysis (structure size and infiltration vs marker positivity)
+    if config.get('kpnt_correlation_analysis', {}).get('enabled', False):
         try:
             from spatial_quantification.analyses.kpnt_correlation_analysis import KPNTCorrelationAnalysis
             print("\n  Running KPNT correlation analysis...")
             kpnt_corr = KPNTCorrelationAnalysis(
                 adata, config, output_dir,
-                per_tumor_results=all_results.get('per_tumor_analysis')
+                per_tumor_results=all_results.get('per_structure_analysis')
             )
             all_results['kpnt_correlation_analysis'] = kpnt_corr.run()
         except ImportError as e:

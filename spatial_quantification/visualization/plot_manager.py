@@ -65,20 +65,48 @@ class PlotManager:
 
                     # Plot for each comparison
                     for comp in comparisons:
-                        groups = comp.get('groups', [])
+                        config_groups = comp.get('groups', [])
                         group_col = self.group_col
-                        # Auto-detect groups if not specified
-                        if not groups and group_col in pop_data.columns:
-                            groups = sorted(pop_data[group_col].dropna().unique().tolist())
 
-                        # Calculate statistics
-                        timepoints = comp.get('timepoints', [])
-                        stats = self.group_comparison.compare_at_each_timepoint(
-                            pop_data, value_col, group_col, groups, timepoints
-                        )
+                        # Auto-detect groups from the data
+                        if group_col in pop_data.columns:
+                            actual_groups = sorted(pop_data[group_col].dropna().unique().tolist())
+                        else:
+                            actual_groups = []
 
-                        # Create plot
-                        output_name = f"{pop_name}_{value_col}_{'_vs_'.join(groups)}"
+                        # Only use config groups if they exist in the data, otherwise use actual groups
+                        if config_groups:
+                            groups = [g for g in config_groups if g in actual_groups]
+                            if not groups:
+                                groups = actual_groups
+                        else:
+                            groups = actual_groups
+
+                        if not groups:
+                            continue
+
+                        # Auto-detect timepoints from data
+                        if 'timepoint' in pop_data.columns:
+                            timepoints = sorted(pop_data['timepoint'].dropna().unique().tolist())
+                        else:
+                            timepoints = comp.get('timepoints', [])
+
+                        # Only calculate between-group statistics if we have 2+ groups
+                        stats = None
+                        if len(groups) >= 2 and timepoints:
+                            try:
+                                stats = self.group_comparison.compare_at_each_timepoint(
+                                    pop_data, value_col, group_col, groups, timepoints
+                                )
+                            except Exception as e:
+                                print(f"  ⚠ Could not calculate stats for {pop_name}: {e}")
+
+                        # Create meaningful output name
+                        if len(groups) == 1:
+                            output_name = f"{pop_name}_{value_col}_{groups[0]}_over_time"
+                        else:
+                            output_name = f"{pop_name}_{value_col}_{'_vs_'.join(groups)}"
+
                         self.individual_plots.plot_population_over_time(
                             pop_data,
                             population=pop_name,
@@ -89,9 +117,11 @@ class PlotManager:
                             output_name=output_name
                         )
 
-                        # Save statistics
-                        stats_path = self.output_dir / 'population_dynamics' / f'{output_name}_stats.csv'
-                        stats.to_csv(stats_path, index=False)
+                        # Save statistics if available
+                        if stats is not None:
+                            stats_path = self.output_dir / 'population_dynamics' / f'{output_name}_stats.csv'
+                            stats_path.parent.mkdir(parents=True, exist_ok=True)
+                            stats.to_csv(stats_path, index=False)
 
         print(f"  ✓ Generated population dynamics plots")
 
@@ -122,19 +152,49 @@ class PlotManager:
 
             # Plot for each comparison
             for comp in comparisons:
-                groups = comp.get('groups', [])
+                config_groups = comp.get('groups', [])
                 group_col = self.group_col
-                # Auto-detect groups if not specified
-                if not groups and group_col in pairing_data.columns:
-                    groups = sorted(pairing_data[group_col].dropna().unique().tolist())
 
-                # Time series plot
-                timepoints = comp.get('timepoints', [])
-                stats = self.group_comparison.compare_at_each_timepoint(
-                    pairing_data, 'mean_distance', group_col, groups, timepoints
-                )
+                # Auto-detect groups from the data
+                if group_col in pairing_data.columns:
+                    actual_groups = sorted(pairing_data[group_col].dropna().unique().tolist())
+                else:
+                    actual_groups = []
 
-                output_name = f"{pairing_name}_{'_vs_'.join(groups)}"
+                # Only use config groups if they exist in the data, otherwise use actual groups
+                if config_groups:
+                    groups = [g for g in config_groups if g in actual_groups]
+                    if not groups:
+                        groups = actual_groups  # Fall back to actual groups
+                else:
+                    groups = actual_groups
+
+                if not groups:
+                    print(f"  ⚠ No groups found for {pairing_name}, skipping plot")
+                    continue
+
+                # Time series plot - auto-detect timepoints
+                if 'timepoint' in pairing_data.columns:
+                    timepoints = sorted(pairing_data['timepoint'].dropna().unique().tolist())
+                else:
+                    timepoints = comp.get('timepoints', [])
+
+                # Only calculate between-group statistics if we have 2+ groups
+                stats = None
+                if len(groups) >= 2 and timepoints:
+                    try:
+                        stats = self.group_comparison.compare_at_each_timepoint(
+                            pairing_data, 'mean_distance', group_col, groups, timepoints
+                        )
+                    except Exception as e:
+                        print(f"  ⚠ Could not calculate stats for {pairing_name}: {e}")
+
+                # Create meaningful output name
+                if len(groups) == 1:
+                    output_name = f"{pairing_name}_{groups[0]}_over_time"
+                else:
+                    output_name = f"{pairing_name}_{'_vs_'.join(groups)}"
+
                 self.individual_plots.plot_population_over_time(
                     pairing_data,
                     population=f'{source} to {target}',
