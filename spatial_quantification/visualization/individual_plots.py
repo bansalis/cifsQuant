@@ -16,6 +16,10 @@ from .styles import (setup_publication_style, setup_exploratory_style,
 class IndividualPlots:
     """Generate individual plots for each analysis."""
 
+    # Default colors for dynamic assignment
+    DEFAULT_COLORS = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3',
+                      '#A65628', '#F781BF', '#999999', '#66C2A5', '#FC8D62']
+
     def __init__(self, config: Dict, output_dir: Path):
         """
         Initialize individual plots.
@@ -28,6 +32,7 @@ class IndividualPlots:
             Base output directory
         """
         self.config = config['visualization']
+        self.full_config = config
         self.output_dir = Path(output_dir)
         self.formats = config['output'].get('formats', ['pdf', 'png'])
         self.dpi = config['output'].get('dpi', 300)
@@ -40,11 +45,22 @@ class IndividualPlots:
 
         self.group_colors = get_group_colors()
 
+    def _get_color(self, group: str, groups: List[str] = None) -> str:
+        """Get color for a group, dynamically assigning if not predefined."""
+        if group in self.group_colors:
+            return self.group_colors[group]
+        # Assign color based on position in groups list
+        if groups is not None and group in groups:
+            idx = groups.index(group) % len(self.DEFAULT_COLORS)
+        else:
+            idx = hash(group) % len(self.DEFAULT_COLORS)
+        return self.DEFAULT_COLORS[idx]
+
     def plot_population_over_time(self, data: pd.DataFrame,
                                   population: str,
                                   value_col: str = 'count',
-                                  group_col: str = 'main_group',
-                                  groups: List[str] = ['KPT', 'KPNT'],
+                                  group_col: str = 'group',
+                                  groups: List[str] = None,
                                   stats: Optional[pd.DataFrame] = None,
                                   output_name: str = None):
         """
@@ -67,6 +83,17 @@ class IndividualPlots:
         output_name : str, optional
             Custom output filename
         """
+        # Auto-detect groups if not provided
+        if groups is None:
+            if group_col in data.columns:
+                groups = sorted(data[group_col].dropna().unique().tolist())
+            else:
+                groups = []
+
+        if not groups:
+            print(f"  ⚠ No groups found for {population}, skipping plot")
+            return
+
         # Create figure with two versions
         for style in ['exploratory', 'publication']:
             if style == 'exploratory':
@@ -93,7 +120,7 @@ class IndividualPlots:
                 means = summary['mean'].values
                 sems = summary['sem'].values
 
-                color = self.group_colors.get(group, '#000000')
+                color = self._get_color(group, groups)
 
                 # Line plot with error bars
                 ax.errorbar(timepoints, means, yerr=sems,
@@ -130,8 +157,8 @@ class IndividualPlots:
 
     def plot_group_comparison_boxplot(self, data: pd.DataFrame,
                                      value_col: str,
-                                     group_col: str = 'main_group',
-                                     groups: List[str] = ['KPT', 'KPNT'],
+                                     group_col: str = 'group',
+                                     groups: List[str] = None,
                                      title: str = '',
                                      ylabel: str = '',
                                      stats: Optional[Dict] = None,
@@ -158,6 +185,16 @@ class IndividualPlots:
         output_name : str
             Output filename
         """
+        # Auto-detect groups if not provided
+        if groups is None:
+            if group_col in data.columns:
+                groups = sorted(data[group_col].dropna().unique().tolist())
+            else:
+                groups = []
+
+        if not groups:
+            return
+
         for style in ['exploratory', 'publication']:
             if style == 'exploratory':
                 setup_exploratory_style()
@@ -177,7 +214,7 @@ class IndividualPlots:
 
             # Create boxplot
             positions = range(len(groups))
-            colors = [self.group_colors.get(g, '#000000') for g in groups]
+            colors = [self._get_color(g, groups) for g in groups]
 
             box_data = [plot_data[plot_data[group_col] == g][value_col].dropna().values
                        for g in groups]
@@ -225,10 +262,20 @@ class IndividualPlots:
     def plot_distance_distribution(self, data: pd.DataFrame,
                                    source: str,
                                    target: str,
-                                   group_col: str = 'main_group',
-                                   groups: List[str] = ['KPT', 'KPNT'],
+                                   group_col: str = 'group',
+                                   groups: List[str] = None,
                                    output_name: str = None):
         """Plot distance distribution between cell populations."""
+        # Auto-detect groups if not provided
+        if groups is None:
+            if group_col in data.columns:
+                groups = sorted(data[group_col].dropna().unique().tolist())
+            else:
+                groups = []
+
+        if not groups:
+            return
+
         for style in ['exploratory', 'publication']:
             if style == 'exploratory':
                 setup_exploratory_style()
@@ -246,7 +293,7 @@ class IndividualPlots:
                 if len(group_data) == 0:
                     continue
 
-                color = self.group_colors.get(group, '#000000')
+                color = self._get_color(group, groups)
 
                 # Plot histogram
                 ax.hist(group_data['mean_distance'], bins=30, alpha=0.5,
