@@ -58,7 +58,7 @@ class SpatialVisualizationManager:
         # 2. Tumor zone plots (DBSCAN validation)
         if self.config.get('spatial_visualization', {}).get('tumor_zones', True):
             print("\n[2/5] Generating tumor zone (DBSCAN) plots...")
-            tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+            tumor_col = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
             self.plotter.plot_tumor_zones_dbscan(self.adata, f'is_{tumor_col}')
 
         # 3. Marker +/- zone plots
@@ -71,7 +71,7 @@ class SpatialVisualizationManager:
         # 4. Tumor structure plots
         if self.config.get('spatial_visualization', {}).get('tumor_structures', True):
             print("\n[4/5] Generating tumor structure plots...")
-            tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+            tumor_col = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
             self.plotter.plot_tumor_structures_per_sample(self.adata, f'is_{tumor_col}')
 
         # 5. Multi-phenotype overlays
@@ -79,7 +79,7 @@ class SpatialVisualizationManager:
             print("\n[5/5] Generating phenotype overlay plots...")
             key_phenotypes = self._get_key_phenotypes_for_overlay()
             if key_phenotypes:
-                tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+                tumor_col = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
                 self.plotter.plot_phenotype_overlay(self.adata, key_phenotypes, f'is_{tumor_col}')
 
         print("\n" + "="*80)
@@ -204,7 +204,7 @@ class SpatialVisualizationManager:
         key_phenotypes = []
 
         # Tumor
-        tumor_base = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_base = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
         key_phenotypes.append(tumor_base)
 
         # Key tumor markers (from per_tumor_analysis)
