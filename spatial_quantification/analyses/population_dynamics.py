@@ -37,10 +37,15 @@ class PopulationDynamics:
             Output directory
         """
         self.adata = adata
+        self.full_config = config
         self.config = config['population_dynamics']
         self.stats_config = config.get('statistics', {})
         self.output_dir = Path(output_dir) / 'population_dynamics'
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get grouping column from metadata config
+        meta_config = config.get('metadata', {})
+        self.group_col = meta_config.get('primary_grouping') or meta_config.get('group_column', 'group')
 
         # Storage
         self.results = {}
@@ -153,9 +158,14 @@ class PopulationDynamics:
             merged['fraction'] = merged['subset_count'] / merged['parent_count']
             merged['fraction'] = merged['fraction'].fillna(0)  # Handle 0/0 as 0
 
-            # Add metadata from subset
+            # Add metadata from subset - only include columns that exist
+            subset_df_full = self.results[subset]
+            meta_cols = ['sample_id']
+            for col in ['timepoint', 'group', self.group_col]:
+                if col in subset_df_full.columns and col not in meta_cols:
+                    meta_cols.append(col)
             merged = merged.merge(
-                self.results[subset][['sample_id', 'timepoint', 'group', 'main_group']],
+                subset_df_full[meta_cols],
                 on='sample_id',
                 how='left'
             )
@@ -234,8 +244,18 @@ class PopulationDynamics:
             return
 
         comparison = comparisons[0]  # Use first comparison
-        group_col = 'main_group'
-        groups = comparison.get('groups', ['KPT', 'KPNT'])
+        group_col = self.group_col
+        # Get groups from config, or auto-detect from data
+        groups = comparison.get('groups', [])
+        if not groups:
+            # Auto-detect groups from the first population's data
+            for pop_data in self.results.values():
+                if group_col in pop_data.columns:
+                    groups = sorted(pop_data[group_col].dropna().unique().tolist())
+                    break
+        if not groups:
+            print(f"  ⚠ No groups found for column '{group_col}', skipping plots")
+            return
 
         # Plot each population - counts and density
         plot_count = 0
