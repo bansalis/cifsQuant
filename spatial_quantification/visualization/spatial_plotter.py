@@ -51,7 +51,7 @@ class SpatialPlotter:
         """
         print("\n  Generating tumor structure plots per sample...")
 
-        tumor_config = self.config.get('tumor_definition', {}).get('structure_detection', {})
+        tumor_config = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('structure_detection', {})
         eps = tumor_config.get('eps', 100)
         min_samples = tumor_config.get('min_samples', 10)
 
@@ -603,7 +603,7 @@ class SpatialPlotter:
         """
         print("\n  Generating tumor zone (DBSCAN cluster) plots...")
 
-        tumor_config = self.config.get('tumor_definition', {}).get('structure_detection', {})
+        tumor_config = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('structure_detection', {})
         eps = tumor_config.get('eps', 100)
         min_samples = tumor_config.get('min_samples', 10)
         min_cluster_size = tumor_config.get('min_cluster_size', 250)
@@ -713,7 +713,7 @@ class SpatialPlotter:
         """
         print("\n  Generating marker +/- zone plots...")
 
-        tumor_config = self.config.get('tumor_definition', {}).get('structure_detection', {})
+        tumor_config = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('structure_detection', {})
         eps = tumor_config.get('eps', 100)
         min_samples = tumor_config.get('min_samples', 10)
         min_cluster_size = tumor_config.get('min_cluster_size', 250)
@@ -882,7 +882,7 @@ class SpatialPlotter:
         if len(sample_adata) == 0:
             return
 
-        tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_col = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
         tumor_col = f'is_{tumor_col}'
         immune_pops = self.config.get('immune_populations', ['CD8_T_cells', 'CD3_positive', 'CD45_positive'])
 
@@ -1006,7 +1006,7 @@ class SpatialPlotter:
             warnings.warn(f"Invalid boundary shape for tumor {tumor_id} in {sample}: {boundary_array.shape}")
             return
 
-        tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_col = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
         tumor_col = f'is_{tumor_col}'
         immune_pops = self.config.get('immune_populations', ['CD8_T_cells', 'CD3_positive', 'CD45_positive'])
 
@@ -1181,7 +1181,7 @@ class SpatialPlotter:
         }
 
         # Plot background cells (non-tumor, non-immune)
-        tumor_col = self.config.get('tumor_definition', {}).get('base_phenotype', 'Tumor')
+        tumor_col = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('base_phenotype', 'Tumor')
         tumor_col = f'is_{tumor_col}'
 
         is_tumor_type = context_adata.obs[tumor_col].values if tumor_col in context_adata.obs.columns else np.zeros(len(context_adata), dtype=bool)

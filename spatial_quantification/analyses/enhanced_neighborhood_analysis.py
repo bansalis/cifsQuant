@@ -47,7 +47,7 @@ class EnhancedNeighborhoodAnalysis:
 
         # Use provided tumor structures or detect new ones
         self.tumor_structures = tumor_structures or {}
-        self.tumor_config = config.get('tumor_definition', {})
+        self.tumor_config = config.get('structure_definition', config.get('tumor_definition', {}))
 
         # Markers to analyze - read from config
         enh_config = config.get('enhanced_neighborhoods', {})

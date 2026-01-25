@@ -48,7 +48,7 @@ class PerTumorAnalysisSpatialCells:
 
         self.adata = adata
         self.config = config
-        self.tumor_config = config.get('tumor_definition', {})
+        self.tumor_config = config.get('structure_definition', config.get('tumor_definition', {}))
         self.output_dir = Path(output_dir) / 'per_tumor_analysis_spatialcells'
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

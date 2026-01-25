@@ -50,7 +50,8 @@ class InfiltrationAnalysisSpatialCells:
 
         self.adata = adata
         self.config = config['immune_infiltration']
-        self.tumor_config = config.get('tumor_definition', {})
+        # Support both 'structure_definition' (generic) and 'tumor_definition' (legacy)
+        self.tumor_config = config.get('structure_definition', config.get('tumor_definition', {}))
         self.output_dir = Path(output_dir) / 'infiltration_analysis_spatialcells'
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

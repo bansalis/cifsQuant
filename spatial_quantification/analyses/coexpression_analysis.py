@@ -63,7 +63,7 @@ class CoexpressionAnalysis:
 
         # Tumor structures
         self.tumor_structures = tumor_structures
-        self.tumor_config = config.get('tumor_definition', {})
+        self.tumor_config = config.get('structure_definition', config.get('tumor_definition', {}))
 
         # Markers to analyze - read from config
         coexp_config = config.get('coexpression_analysis', {})
