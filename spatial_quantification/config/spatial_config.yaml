@@ -1,8 +1,8 @@
 # ============================================================================
-# SPATIAL QUANTIFICATION CONFIGURATION - SINGLE TIMEPOINT COMPREHENSIVE
+# SPATIAL QUANTIFICATION CONFIGURATION - BALT/TLS ANALYSIS
 # ============================================================================
-# Updated: 2025-11-09
-# Single timepoint with extensive marker panel (23 markers)
+# Based on viral-induced lung B cell aggregate literature
+# Key refs: Moyron-Quiroz et al., Randall et al., GeurtsvanKessel et al.
 
 # ============================================================================
 # INPUT/OUTPUT
@@ -12,7 +12,7 @@ input:
   metadata: 'sample_metadata.csv'
 
 output:
-  base_directory: 'spatial_quantification_results'
+  base_directory: 'b_cell_cluster_analysis'
   save_intermediate: true
   formats: ['png']
   dpi: 300
@@ -32,29 +32,22 @@ plotting:
     0.01: '**'
     0.05: '*'
     1.0: 'ns'
-  group_colors:
-    KPT: '#E41A1C'
-    KPNT: '#377EB8'
-    cis: '#4DAF4A'
-    trans: '#FF7F00'
 
 # ============================================================================
-# TUMOR DEFINITION
+# B CELL CLUSTER DEFINITION (equivalent to tumor_definition)
 # ============================================================================
-tumor_definition:
-  base_phenotype: 'Tumor'
-  required_positive: ['TOM']
+structure_definition:
+  base_phenotype: 'B_cells'
+  required_positive: ['B220']
   required_negative: []
   structure_detection:
     method: 'DBSCAN'
-    eps: 1000
-    min_samples: 500
-    min_cluster_size: 250
-    boundary_buffer: 100
+    eps: 100
+    min_samples: 50
+    min_cluster_size: 100
+    boundary_buffer: 50
     use_expanded_boundary: true
-    alpha: 100                  # Alpha parameter for alpha shape boundary
-    min_edges: 20               # Minimum edges for boundary filtering
-    holes_min_edges: 200   
+    alpha: 100
 
 # ============================================================================
 # METADATA CONFIGURATION
@@ -63,251 +56,210 @@ metadata:
   sample_column: 'sample_id'
   group_column: 'group'
   timepoint_column: 'timepoint'
-  additional_groupings:
-    - 'genotype'
-    - 'main_group'
-    - 'treatment'
+  additional_groupings: []
 
 # ============================================================================
 # PHENOTYPE DEFINITIONS
 # ============================================================================
 phenotypes:
   # ============================================================================
-  # TUMOR PHENOTYPES
-  # ============================================================================
-  Tumor:
-    description: "All tumor cells (TOM+)"
-    positive: ['TOM']
-    negative: []
-  
-  pERK_positive_tumor:
-    description: "pERK+ tumor cells"
-    base: 'Tumor'
-    positive: ['PERK']
-  
-  pERK_negative_tumor:
-    description: "pERK- tumor cells"
-    base: 'Tumor'
-    negative: ['PERK']
-  
-  NINJA_positive_tumor:
-    description: "NINJA+ (AGFP+) tumor"
-    base: 'Tumor'
-    positive: ['NINJA']
-  
-  NINJA_negative_tumor:
-    description: "NINJA- tumor"
-    base: 'Tumor'
-    negative: ['NINJA']
-  
-  Ki67_positive_tumor:
-    description: "Proliferating tumor"
-    base: 'Tumor'
-    positive: ['KI67']
-  
-  PDL1_positive_tumor:
-    description: "PD-L1+ tumor (checkpoint)"
-    base: 'Tumor'
-    positive: ['PDL1']
-  
-  PDL1_negative_tumor:
-    description: "PD-L1- tumor"
-    base: 'Tumor'
-    negative: ['PDL1']
-  
-  EPCAM_positive_tumor:
-    description: "Epithelial tumor"
-    base: 'Tumor'
-    positive: ['EPCAM']
-    
-  EPCAM_negative_tumor:
-    description: "Epithelial tumor"
-    base: 'Tumor'
-    negative: ['EPCAM']
-  
-  TTF1_positive_tumor:
-    description: "TTF1+ lung lineage"
-    base: 'Tumor'
-    positive: ['TTF1']
-  
-  TTF1_negative_tumor:
-    description: "TTF1- lung lineage"
-    base: 'Tumor'
-    negative: ['TTF1']
-
-  CC3_positive_tumor:
-    description: "Apoptotic tumor"
-    base: 'Tumor'
-    positive: ['CC3']
-  
-  CC3_negative_tumor:
-    description: "Non-apoptotic tumor"
-    base: 'Tumor'
-    negative: ['CC3']
-  
-  MHCII_positive_tumor:
-    description: "MHCII tumor"
-    base: 'Tumor'
-    positive: ['MHCII']
-  
-  MHCII_negative_tumor:
-    description: "Non-MHCII tumor"
-    base: 'Tumor'
-    negative: ['MHCII']
-  
-  pERK_NINJA_positive_tumor:
-    description: "Double positive"
-    base: 'Tumor'
-    positive: ['PERK', 'NINJA']
-  
-  # ============================================================================
-  # T CELLS
-  # ============================================================================
-  CD45_positive:
-    description: "All immune cells"
-    positive: ['CD45']
-    negative: []
-  
-  T_cells:
-    description: "All T cells"
-    positive: ['CD3E']
-    negative: []
-  
-  CD8_T_cells:
-    description: "CD8+ cytotoxic T cells"
-    positive: ['CD3E', 'CD8A']
-    negative: []
-  
-  CD4_T_cells:
-    description: "CD4+ helper T cells"
-    positive: ['CD3E', 'CD4']
-    negative: []
-
-  CD4_Tregs:
-    description: "CD4+ regulatory T cells"
-    positive: ['CD3E', 'CD4', 'FOXP3']
-    negative: []
-
-  PD1_positive_CD8:
-    description: "Exhausted CD8+ T cells"
-    positive: ['CD3E', 'CD8A', 'PD1']
-    negative: []
-
-  # ============================================================================
-  # MACROPHAGES
-  # ============================================================================
-  Macrophages:
-    description: "All macrophages"
-    positive: ['F480']
-    negative: []
-  
-  MHCII+_macrophages:
-    description: "M1 anti-tumor macrophages"
-    positive: ['F480', 'MHCII']
-    negative: []
-  
-  MHCII-_macrophages:
-    description: "M2 pro-tumor macrophages"
-    positive: ['F480']
-    negative: ['MHCII']
-  
-  # ============================================================================
-  # OTHER IMMUNE
+  # B CELL POPULATIONS
   # ============================================================================
   B_cells:
-    description: "B cells"
+    description: "All B cells"
     positive: ['B220']
     negative: []
 
+  Naive_B_cells:
+    description: "Naive IgD+ B cells"
+    positive: ['B220', 'IgD']
+    negative: ['GL7', 'BCL6']
+
+  Follicular_B_cells:
+    description: "Follicular B cells (CD21+CD23+IgD+)"
+    positive: ['B220', 'CD21', 'CD23', 'IgD']
+    negative: ['GL7']
+
+  GC_B_cells:
+    description: "Germinal center B cells"
+    positive: ['B220', 'GL7', 'BCL6']
+    negative: ['IgD']
+
+  Proliferating_GC_B:
+    description: "Proliferating GC B cells"
+    positive: ['B220', 'GL7', 'BCL6', 'KI67']
+    negative: []
+
+  Non_proliferating_GC_B:
+    description: "Non-proliferating GC B cells"
+    positive: ['B220', 'GL7', 'BCL6']
+    negative: ['KI67']
+
+  AID_positive_GC_B:
+    description: "AID+ GC B (active SHM)"
+    positive: ['B220', 'GL7', 'AID']
+    negative: []
+
+  Memory_B_cells:
+    description: "Memory B cells (IgD- GL7-)"
+    positive: ['B220']
+    negative: ['IgD', 'GL7', 'BCL6']
+
+  Class_switched_B:
+    description: "Class-switched B cells"
+    positive: ['B220']
+    negative: ['IgD']
+
+  Activated_B_cells:
+    description: "Activated B cells"
+    positive: ['B220', 'CD23']
+    negative: ['GL7']
+
+  Proliferating_non_GC_B:
+    description: "Proliferating non-GC B"
+    positive: ['B220', 'KI67']
+    negative: ['GL7', 'BCL6']
+
+  GL7_positive_B_cells:
+    description: "GL7+ B cells for zone analysis"
+    positive: ['B220', 'GL7']
+    negative: []
+
+  # ============================================================================
+  # T CELL POPULATIONS
+  # ============================================================================
+  T_cells:
+    description: "All T cells"
+    positive: ['CD3']
+    negative: []
+
+  CD4_T_cells:
+    description: "CD4+ T cells"
+    positive: ['CD3', 'CD4']
+    negative: []
+
+  CD8_T_cells:
+    description: "CD8+ T cells"
+    positive: ['CD3', 'CD8B']
+    negative: []
+
+  Tfh_cells:
+    description: "Follicular helper T cells"
+    positive: ['CD3', 'CD4', 'PD1', 'BCL6']
+    negative: ['B220']
+
+  PD1_positive_CD4:
+    description: "PD1+ CD4 T cells"
+    positive: ['CD3', 'CD4', 'PD1']
+    negative: []
+
+  Non_Tfh_CD4:
+    description: "Non-Tfh CD4 T cells"
+    positive: ['CD3', 'CD4']
+    negative: ['PD1', 'BCL6']
+
+  # ============================================================================
+  # FOLLICULAR DENDRITIC CELLS
+  # ============================================================================
+  FDCs:
+    description: "Follicular dendritic cells"
+    positive: ['CD21', 'CD23']
+    negative: ['B220', 'CD3']
+
+  # ============================================================================
+  # STRUCTURAL / OTHER
+  # ============================================================================
+  HEV_positive:
+    description: "High endothelial venule marker"
+    positive: ['PNAD']
+    negative: []
+
+  All_proliferating:
+    description: "All proliferating cells"
+    positive: ['KI67']
+    negative: []
+
 # ============================================================================
-# ANALYSIS 0: PER-TUMOR ANALYSIS
+# ANALYSIS 0: PER-CLUSTER ANALYSIS (B cell clusters)
 # ============================================================================
-per_tumor_analysis:
+per_structure_analysis:
   enabled: true
-  use_spatialcells: true 
+  use_spatialcells: true
   generate_plots: true
 
   markers:
-    - name: 'pERK'
-      phenotype: 'pERK_positive_tumor'
-    - name: 'NINJA'
-      phenotype: 'NINJA_positive_tumor'
-    - name: 'Ki67'
-      phenotype: 'Ki67_positive_tumor'
-    - name: 'EPCAM'
-      phenotype: 'EPCAM_positive_tumor'
-    - name: 'TTF1'
-      phenotype: 'TTF1_positive_tumor'
-    - name: 'PD-L1'
-      phenotype: 'PD_positive_tumor'
-    - name: 'CC3'
-      phenotype: 'CC3_positive_tumor'
-    - name: 'MHCII'
-      phenotype: 'MHCII_positive_tumor'
-  
+    - name: 'GL7'
+      phenotype: 'GL7_positive_B_cells'
+    - name: 'GC_B'
+      phenotype: 'GC_B_cells'
+    - name: 'Tfh'
+      phenotype: 'Tfh_cells'
+    - name: 'FDC'
+      phenotype: 'FDCs'
+    - name: 'Proliferating'
+      phenotype: 'All_proliferating'
+
   spatial_heterogeneity:
     enabled: true
-    window_size: 300            # Sliding window size in microns
-    step_size: 300              # Step size in microns
-    min_cells: 10               # Minimum cells per window
-    phenotype_col: 'is_Ki67_positive_tumor'
+    window_size: 300
+    step_size: 300
+    min_cells: 10
+    phenotype_col: 'is_GC_B_cells'
 
 # ============================================================================
-# ANALYSIS 1: POPULATION DYNAMICS (CROSS-SECTIONAL)
+# ANALYSIS 1: POPULATION DYNAMICS (TEMPORAL)
 # ============================================================================
 population_dynamics:
+  enabled: true
   populations:
-    # Tumor (10)
-    - Tumor
-    - pERK_positive_tumor
-    - pERK_negative_tumor
-    - NINJA_positive_tumor
-    - NINJA_negative_tumor
-    - Ki67_positive_tumor
-    - PDL1_positive_tumor
-    - EPCAM_positive_tumor
-    - TTF1_positive_tumor
-    - CC3_positive_tumor
-    - MHCII_positive_tumor
-    - MHCII_negative_tumor
-    - pERK_NINJA_positive_tumor
-    
-    # T cells (4)
-    - CD45_positive
-    - T_cells
-    - CD8_T_cells
-    - CD4_T_cells
-    - CD4_Tregs
-    - PD1_positive_CD8
-
-    # Myeloid (3)
-    - Macrophages
-    - MHCII+_macrophages
-    - MHCII-_macrophages
-
-    # Other (1)
+    # B cell populations
     - B_cells
+    - Naive_B_cells
+    - Follicular_B_cells
+    - GC_B_cells
+    - Proliferating_GC_B
+    - Non_proliferating_GC_B
+    - AID_positive_GC_B
+    - Memory_B_cells
+    - Class_switched_B
+    - Activated_B_cells
+    - Proliferating_non_GC_B
+    # T cell populations
+    - T_cells
+    - CD4_T_cells
+    - CD8_T_cells
+    - Tfh_cells
+    - PD1_positive_CD4
+    - Non_Tfh_CD4
+    # Stromal
+    - FDCs
+    - HEV_positive
+    # Other
+    - All_proliferating
 
   fractional_populations:
-    pERK_positive_tumor: Tumor
-    NINJA_positive_tumor: Tumor
-    Ki67_positive_tumor: Tumor
-    PDL1_positive_tumor: Tumor
-    EPCAM_positive_tumor: Tumor
-    TTF1_positive_tumor: Tumor
-    CC3_positive_tumor: Tumor
-    MHCII_positive_tumor: Tumor
-    MHCII_negative_tumor: Tumor
-    CD8_T_cells: T_cells
+    # B cell fractions (relative to total B cells)
+    Naive_B_cells: B_cells
+    Follicular_B_cells: B_cells
+    GC_B_cells: B_cells
+    Memory_B_cells: B_cells
+    Class_switched_B: B_cells
+    Activated_B_cells: B_cells
+    Proliferating_non_GC_B: B_cells
+    # GC B cell fractions
+    Proliferating_GC_B: GC_B_cells
+    Non_proliferating_GC_B: GC_B_cells
+    AID_positive_GC_B: GC_B_cells
+    # T cell fractions
     CD4_T_cells: T_cells
-    CD4_Tregs: CD4_T_cells
-    PD1_positive_CD8: CD8_T_cells
-    MHCII+_macrophages: Macrophages
-    MHCII-_macrophages: Macrophages
+    CD8_T_cells: T_cells
+    Tfh_cells: CD4_T_cells
+    PD1_positive_CD4: CD4_T_cells
+    Non_Tfh_CD4: CD4_T_cells
 
   comparisons:
-    - name: 'Group_comparison'
-      groups: ['KPT', 'KPNT', 'cis', 'trans']  # Adjust based on actual groups
+    - name: 'Timepoint_comparison'
+      groups: ['flu']  # Will be populated from metadata
 
   metrics:
     - 'count'
@@ -315,37 +267,33 @@ population_dynamics:
     - 'fraction'
 
   statistics:
-    test_per_timepoint: false  # Single timepoint
-    test_method: 'mannwhitneyu'
+    test_per_timepoint: true
+    test_method: 'kruskal'
     alpha: 0.05
     fdr_correction: 'benjamini_hochberg'
+    pairwise_comparisons: true
 
 # ============================================================================
 # ANALYSIS 2: CELL-TO-CELL DISTANCE ANALYSIS
 # ============================================================================
 distance_analysis:
   enabled: true
-  
+
   pairings:
+    # Tfh to GC B cells
+    - source: 'Tfh_cells'
+      targets: ['GC_B_cells', 'Proliferating_GC_B', 'AID_positive_GC_B', 'Non_proliferating_GC_B']
+
+    # FDCs to B cell populations
+    - source: 'FDCs'
+      targets: ['B_cells', 'GC_B_cells', 'Naive_B_cells', 'Follicular_B_cells', 'Memory_B_cells']
+
+    # T cells to B cells
+    - source: 'CD4_T_cells'
+      targets: ['B_cells', 'GC_B_cells', 'Naive_B_cells', 'Memory_B_cells']
+
     - source: 'CD8_T_cells'
-      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
-                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
-
-    - source: 'PD1_positive_CD8'
-      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
-                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
-
-    - source: 'CD4_Tregs'
-      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
-                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
-
-    - source: 'MHCII+_macrophages'
-      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
-                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
-
-    - source: 'MHCII-_macrophages'
-      targets: ['Tumor', 'pERK_positive_tumor', 'pERK_negative_tumor', 
-                'NINJA_positive_tumor', 'NINJA_negative_tumor', 'PDL1_positive_tumor', 'CC3_positive_tumor', 'MHCII_positive_tumor', 'MHCII_negative_tumor']
+      targets: ['B_cells', 'GC_B_cells', 'Memory_B_cells']
 
   metrics:
     - 'mean_nearest_neighbor'
@@ -358,30 +306,27 @@ distance_analysis:
     - 'per_structure'
 
   comparisons:
-    - name: 'Group_comparison'
-      groups: ['KPT', 'KPNT', 'cis', 'trans']
+    - name: 'Timepoint_comparison'
+      groups: ['flu']
 
   max_distance_plot: 500
 
 # ============================================================================
-# ANALYSIS 3: IMMUNE INFILTRATION
+# ANALYSIS 3: IMMUNE INFILTRATION (into B cell clusters)
 # ============================================================================
 immune_infiltration:
   enabled: true
-  use_spatialcells: true 
+  use_spatialcells: true
   use_optimized: true
-  
+
   immune_populations:
-    - CD45_positive
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD4_Tregs
-    - PD1_positive_CD8
-    - B_cells
-    - Macrophages
-    - MHCII+_macrophages
-    - MHCII-_macrophages
+    - Tfh_cells
+    - PD1_positive_CD4
+    - Non_Tfh_CD4
+    - FDCs
 
   boundaries:
     - 0
@@ -392,103 +337,99 @@ immune_infiltration:
   per_structure: true
 
   comparisons:
-    - name: 'Group_comparison'
-      groups: ['KPT', 'KPNT', 'cis', 'trans']
+    - name: 'Timepoint_comparison'
+      groups: [ ]
 
   immune_community_detection:
     enabled: true
-    eps: 130                    # Larger eps for immune region detection
+    eps: 130
     min_samples: 20
     alpha: 130
-    min_area: 30000             # Minimum area for immune regions (μm²)
-
-  marker_zone_analysis:
-    enabled: true
-    
-    markers:
-      - marker: 'PERK'
-        positive_phenotype: 'pERK_positive_tumor'
-        negative_phenotype: 'pERK_negative_tumor'
-      
-      - marker: 'NINJA'
-        positive_phenotype: 'NINJA_positive_tumor'
-        negative_phenotype: 'NINJA_negative_tumor'
-      
-      - marker: 'PDL1'
-        positive_phenotype: 'PDL1_positive_tumor'
-        negative_phenotype: 'PDL1_negative_tumor'
-      
-      - marker: 'EPCAM'
-        positive_phenotype: 'EPCAM_positive_tumor'
-        negative_phenotype: 'EPCAM_negative_tumor'
-      
-      - marker: 'TTF1'
-        positive_phenotype: 'TTF1_positive_tumor'
-        negative_phenotype: 'TTF1_negative_tumor'
-
-      - marker: 'CC3'
-        positive_phenotype: 'CC3_positive_tumor'
-        negative_phenotype: 'CC3_negative_tumor'
-
-      - marker: 'MHCII'
-        positive_phenotype: 'MHCII_positive_tumor'
-        negative_phenotype: 'MHCII_negative_tumor'
-
-    heterogeneity_metrics:
-      - 'getis_ord_gi_star'
-      - 'ripleys_k'
-      - 'cluster_analysis'
-
-    zone_infiltration:
-      enabled: true
-      immune_populations:
-        - CD8_T_cells
-        - PD1_positive_CD8
-        - CD4_Tregs
-        - T_cells
-        - CD45_positive
-        - Macrophages
-        - MHCII+_macrophages
-        - MHCII-_macrophages
-        - B_cells
+    min_area: 30000
 
 # ============================================================================
-# ANALYSIS 4: CELLULAR NEIGHBORHOODS
+# ANALYSIS 4: GL7 ZONE ANALYSIS (marker region analysis)
+# ============================================================================
+marker_region_analysis:
+  enabled: true
+  generate_plots: true
+
+  markers:
+    - name: 'GL7'
+      positive_col: 'is_GL7_positive_B_cells'
+      negative_col: 'is_GL7_negative_B_cells'
+
+  region_detection:
+    eps: 50
+    min_samples: 20
+    alpha: 50
+    core_only: true
+    min_area: 1000
+    min_edges: 5
+    holes_min_area: 200
+    holes_min_edges: 5
+
+  phenotype_columns:
+    - 'is_B_cells'
+    - 'is_Naive_B_cells'
+    - 'is_Follicular_B_cells'
+    - 'is_GC_B_cells'
+    - 'is_Proliferating_GC_B'
+    - 'is_Non_proliferating_GC_B'
+    - 'is_AID_positive_GC_B'
+    - 'is_Memory_B_cells'
+    - 'is_Class_switched_B'
+    - 'is_Activated_B_cells'
+    - 'is_Proliferating_non_GC_B'
+    - 'is_T_cells'
+    - 'is_CD4_T_cells'
+    - 'is_CD8_T_cells'
+    - 'is_Tfh_cells'
+    - 'is_PD1_positive_CD4'
+    - 'is_Non_Tfh_CD4'
+    - 'is_FDCs'
+
+  immune_populations:
+    - 'is_Tfh_cells'
+    - 'is_CD4_T_cells'
+    - 'is_CD8_T_cells'
+    - 'is_PD1_positive_CD4'
+    - 'is_Non_Tfh_CD4'
+    - 'is_FDCs'
+
+  analyze_holes: false
+
+# ============================================================================
+# ANALYSIS 5: CELLULAR NEIGHBORHOODS
 # ============================================================================
 cellular_neighborhoods:
   enabled: true
   use_optimized: true
-  
+
   populations:
-    # Tumor states
-    - Tumor
-    - pERK_positive_tumor
-    - pERK_negative_tumor
-    - NINJA_positive_tumor
-    - NINJA_negative_tumor
-    - Ki67_positive_tumor
-    - PDL1_positive_tumor
-    - EPCAM_positive_tumor
-    - TTF1_positive_tumor
-    - CC3_positive_tumor
-    - MHCII_positive_tumor
-    - MHCII_negative_tumor
-    # Immune populations
-    - CD45_positive
+    # B cell populations
+    - B_cells
+    - Naive_B_cells
+    - Follicular_B_cells
+    - GC_B_cells
+    - Proliferating_GC_B
+    - AID_positive_GC_B
+    - Memory_B_cells
+    - Activated_B_cells
+    # T cell populations
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - CD4_Tregs
-    - PD1_positive_CD8
-    - B_cells
-    - Macrophages
-    - MHCII+_macrophages
-    - MHCII-_macrophages
+    - Tfh_cells
+    - PD1_positive_CD4
+    - Non_Tfh_CD4
+    # Stromal
+    - FDCs
 
   window_size: 100
   k_neighbors: 30
   cells_per_sample: 100000
-  n_clusters: 15
+  n_clusters: 12
   clustering_method: 'kmeans'
   define_globally: true
 
@@ -498,116 +439,40 @@ cellular_neighborhoods:
     - 'spatial_distribution'
 
   comparisons:
-    - name: 'Group_comparison'
-      groups: ['KPT', 'KPNT', 'cis', 'trans']
+    - name: 'Timepoint_comparison'
+      groups: [ ]
 
-
-marker_region_analysis:
+# ============================================================================
+# ANALYSIS 6: CLUSTER IMMUNE COMPOSITION (stacked bar)
+# ============================================================================
+cluster_composition_analysis:
   enabled: true
   generate_plots: true
 
-  # Markers to analyze (use is_ prefix for column names)
-  markers:
-    - name: 'pERK'
-      positive_col: 'is_pERK_positive_tumor'
-      negative_col: 'is_pERK_negative_tumor'
+  populations:
+    # B cell development stages
+    - Naive_B_cells
+    - Follicular_B_cells
+    - GC_B_cells
+    - Memory_B_cells
+    - Activated_B_cells
+    # GC activity markers
+    - Proliferating_GC_B
+    - AID_positive_GC_B
+    # T cell help
+    - Tfh_cells
+    - CD4_T_cells
+    - CD8_T_cells
+    # Stromal
+    - FDCs
 
-    - name: 'NINJA'
-      positive_col: 'is_NINJA_positive_tumor'
-      negative_col: 'is_NINJA_negative_tumor'
-
-    - name: 'PDL1'
-      positive_col: 'is_PDL1_positive_tumor'
-      negative_col: 'is_PDL1_negative_tumor'
-
-    - name: 'EPCAM'
-      positive_col: 'is_EPCAM_positive_tumor'
-      negative_col: 'is_EPCAM_negative_tumor'
-
-    - name: 'TTF1'
-      positive_col: 'is_TTF1_positive_tumor'
-      negative_col: 'is_TTF1_negative_tumor'
-
-    - name: 'CC3'
-      positive_col: 'is_CC3_positive_tumor'
-      negative_col: 'is_CC3_negative_tumor'
-    
-    - name: 'MHCII'
-      positive_col: 'is_MHCII_positive_tumor'
-      negative_col: 'is_MHCII_negative_tumor'
-
-  # Region detection parameters
-  region_detection:
-    eps: 55                    # DBSCAN epsilon (smaller = more outliers)
-    min_samples: 5             # Minimum samples for DBSCAN
-    alpha: 27                  # Alpha shape parameter (smaller = more detailed)
-    core_only: true            # Use only core samples (more stringent)
-    min_area: 0                # Minimum area for regions (μm²)
-    min_edges: 20              # Minimum edges for boundary polygons
-    holes_min_area: 10000      # Minimum area for holes (μm²)
-    holes_min_edges: 10        # Minimum edges for holes
-
-  # Phenotypes to analyze within regions
-  phenotype_columns:
-    - 'is_Tumor'
-    - 'is_pERK_positive_tumor'
-    - 'is_pERK_negative_tumor'
-    - 'is_NINJA_positive_tumor'
-    - 'is_NINJA_negative_tumor'
-    - 'is_Ki67_positive_tumor'
-    - 'is_PDL1_positive_tumor'
-    - 'is_EPCAM_positive_tumor'
-    - 'is_TTF1_positive_tumor'
-    - 'is_pERK_NINJA_positive_tumor'
-    - 'is_CC3_positive_tumor'
-    - 'is_MHCII_positive_tumor'
-    - 'is_MHCII_negative_tumor'
-    - 'is_CD45_positive'
-    - 'is_T_cells'
-    - 'is_CD8_T_cells'
-    - 'is_CD4_T_cells'
-    - 'is_CD4_Tregs'
-    - 'is_PD1_positive_CD8'
-    - 'is_Macrophages'
-    - 'is_MHCII+_macrophages'
-    - 'is_MHCII-_macrophages'
-    - 'is_B_cells'
-
-  # Immune populations for enrichment analysis (use is_ prefix)
-  immune_populations:
-    - 'is_CD45_positive'
-    - 'is_T_cells'
-    - 'is_CD4_T_cells'
-    - 'is_CD8_T_cells'
-    - 'is_CD4_Tregs'
-    - 'is_PD1_positive_CD8'
-    - 'is_B_cells'
-    - 'is_Macrophages'
-    - 'is_MHCII+_macrophages'
-    - 'is_MHCII-_macrophages'
-
-  # Optional hole analysis
-  analyze_holes: true
-  hole_buffer_distance: 30   # Distance for inner/outer hole zones (μm)
+  visualization:
+    stacked_bar: true
+    normalize: true
+    group_by_timepoint: true
 
 # ============================================================================
-# ANALYSIS 5: COEXPRESSION ANALYSIS
-# ============================================================================
-coexpression_analysis:
-  enabled: true
-
-  markers:
-    pERK: 'is_PERK'
-    NINJA: 'is_NINJA'
-    Ki67: 'is_KI67'
-    PDL1: 'is_PDL1'
-    EPCAM: 'is_EPCAM'
-    TTF1: 'is_TTF1'
-    CC3: 'is_CC3'
-    MHCII: 'is_MHCII'
-
-# ============================================================================
-# ANALYSIS 6: ENHANCED NEIGHBORHOODS
+# ANALYSIS 7: ENHANCED NEIGHBORHOODS
 # ============================================================================
 enhanced_neighborhoods:
   enabled: true
@@ -615,203 +480,54 @@ enhanced_neighborhoods:
   neighborhood_radius: 50
 
   markers:
-    - name: 'pERK'
-      pos_col: 'is_pERK_positive_tumor'
-      neg_col: 'is_pERK_negative_tumor'
-    
-    - name: 'NINJA'
-      pos_col: 'is_NINJA_positive_tumor'
-      neg_col: 'is_NINJA_negative_tumor'
-    
-    - name: 'PDL1'
-      pos_col: 'is_PDL1_positive_tumor'
-      neg_col: 'is_PDL1_negative_tumor'
-    
-    - name: 'EPCAM'
-      pos_col: 'is_EPCAM_positive_tumor'
-      neg_col: 'is_EPCAM_negative_tumor'
-    
-    - name: 'TTF1'
-      pos_col: 'is_TTF1_positive_tumor'
-      neg_col: 'is_TTF1_negative_tumor'
+    - name: 'GL7'
+      pos_col: 'is_GL7_positive_B_cells'
+      neg_col: 'is_GL7_negative_B_cells'
 
-    - name: 'CC3'
-      pos_col: 'is_CC3_positive_tumor'
-      neg_col: 'is_CC3_negative_tumor'
-
-    - name: 'MHCII'
-      pos_col: 'is_MHCII_positive_tumor'
-      neg_col: 'is_MHCII_negative_tumor'
+    - name: 'GC'
+      pos_col: 'is_GC_B_cells'
+      neg_col: 'is_Non_GC_B_cells'
 
   cell_types:
-    - Tumor
-    - pERK_positive_tumor
-    - NINJA_positive_tumor
-    - Ki67_positive_tumor
-    - PDL1_positive_tumor
-    - EPCAM_positive_tumor
-    - TTF1_positive_tumor
-    - CC3_positive_tumor
-    - MHCII_positive_tumor
-    - MHCII_negative_tumor
-    - CD45_positive
+    - B_cells
+    - Naive_B_cells
+    - Follicular_B_cells
+    - GC_B_cells
+    - Memory_B_cells
+    - Activated_B_cells
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - PD1_positive_CD8
-    - CD4_Tregs
-    - Macrophages
-    - MHCII+_macrophages
-    - MHCII-_macrophages
-    - B_cells
+    - Tfh_cells
+    - FDCs
 
   immune_cells:
-      - CD45_positive
-      - T_cells
-      - CD4_T_cells
-      - CD8_T_cells
-      - PD1_positive_CD8
-      - CD4_Tregs
-      - Macrophages
-      - MHCII+_macrophages
-      - MHCII-_macrophages
-      - B_cells
-
-# ============================================================================
-# ANALYSIS 7: TUMOR MICROENVIRONMENT
-# ============================================================================
-tumor_microenvironment:
-  enabled: true
-  generate_plots: true
-
-  distance_bins:
-    contact: 20
-    close: 100
-    distal: 500
-
-  tumor_phenotypes:
-    - name: 'pERK'
-      phenotype: 'pERK_positive_tumor'
-    - name: 'NINJA'
-      phenotype: 'NINJA_positive_tumor'
-    - name: 'Ki67'
-      phenotype: 'Ki67_positive_tumor'
-    - name: 'EPCAM'
-      phenotype: 'EPCAM_positive_tumor'
-    - name: 'TTF1'
-      phenotype: 'TTF1_positive_tumor'
-    - name: 'PDL1'
-      phenotype: 'PDL1_positive_tumor'
-    - name: 'CC3'
-      phenotype: 'CC3_positive_tumor'
-    - name: 'MHCII'
-      phenotype: 'MHCII_positive_tumor'
-    
-  immune_populations:
-    - CD45_positive
     - T_cells
     - CD4_T_cells
     - CD8_T_cells
-    - PD1_positive_CD8
-    - CD4_Tregs
-    - Macrophages
-    - MHCII+_macrophages
-    - MHCII-_macrophages
-    - B_cells
+    - Tfh_cells
+    - PD1_positive_CD4
+    - Non_Tfh_CD4
 
 # ============================================================================
-# ANALYSIS 8: UMAP VISUALIZATION
+# ANALYSIS 8: TEMPORAL METRICS
 # ============================================================================
-umap_visualization:
+temporal_analysis:
   enabled: true
 
-  markers:
-    - is_PERK
-    - is_NINJA
-    - is_KI67
-    - is_PDL1
-    - is_EPCAM
-    - is_TTF1
-    - is_CC3
-    - is_TOM
-    - is_CD45
-    - is_CD3E
-    - is_CD4
-    - is_CD8A
-    - is_FOXP3
-    - is_CD103
-    - is_GZMB
-    - is_PD1
-    - is_KLRG1
-    - is_B220
-    - is_F480
-    - is_MHCII
-    - is_ASMA
+  cluster_metrics:
+    - 'cluster_count'
+    - 'cluster_size'
+    - 'total_b_cells'
+    - 'cluster_area'
+    - 'cluster_density'
 
-  phenotypes:
-    - Tumor
-    - pERK_positive_tumor
-    - NINJA_positive_tumor
-    - Ki67_positive_tumor
-    - PDL1_positive_tumor
-    - CD45_positive
-    - T_cells
-    - CD4_T_cells
-    - CD8_T_cells
-    - PD1_positive_CD8
-    - CD4_Tregs
-    - B_cells
-    - Macrophages
-    - MHCII+_macrophages
-    - MHCII-_macrophages
-
-  n_neighbors: 30
-  min_dist: 0.3
-  n_clusters: 15
-  subsample: 100000
-
-# ============================================================================
-# ANALYSIS 9: PSEUDOTIME ANALYSIS (NEW)
-# ============================================================================
-pseudotime_analysis:
-  enabled: true
-  generate_plots: true
-
-# ============================================================================
-# ANALYSIS 10: MARKER CLUSTERING ANALYSIS WITH RANDOMIZATION TESTING
-# ============================================================================
-marker_clustering_analysis:
-  enabled: true
-  generate_plots: true
-
-  # Number of random permutations to test against null model
-  n_permutations: 500
-
-  # Significance level for testing
-  alpha: 0.05
-
-  # Tumor markers to analyze for spatial clustering
-  tumor_markers:
-    - 'pERK'
-    - 'NINJA'
-    - 'Ki67'
-    - 'PD-L1'
-    - 'MHC-II'
-
-# ============================================================================
-# ANALYSIS 11: SPATIAL OVERLAP ANALYSIS (MARKER REGIONS)
-# ============================================================================
-spatial_overlap_analysis:
-  enabled: true
-
-  # Region detection parameters (SpatialCells)
-  region_detection:
-    eps: 50                    # DBSCAN epsilon for clustering
-    min_samples: 10            # Minimum samples per cluster
-    alpha: 50                  # Alpha shape parameter
-    core_only: true            # Use only core samples
-    min_area: 5000             # Minimum area for regions (μm²)
-    min_edges: 15              # Minimum edges for boundary polygons
+  gl7_metrics:
+    - 'percent_gl7_positive_clusters'
+    - 'gl7_region_count'
+    - 'gl7_region_size'
+    - 'mean_tfh_per_gl7_region'
+    - 'tfh_to_gc_b_ratio'
 
 # ============================================================================
 # VISUALIZATION SETTINGS
@@ -839,26 +555,16 @@ visualization:
 # ============================================================================
 spatial_visualization:
   enabled: true
-
-  # Generate spatial plots for each individual phenotype
+  raw_fluorescence: true
   individual_phenotypes: true
-
-  # Generate tumor zone plots (DBSCAN cluster validation)
-  tumor_zones: true
-
-  # Generate marker +/- zone plots (e.g., pERK+/- spatial zones)
+  structure_zones: true
   marker_zones: true
-
-  # Generate tumor structure plots per sample
-  tumor_structures: true
-
-  # Generate multi-phenotype overlay plots
+  b_cell_clusters: true
   phenotype_overlays: true
 
-  # Distance histogram settings
   distance_histograms:
     enabled: true
-    distance_bins: [0, 50, 100, 200, 300, 500]  # Distance bands in microns
+    distance_bins: [0, 50, 100, 200, 300, 500]
 
 # ============================================================================
 # STATISTICAL TESTING
@@ -866,6 +572,7 @@ spatial_visualization:
 statistics:
   enabled: true
   pairwise_test: 'mannwhitneyu'
+  multigroup_test: 'kruskal'
   correlation_test: 'spearman'
   fdr_correction: 'benjamini_hochberg'
   alpha: 0.05
@@ -877,16 +584,6 @@ statistics:
   ci_level: 0.95
   n_bootstrap: 10000
   save_all_tests: true
-
-# ============================================================================
-# KPNT CORRELATION ANALYSIS
-# ============================================================================
-kpnt_correlation_analysis:
-  enabled: true
-  # Analyzes correlations for KPNT samples only:
-  # 1. Tumor size vs marker positivity
-  # 2. Infiltration vs marker positivity
-  # Creates box plots with statistical and non-statistical versions
 
 # ============================================================================
 # PERFORMANCE
@@ -904,7 +601,7 @@ performance:
 advanced:
   random_seed: 42
   verbose: true
-  log_file: 'spatial_quantification.log'
+  log_file: 'balt_tls_analysis.log'
   checkpointing:
     enabled: true
     frequency: 'per_analysis'

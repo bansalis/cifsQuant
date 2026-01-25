@@ -434,7 +434,7 @@ for sample_entry in "${samples_to_process[@]}"; do
                 --output_dir "$tile_dir" \
                 --tile_size 8192 \
                 --overlap 1024 \
-                --dapi_channel 3 \
+                --dapi_channel 0 \
                 --max_workers 18 \
                 --allow_missing_channels \
                 $fast_temp_flag
@@ -473,9 +473,9 @@ for sample_entry in "${samples_to_process[@]}"; do
         --cellpose true
         --mcquant true
         --scimap true
-        --dapi_channel 3
-        --nuc_diameter 15
-        --cyto_diameter 28
+        --dapi_channel 0
+        --nuc_diameter 12
+        --cyto_diameter 25
         --nuclei_batch_size 6
         --cyto_batch_size_tiles 4
         -with-report "$outdir/nextflow_report.html"

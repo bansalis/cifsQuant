@@ -35,73 +35,101 @@ from scipy.signal import argrelextrema
 # ============================================================================
 
 MARKERS = {
-    'R1.0.1_CY3': 'TOM',
-  'R1.0.4_CY5_CD45': 'CD45',
-  'R1.0.4_CY7_AGFP': 'NINJA',
-  'R2.0.4_CY3_PERK': 'PERK',
-  'R2.0.4_CY5_CD4': 'CD4',
-  'R2.0.4_CY7_EPCAM': 'EPCAM',
-  'R2.0.4_FITC_B220': 'B220',
-  'R3.0.4_CY3_CD3E': 'CD3E',
-  'R3.0.4_CY5_F480': 'F480',
-  'R3.0.4_CY7_TTF1': 'TTF1',
-  'R4.0.4_CY3_PD': 'PDL1',
-  'R4.0.4_CY5_CD8A': 'CD8A',
-  'R4.0.4_FITC_ASMA': 'ASMA',
-  'R5.0.4_CY3_GZMB': 'GZMB',
-  'R5.0.4_CY5_KLRG1': 'KLRG1',
-  'R5.0.4_FITC_FOXP3': 'FOXP3',
-  'R6.0.4_CY3_PD1': 'PD1',
-  'R6.0.4_CY5_NAK': 'NAK',
-  'R6.0.4_CY7_KI67': 'KI67',
-  'R6.0.4_FITC_MHCII': 'MHCII',
-  'R7.0.4_CY3_BCL6': 'BCL6',
-  'R7.0.4_CY5_CC3': 'CC3',
-  'R7.0.4_FITC_CD103': 'CD103'
+    'DAPI': 'DAPI',           # Nuclear stain - not for gating
+    'Cy3_CD4': 'CD4',         # T helper cells
+    'Cy5_CD21': 'CD21',       # Complement receptor, FDCs + mature B cells
+    'FITC_B220': 'B220',      # Pan-B cell marker (mouse CD45R)
+    'Cy3_BCL6': 'BCL6',       # Master GC transcription factor
+    'Cy5_GL7': 'GL7',         # Germinal center B cells
+    'FITC_IgD': 'IgD',        # Naive/mature B cells
+    'Cy3_CD8b': 'CD8B',       # Cytotoxic T cells
+    'Cy5_CD23': 'CD23',       # FDCs (light zone) + follicular B cells
+    'FITC_PNAD': 'PNAD',      # High endothelial venules
+    'Cy3_Ki67': 'KI67',       # Proliferation marker
+    'Cy5_AID': 'AID',         # Activation-induced deaminase (GC B cells)
+    'FITC_CD3': 'CD3',        # Pan-T cell marker
+    'Cy5_PD1': 'PD1'          # Tfh cells + exhausted T cells
 }
 
-# MARKER HIERARCHY for rare marker validation
-# Common markers are abundant phenotypes that should have HIGH positive %
-# Rare markers are subsets/functional markers that should have LOWER positive % than common markers
+# ============================================================================
+# MARKER HIERARCHY
+# ============================================================================
+# Biological parent-child relationships in germinal center/lymphoid tissue
+# Child markers MUST be subset of parent (enforced during gating)
+
+MARKER_HIERARCHY = {
+    # B cell lineage hierarchy
+    'BCL6': 'B220',        # BCL6+ GC B cells are subset of B220+ B cells
+    'GL7': 'B220',         # GL7+ GC B cells are subset of B220+ B cells  
+    'AID': 'B220',         # AID+ GC B cells are subset of B220+ B cells
+    'IgD': 'B220',         # IgD+ naive B cells are subset of B220+ B cells
+    'CD23': 'B220',        # CD23+ follicular B cells are subset of B220+ (when on B cells, not FDCs)
+    'CD21': 'B220',        # CD21+ mature B cells are subset of B220+ (when on B cells, not FDCs)
+    
+    # T cell lineage hierarchy
+    'CD4': 'CD3',          # CD4+ T helpers are subset of CD3+ T cells
+    'CD8B': 'CD3',         # CD8+ cytotoxic T cells are subset of CD3+ T cells
+    'PD1': 'CD3',          # PD1+ Tfh/exhausted T cells are subset of CD3+ T cells
+    
+    # Functional marker relationships
+    'KI67': None,          # Proliferation - can be on any cell type
+}
+
+# ============================================================================
+# MARKER CLASSIFICATION BY ABUNDANCE
+# ============================================================================
+# Based on expected frequencies in germinal center-containing lymphoid tissue
+# This informs validation and gating strategy
+
 OLD_MARKER_HIERARCHY = {
-    # Common markers (high abundance expected)
-    'common': ['CD45', 'TOM', 'EPCAM', 'CD3E'],
-
-    # Rare/functional markers that must have lower % than common markers
-    'rare': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1'],
-
-    # Intermediate markers (not strictly enforced)
-    'intermediate': ['CD4', 'CD8A', 'B220', 'F480', 'TTF1', 'ASMA', 'MHCII', 'NINJA', 'PERK', 'CD103', 'NAK', 'KI67']
+    # COMMON markers (high abundance, 20-60% of cells)
+    'common': [
+        'CD3',    # T cells: ~30-50% of lymphoid tissue
+        'B220',   # B cells: ~40-60% of lymphoid follicles
+        'IgD',    # Naive B cells: ~40-60% of B cells in follicles
+    ],
+    
+    # INTERMEDIATE markers (5-20% of cells)
+    'intermediate': [
+        'CD4',    # T helper: ~20-40% of T cells (~10-20% total)
+        'CD8B',   # Cytotoxic T: ~15-30% of T cells (~8-15% total)
+        'CD21',   # Mature B cells + FDCs: ~10-20% (variable by zone)
+        'CD23',   # Follicular B cells + FDC networks: ~10-20%
+        'KI67',   # Proliferating cells: ~5-20% (higher in GC dark zone)
+        'GL7',    # GC B cells: ~5-15% of B cells, similar to BCL6
+    ],
+    
+    # RARE/FUNCTIONAL markers (1-10% of cells)
+    'rare': [
+        'BCL6',   # GC B cells: ~5-15% of B cells, ~2-8% total
+        'AID',    # GC B cells undergoing SHM: ~3-10% of B cells
+        'PD1',    # Tfh cells: ~2-10% of T cells in GC-rich tissue
+        'PNAD',   # High endothelial venules: <1% (structural, not cells)
+    ],
 }
 
+# ============================================================================
 # GATE VALUES (normalized 0-1 scale)
+# ============================================================================
 # After 99th percentile normalization, gates can be shared across samples
 # Set to None to auto-calculate suggestions
+# Manual gates based on flow cytometry benchmarks can be added here
 
 GATES = {
-    'TOM': None,
-  'CD45': None,
-  'NINJA': None,
-  'PERK': None,
-  'CD4': None,
-  'EPCAM': None,
-  'B220': None,
-  'CD3E': None,
-  'F480': None,
-  'TTF1': None,
-  'PDL1': None,
-  'CD8A': None,
-  'ASMA': None,
-  'GZMB': None,
-  'KLRG1': None,
-  'FOXP3': None,
-  'PD1': None,
-  'NAK': None,
-  'KI67': None,
-  'MHCII': None,
-  'BCL6': None,
-  'CC3': None,
-  'CD103': None
+    'DAPI': None,     # Not gated (nuclear stain)
+    'CD4': None,      # Auto-calculate
+    'CD21': None,     # Auto-calculate (complex: FDCs very bright, B cells dim)
+    'B220': None,     # Auto-calculate
+    'BCL6': None,     # Auto-calculate (nuclear, can be dim)
+    'GL7': None,      # Auto-calculate
+    'IgD': None,      # Auto-calculate
+    'CD8B': None,     # Auto-calculate
+    'CD23': None,     # Auto-calculate (FDCs bright, B cells intermediate)
+    'PNAD': None,     # Auto-calculate (rare structural marker)
+    'KI67': None,     # Auto-calculate (nuclear, variable intensity)
+    'AID': None,      # Auto-calculate (nuclear, can be dim)
+    'CD3': None,      # Auto-calculate
+    'PD1': None,      # Auto-calculate
 }
 
 # Advanced options
@@ -109,78 +137,64 @@ USE_SHARED_GATES = True  # True = one gate per marker; False = per-sample gates
 NORMALIZATION_METHOD = 'percentile_99'  # 'percentile_99' or 'zscore' or 'minmax'
 
 # ============================================================================
-# TILE ARTIFACT CORRECTION (microscope grid detection + UniFORM normalization)
+# TILE ARTIFACT CORRECTION
 # ============================================================================
-# Configuration for detecting actual microscope tile grid and applying UniFORM
-# Detects regular grid of microscope tiles (not MCMICRO tiles) using intensity
-# patterns, then normalizes dimmer tiles to match normal tiles
+# Markers prone to tile-level variations in germinal center imaging
+# Nuclear markers and dim GC markers are particularly susceptible
 
 TILE_CORRECTION_CONFIG = {
     'enabled': True,
-    'markers': ['GZMB', 'FOXP3', 'KLRG1', 'PD1', 'BCL6', 'CC3', 'PDL1', 'PERK'],
-
-    # Grid detection parameters
+    
+    # Focus on nuclear markers and dim GC-specific markers
+    # BCL6, AID, Ki67 = nuclear (affected by focus/illumination)
+    # GL7, PD1 = membrane markers that can be dim on subpopulations
+    'markers': ['B220','BCL6', 'GL7', 'AID', 'KI67', 'PD1', 'CD21', 'CD23'],
+    
+    # Grid detection parameters (optimized for lymphoid follicle structure)
     'bin_size': 400,                   # Spatial binning for heatmap (pixels)
     'peak_distance': 10,               # Minimum distance between grid lines (bins)
     'peak_height_percentile': 60,      # Peak detection threshold (percentile)
     'min_tiles': 4,                    # Minimum number of tiles to proceed
     'min_tile_size': 500,              # Minimum cells per tile
-    'outlier_threshold': 2.0,          # MAD units for classifying dimmer/brighter tiles
-
+    'outlier_threshold': 2.5,          # MAD units for classifying dimmer/brighter tiles
+    
     # UniFORM normalization parameters
     'n_quantiles': 75,                # Number of quantiles for UniFORM
-    'correction_strength': 1.0,        # Dim tile correction strength (0-1, 1.0=full correction)
-    'bright_correction_strength': 1.0, # Bright tile correction strength (REDUCED to minimize bright tile normalization)
-
-    # Radial artifact correction parameters (within-tile vignetting)
+    'correction_strength': 1.0,        # Dim tile correction strength (0-1, 1.0=full)
+    'bright_correction_strength': 0.8, # Bright tile correction strength
+    
+    # Radial artifact correction (within-tile vignetting)
     'radial_correction': True,         # Enable radial artifact correction
     'radial_bins': 5,                  # Number of radial zones (center to edge)
-    'radial_threshold': 0.12,          # Max deviation to trigger correction (15%)
-}
-
-# ============================================================================
-# HIERARCHICAL MARKER RELATIONSHIPS
-# ============================================================================
-# Define parent-child relationships: child markers must be subset of parent
-# Format: 'child_marker': 'parent_marker'
-# Child will only be positive if parent is also positive
-MARKER_HIERARCHY = {
-    'FOXP3': 'CD4',
-    'GZMB': 'CD8A',
-    'CD8A': 'CD3E',
-    'CD4': 'CD3E',
-    'PD1': 'CD3E',
-    'KLRG1': 'CD8A',
-    'CD103': 'CD3E',
-    'B220': 'CD45',
-    'F480': 'CD45',
-    'MHCII': 'CD45',
-    'BCL6': 'B220',
-    'NINJA': 'TOM'
+    'radial_threshold': 0.12,          # Max deviation to trigger correction (12%)
 }
 
 # ============================================================================
 # LIBERAL GATING CONFIGURATION
 # ============================================================================
-# Specify markers where you want to OVERESTIMATE positive populations
-# (i.e., be less conservative, allow more cells to be called positive)
-# These markers will use relaxed thresholds to enrich positive populations
+# Markers where we want to ENRICH positive populations (be less conservative)
+# Critical for rare GC markers where false negatives > false positives
 
 LIBERAL_GATING_CONFIG = {
     'enabled': True,
-
-    # List markers that should use liberal (less conservative) gating
-    # Example: markers where you want to capture more positive cells
-    'liberal_markers': ['NINJA', 'PERK', 'GZMB', 'FOXP3', 'KLRG1', 'PD1'],
-
+    
+    # GC-specific markers: These are biologically important rare populations
+    # We prefer sensitivity over specificity to capture true GC events
+    'liberal_markers': [
+        'BCL6',   # Master GC regulator - don't miss true GC B cells
+        'GL7',    # GC B cell marker - similar rationale
+        'AID',    # Somatic hypermutation enzyme - very important, can be dim
+        'PD1',    # Tfh cells - critical for GC function, can be dim
+        'KI67',   # Proliferation - varies widely, capture proliferating cells
+    ],
+    
     # Liberal gating parameters (less stringent than default)
-    # Default values: PEAK_MULTIPLIER=2.0, VALLEY_MAX_HEIGHT=0.20, MIN_PERCENTILE=85
-    'liberal_peak_multiplier': 1.9,      # Reduced from 2.0 (allows gates closer to negative peak)
-    'liberal_valley_max_height': 0.22,   # Increased from 0.20 (tolerates shallower valleys)
-    'liberal_min_percentile': 82,        # Reduced from 85 (allows lower percentile gates)
-    'liberal_min_absolute_gate': 0.15,   # Reduced from 0.15 (allows lower absolute gates)
+    # These values are tuned for rare populations where signal may be dim
+    'liberal_peak_multiplier': 1.75,      # Reduced from 2.0 (allow gates closer to negative)
+    'liberal_valley_max_height': 0.3,   # Increased from 0.20 (tolerate shallower valleys)
+    'liberal_min_percentile': 85,        # Reduced from 85 (allow lower percentile gates)
+    'liberal_min_absolute_gate': 0.15,   # Reduced from 0.15 (allow lower absolute gates)
 }
-
 # ============================================================================
 
 def load_and_combine(results_dir):

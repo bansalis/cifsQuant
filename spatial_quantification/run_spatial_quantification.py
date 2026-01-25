@@ -206,6 +206,7 @@ def main():
                     from spatial_quantification.visualization.spatial_plotter import SpatialPlotter
                     spatial_plotter = SpatialPlotter(per_structure.output_dir, config)
                     spatial_plotter.generate_spatialcells_plots(adata, region_detector)
+                    spatial_plotter.plot_raw_fluorescence_spatial(adata, markers=['B220', 'GL7', 'BCL6', 'CD3'])
                 except Exception as e:
                     import traceback
                     print(f"  ⚠ Could not generate spatial plots: {e}")
