@@ -59,9 +59,10 @@ class PopulationDynamicsPlotter:
         self.sig_symbols = plotting_config.get('significance_symbols', {
             0.001: '***', 0.01: '**', 0.05: '*', 1.0: 'ns'
         })
-        self.group_colors = plotting_config.get('group_colors', {
-            'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'
-        })
+        # Default colors - will be extended dynamically for unknown groups
+        self.default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3',
+                               '#A65628', '#F781BF', '#999999', '#66C2A5', '#FC8D62']
+        self.group_colors = plotting_config.get('group_colors', {})
 
         # Set font
         font_family = plotting_config.get('font_family', 'DejaVu Sans')
@@ -73,6 +74,18 @@ class PopulationDynamicsPlotter:
         plt.rcParams['savefig.dpi'] = 300
         plt.rcParams['font.family'] = font_family
         plt.rcParams['font.size'] = font_size
+
+    def _get_color(self, group: str, groups: List[str] = None) -> str:
+        """Get color for a group, dynamically assigning if not predefined."""
+        if group in self.group_colors:
+            return self.group_colors[group]
+        # Assign color based on position in groups list
+        if groups is not None and group in groups:
+            idx = groups.index(group) % len(self.default_colors)
+        else:
+            # Hash-based assignment for consistency
+            idx = hash(group) % len(self.default_colors)
+        return self.default_colors[idx]
 
     def plot_population_over_time(self, data: pd.DataFrame,
                                   population: str,
@@ -139,7 +152,7 @@ class PopulationDynamicsPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = self.group_colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             # Plot individual points (semi-transparent)
             ax.scatter(group_data['timepoint'], group_data[value_col],
@@ -190,7 +203,7 @@ class PopulationDynamicsPlotter:
                     if len(group_tp_data) > 0:
                         box_data.append(group_tp_data['value'].values)
                         box_positions.append(i + j * width)
-                        box_colors.append(self.group_colors.get(group, '#000000'))
+                        box_colors.append(self._get_color(group, groups))
                         labels.append(f'{tp}\n{group}')
 
             bp = ax.boxplot(box_data, positions=box_positions, widths=width*0.8,
@@ -208,7 +221,7 @@ class PopulationDynamicsPlotter:
 
             # Add legend
             from matplotlib.patches import Patch
-            legend_elements = [Patch(facecolor=self.group_colors.get(g, '#000000'),
+            legend_elements = [Patch(facecolor=self._get_color(g, groups),
                                     alpha=0.6, label=g) for g in groups]
             ax.legend(handles=legend_elements, loc='best', frameon=True)
             ax.grid(True, alpha=0.3, axis='y')
@@ -278,7 +291,7 @@ class PopulationDynamicsPlotter:
                     if len(group_tp_data) > 0:
                         violin_data.append(group_tp_data['value'].values)
                         positions.append(i + j * width)
-                        violin_colors.append(self.group_colors.get(group, '#000000'))
+                        violin_colors.append(self._get_color(group, groups))
 
             parts = ax.violinplot(violin_data, positions=positions, widths=width*0.8,
                                  showmeans=True, showmedians=True)
@@ -295,7 +308,7 @@ class PopulationDynamicsPlotter:
 
             # Add legend
             from matplotlib.patches import Patch
-            legend_elements = [Patch(facecolor=self.group_colors.get(g, '#000000'),
+            legend_elements = [Patch(facecolor=self._get_color(g, groups),
                                     alpha=0.6, label=g) for g in groups]
             ax.legend(handles=legend_elements, loc='best', frameon=True)
             ax.grid(True, alpha=0.3, axis='y')
@@ -315,7 +328,7 @@ class PopulationDynamicsPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = self.group_colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             # Box plot style overlay
             for tp in timepoints:
@@ -386,7 +399,7 @@ class PopulationDynamicsPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = self.group_colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             ax.plot(timepoints, means, '-o', color=color, linewidth=3,
                    markersize=10, label=group, markeredgecolor='white',
@@ -438,8 +451,6 @@ class PopulationDynamicsPlotter:
             axes = axes.reshape(1, -1)
         axes = axes.flatten()
 
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
-
         for idx, pop in enumerate(populations):
             ax = axes[idx]
             data = all_results[pop]
@@ -457,7 +468,7 @@ class PopulationDynamicsPlotter:
                 means = summary['mean'].values
                 sems = summary['sem'].values
 
-                color = colors.get(group, '#000000')
+                color = self._get_color(group, groups)
 
                 ax.plot(timepoints, means, '-o', color=color, linewidth=2,
                        label=group, markersize=6)

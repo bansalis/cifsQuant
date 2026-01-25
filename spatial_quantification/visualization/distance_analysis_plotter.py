@@ -49,9 +49,10 @@ class DistanceAnalysisPlotter:
         self.sig_symbols = plotting_config.get('significance_symbols', {
             0.001: '***', 0.01: '**', 0.05: '*', 1.0: 'ns'
         })
-        self.group_colors = plotting_config.get('group_colors', {
-            'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'
-        })
+        # Default colors - will be extended dynamically for unknown groups
+        self.default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3',
+                               '#A65628', '#F781BF', '#999999', '#66C2A5', '#FC8D62']
+        self.group_colors = plotting_config.get('group_colors', {})
 
         # Set font
         font_family = plotting_config.get('font_family', 'DejaVu Sans')
@@ -63,6 +64,18 @@ class DistanceAnalysisPlotter:
         plt.rcParams['savefig.dpi'] = 300
         plt.rcParams['font.family'] = font_family
         plt.rcParams['font.size'] = font_size
+
+    def _get_color(self, group: str, groups: List[str] = None) -> str:
+        """Get color for a group, dynamically assigning if not predefined."""
+        if group in self.group_colors:
+            return self.group_colors[group]
+        # Assign color based on position in groups list
+        if groups is not None and group in groups:
+            idx = groups.index(group) % len(self.default_colors)
+        else:
+            # Hash-based assignment for consistency
+            idx = hash(group) % len(self.default_colors)
+        return self.default_colors[idx]
 
     def plot_distance_comprehensive(self, data: pd.DataFrame,
                                     source: str, target: str,
@@ -112,8 +125,6 @@ class DistanceAnalysisPlotter:
 
     def _plot_time_series(self, data: pd.DataFrame, ax, group_col: str, groups: List[str]):
         """Time series with confidence bands."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
         for group in groups:
             group_data = data[data[group_col] == group]
 
@@ -125,7 +136,7 @@ class DistanceAnalysisPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             # Scatter individual points
             ax.scatter(group_data['timepoint'], group_data['mean_distance'],
@@ -146,8 +157,6 @@ class DistanceAnalysisPlotter:
     def _plot_overlapping_histograms(self, data: pd.DataFrame, ax,
                                      group_col: str, groups: List[str]):
         """Overlapping histograms showing full distribution."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
         # Get all distances
         all_distances = data['mean_distance'].values
         bins = np.linspace(0, np.percentile(all_distances, 99), 50)
@@ -159,7 +168,7 @@ class DistanceAnalysisPlotter:
                 continue
 
             distances = group_data['mean_distance'].values
-            color = colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             # Histogram
             ax.hist(distances, bins=bins, alpha=0.5, color=color,
@@ -181,8 +190,6 @@ class DistanceAnalysisPlotter:
     def _plot_boxes_per_timepoint(self, data: pd.DataFrame, ax,
                                   group_col: str, groups: List[str]):
         """Box plots per timepoint."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
-
         timepoints = sorted(data['timepoint'].unique())
 
         box_data = []
@@ -197,7 +204,7 @@ class DistanceAnalysisPlotter:
                 if len(group_data) > 0:
                     box_data.append(group_data)
                     box_positions.append(i + j * width)
-                    box_colors.append(colors.get(group, '#000000'))
+                    box_colors.append(self._get_color(group, groups))
 
         if box_data:
             bp = ax.boxplot(box_data, positions=box_positions, widths=width*0.8,
@@ -215,7 +222,7 @@ class DistanceAnalysisPlotter:
         ax.set_title('Box Plots by Timepoint', fontsize=13, fontweight='bold')
 
         from matplotlib.patches import Patch
-        legend_elements = [Patch(facecolor=colors.get(g, '#000000'),
+        legend_elements = [Patch(facecolor=self._get_color(g, groups),
                                 alpha=0.6, label=g) for g in groups]
         ax.legend(handles=legend_elements, loc='best', frameon=True)
         ax.grid(True, alpha=0.3, axis='y')
@@ -223,7 +230,6 @@ class DistanceAnalysisPlotter:
     def _plot_violins_per_timepoint(self, data: pd.DataFrame, ax,
                                     group_col: str, groups: List[str]):
         """Violin plots per timepoint."""
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
 
         timepoints = sorted(data['timepoint'].unique())
 
@@ -239,7 +245,7 @@ class DistanceAnalysisPlotter:
                 if len(group_data) > 0:
                     violin_data.append(group_data)
                     positions.append(i + j * width)
-                    violin_colors.append(colors.get(group, '#000000'))
+                    violin_colors.append(self._get_color(group, groups))
 
         if violin_data:
             parts = ax.violinplot(violin_data, positions=positions, widths=width*0.8,
@@ -257,7 +263,7 @@ class DistanceAnalysisPlotter:
         ax.set_title('Violin Plots by Timepoint', fontsize=13, fontweight='bold')
 
         from matplotlib.patches import Patch
-        legend_elements = [Patch(facecolor=colors.get(g, '#000000'),
+        legend_elements = [Patch(facecolor=self._get_color(g, groups),
                                 alpha=0.6, label=g) for g in groups]
         ax.legend(handles=legend_elements, loc='best', frameon=True)
         ax.grid(True, alpha=0.3, axis='y')
@@ -266,8 +272,6 @@ class DistanceAnalysisPlotter:
                                   group_col: str, groups: List[str]):
         """Clean publication version."""
         fig, ax = plt.subplots(figsize=(8, 6))
-
-        colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8', 'cis': '#4DAF4A', 'trans': '#FF7F00'}
 
         for group in groups:
             group_data = data[data[group_col] == group]
@@ -280,7 +284,7 @@ class DistanceAnalysisPlotter:
             means = summary['mean'].values
             sems = summary['sem'].values
 
-            color = colors.get(group, '#000000')
+            color = self._get_color(group, groups)
 
             ax.plot(timepoints, means, '-o', color=color, linewidth=3,
                    markersize=10, label=group, markeredgecolor='white',
@@ -441,7 +445,7 @@ class DistanceAnalysisPlotter:
                     # Normalize to percentages
                     bin_percentages = (bin_counts / bin_counts.sum()) * 100
 
-                    color = self.group_colors.get(group, '#000000')
+                    color = self._get_color(group, groups)
 
                     x_positions = np.arange(len(bin_labels))
                     width = 0.35
@@ -481,7 +485,7 @@ class DistanceAnalysisPlotter:
                 # Normalize to percentages
                 bin_percentages = (bin_counts / bin_counts.sum()) * 100
 
-                color = self.group_colors.get(group, '#000000')
+                color = self._get_color(group, groups)
 
                 x_positions = np.arange(len(bin_labels))
                 width = 0.35
