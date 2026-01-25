@@ -227,9 +227,10 @@ class DistanceAnalysis:
         # Initialize plotter
         plotter = DistanceAnalysisPlotter(self.output_dir, self.full_config)
 
-        # Get grouping config
-        group_col = self.full_config.get('metadata', {}).get('primary_grouping', 'main_group')
-        groups = self.full_config.get('metadata', {}).get('groups_to_compare', None)
+        # Get grouping config - use primary_grouping if set, otherwise fall back to group_column
+        meta_config = self.full_config.get('metadata', {})
+        group_col = meta_config.get('primary_grouping') or meta_config.get('group_column', 'group')
+        groups = meta_config.get('groups_to_compare', None)
 
         # Plot each pairing
         for pairing_name, data in self.results.items():
