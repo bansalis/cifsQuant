@@ -587,6 +587,95 @@ class SpatialPlotter:
 
         print(f"    ✓ Generated {n_plots} individual phenotype spatial plots")
 
+    def plot_raw_fluorescence_spatial(self, adata, markers: List[str] = None,
+                                       cmap: str = 'viridis', point_size: float = 2):
+        """
+        Plot raw normalized fluorescence intensity for each marker spatially.
+
+        Creates heatmap-style spatial plots showing continuous marker expression
+        values for each sample and marker.
+
+        Parameters
+        ----------
+        adata : AnnData
+            Annotated data object with marker expression in adata.X or adata.layers
+        markers : List[str], optional
+            List of marker names to plot. If None, uses all markers from adata.var.
+        cmap : str
+            Colormap for intensity visualization (default: 'viridis')
+        point_size : float
+            Size of points in scatter plot (default: 2)
+        """
+        print("\n  Generating raw fluorescence spatial plots...")
+
+        # Get markers from adata.var if not specified
+        if markers is None:
+            markers = adata.var_names.tolist()
+
+        # Create output directory
+        fluor_dir = self.plots_dir / 'raw_fluorescence'
+        fluor_dir.mkdir(parents=True, exist_ok=True)
+
+        samples = adata.obs['sample_id'].unique()
+        n_plots = 0
+
+        for sample in samples:
+            sample_mask = adata.obs['sample_id'] == sample
+            sample_adata = adata[sample_mask]
+            sample_coords = sample_adata.obsm['spatial']
+
+            for marker in markers:
+                # Skip if marker not in data
+                if marker not in sample_adata.var_names:
+                    continue
+
+                # Get marker index
+                marker_idx = sample_adata.var_names.get_loc(marker)
+
+                # Get expression values
+                if hasattr(sample_adata.X, 'toarray'):
+                    values = sample_adata.X[:, marker_idx].toarray().flatten()
+                else:
+                    values = sample_adata.X[:, marker_idx].flatten()
+
+                # Skip if all zeros or NaN
+                if np.isnan(values).all() or (values == 0).all():
+                    continue
+
+                fig, ax = plt.subplots(figsize=(12, 10))
+
+                # Create scatter plot with color-coded intensity
+                scatter = ax.scatter(sample_coords[:, 0], sample_coords[:, 1],
+                                    c=values, cmap=cmap, s=point_size,
+                                    alpha=0.8, edgecolors='none')
+
+                # Add colorbar
+                cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
+                cbar.set_label(f'{marker} (normalized)', fontsize=11, fontweight='bold')
+
+                ax.set_xlabel('X (μm)', fontsize=12, fontweight='bold')
+                ax.set_ylabel('Y (μm)', fontsize=12, fontweight='bold')
+                ax.set_title(f'{sample} - {marker} Expression',
+                           fontsize=14, fontweight='bold')
+                ax.set_aspect('equal')
+
+                # Add stats annotation
+                ax.text(0.02, 0.98, f'mean: {values.mean():.2f}\nmax: {values.max():.2f}',
+                       transform=ax.transAxes, fontsize=9, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+                plt.tight_layout()
+
+                # Save plot
+                safe_marker = marker.replace('/', '_').replace(' ', '_')
+                plot_path = fluor_dir / f'{sample}_{safe_marker}_fluorescence.png'
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)
+
+                n_plots += 1
+
+        print(f"    ✓ Generated {n_plots} raw fluorescence spatial plots in {fluor_dir}/")
+
     def plot_tumor_zones_dbscan(self, adata, tumor_col: str = 'is_Tumor'):
         """
         Plot unique tumor zones/clusters detected by DBSCAN.
