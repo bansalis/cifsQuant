@@ -48,9 +48,8 @@ class EnhancedNeighborhoodPlotter:
 
         # Get plotting settings
         plotting_config = config.get('plotting', {})
-        self.group_colors = plotting_config.get('group_colors', {
-            'KPT': '#E41A1C', 'KPNT': '#377EB8'
-        })
+        self.group_colors = plotting_config.get('group_colors', {})
+        self.default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#A65628']
         self.timepoint_label = plotting_config.get('timepoint_label', 'Time (weeks)')
 
         # Set style
@@ -99,7 +98,7 @@ class EnhancedNeighborhoodPlotter:
                 plot_data_list.append({
                     'sample_id': row['sample_id'],
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', ''),
+                    'group': row.get('group', ''),
                     'region_type': f'{marker}+',
                     'percent_in_region': row[pos_col]
                 })
@@ -108,7 +107,7 @@ class EnhancedNeighborhoodPlotter:
                 plot_data_list.append({
                     'sample_id': row['sample_id'],
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', ''),
+                    'group': row.get('group', ''),
                     'region_type': f'{marker}-',
                     'percent_in_region': row[neg_col]
                 })
@@ -144,7 +143,7 @@ class EnhancedNeighborhoodPlotter:
                         dist_data_list.append({
                             'sample_id': row['sample_id'],
                             'timepoint': row.get('timepoint', 1),
-                            'main_group': row.get('main_group', ''),
+                            'group': row.get('group', ''),
                             'region_type': f'{marker}+',
                             'distance': row[dist_pos_col]
                         })
@@ -153,7 +152,7 @@ class EnhancedNeighborhoodPlotter:
                         dist_data_list.append({
                             'sample_id': row['sample_id'],
                             'timepoint': row.get('timepoint', 1),
-                            'main_group': row.get('main_group', ''),
+                            'group': row.get('group', ''),
                             'region_type': f'{marker}-',
                             'distance': row[dist_neg_col]
                         })
@@ -227,7 +226,7 @@ class EnhancedNeighborhoodPlotter:
                 plot_data_list.append({
                     'sample_id': row['sample_id'],
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', ''),
+                    'group': row.get('group', ''),
                     'region_type': f'{marker}+',
                     'fraction': row[col_pos] * 100  # Convert to percent
                 })
@@ -236,7 +235,7 @@ class EnhancedNeighborhoodPlotter:
                 plot_data_list.append({
                     'sample_id': row['sample_id'],
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', ''),
+                    'group': row.get('group', ''),
                     'region_type': f'{marker}-',
                     'fraction': row[col_neg] * 100  # Convert to percent
                 })
@@ -309,7 +308,7 @@ class EnhancedNeighborhoodPlotter:
                 plot_data_list.append({
                     'sample_id': row.get('sample_id', ''),
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', ''),
+                    'group': row.get('group', ''),
                     'marker_status': f'{marker}+' if marker_status == 'positive' else f'{marker}-',
                     'fraction': row[col] * 100  # Convert to percent
                 })
@@ -385,7 +384,7 @@ class EnhancedNeighborhoodPlotter:
                     'percent': row[pos_col],
                     'sample_id': row['sample_id'],
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', '')
+                    'group': row.get('group', '')
                 })
 
                 # Marker- region
@@ -395,7 +394,7 @@ class EnhancedNeighborhoodPlotter:
                     'percent': row[neg_col],
                     'sample_id': row['sample_id'],
                     'timepoint': row.get('timepoint', 1),
-                    'main_group': row.get('main_group', '')
+                    'group': row.get('group', '')
                 })
 
         if not plot_data_list:
@@ -487,10 +486,10 @@ class EnhancedNeighborhoodPlotter:
     def _plot_immune_composition_detailed(self, df: pd.DataFrame, marker: str, immune_pops: List[str]):
         """Side-by-side boxplots: marker+/- x KPT/KPNT for all immune populations."""
 
-        if 'main_group' not in df.columns:
+        if 'group' not in df.columns:
             return
 
-        groups = sorted(df['main_group'].unique())
+        groups = sorted(df['group'].unique())
         if len(groups) < 2:
             return
 
@@ -505,7 +504,7 @@ class EnhancedNeighborhoodPlotter:
                 continue
 
             for idx, row in df.iterrows():
-                group = row.get('main_group', '')
+                group = row.get('group', '')
 
                 # Marker+ region
                 plot_data_list.append({
@@ -514,7 +513,7 @@ class EnhancedNeighborhoodPlotter:
                     'percent': row[pos_col],
                     'sample_id': row['sample_id'],
                     'region_type': f'{marker}+',
-                    'main_group': group
+                    'group': group
                 })
 
                 # Marker- region
@@ -524,7 +523,7 @@ class EnhancedNeighborhoodPlotter:
                     'percent': row[neg_col],
                     'sample_id': row['sample_id'],
                     'region_type': f'{marker}-',
-                    'main_group': group
+                    'group': group
                 })
 
         if not plot_data_list:

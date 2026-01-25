@@ -41,7 +41,7 @@ def detect_plot_type(data: pd.DataFrame, timepoint_col: str = 'timepoint') -> st
 
 def calculate_statistics(data: pd.DataFrame,
                          value_col: str,
-                         group_col: str = 'main_group',
+                         group_col: str = 'group',
                          timepoint_col: str = 'timepoint',
                          test_method: str = 'mannwhitneyu',
                          per_timepoint: bool = True) -> pd.DataFrame:
@@ -169,7 +169,7 @@ def format_pvalue(pval: float) -> str:
 
 def plot_with_stats(data: pd.DataFrame,
                     value_col: str,
-                    group_col: str = 'main_group',
+                    group_col: str = 'group',
                     timepoint_col: str = 'timepoint',
                     ax: plt.Axes = None,
                     group_colors: Dict = None,
@@ -218,7 +218,10 @@ def plot_with_stats(data: pd.DataFrame,
         fig, ax = plt.subplots(figsize=(10, 6))
 
     if group_colors is None:
-        group_colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
+        # Dynamic color assignment based on groups in data
+        default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#A65628']
+        groups = sorted(data[group_col].unique())
+        group_colors = {g: default_colors[i % len(default_colors)] for i, g in enumerate(groups)}
 
     plot_type = detect_plot_type(data, timepoint_col)
     groups = sorted(data[group_col].unique())
@@ -343,7 +346,7 @@ def plot_with_stats(data: pd.DataFrame,
 
 def plot_with_stats_clean(data: pd.DataFrame,
                          value_col: str,
-                         group_col: str = 'main_group',
+                         group_col: str = 'group',
                          timepoint_col: str = 'timepoint',
                          ax: plt.Axes = None,
                          group_colors: Dict = None,
@@ -362,7 +365,10 @@ def plot_with_stats_clean(data: pd.DataFrame,
         fig, ax = plt.subplots(figsize=(10, 6))
 
     if group_colors is None:
-        group_colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
+        # Dynamic color assignment based on groups in data
+        default_colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#FF7F00', '#984EA3', '#A65628']
+        groups = sorted(data[group_col].unique())
+        group_colors = {g: default_colors[i % len(default_colors)] for i, g in enumerate(groups)}
 
     plot_type = detect_plot_type(data, timepoint_col)
     groups = sorted(data[group_col].unique())
@@ -470,7 +476,7 @@ def plot_with_stats_clean(data: pd.DataFrame,
 
 def create_dual_plots(data: pd.DataFrame,
                      value_col: str,
-                     group_col: str = 'main_group',
+                     group_col: str = 'group',
                      timepoint_col: str = 'timepoint',
                      group_colors: Dict = None,
                      title_base: str = '',

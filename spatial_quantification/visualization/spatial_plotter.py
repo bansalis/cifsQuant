@@ -676,11 +676,11 @@ class SpatialPlotter:
 
         print(f"    ✓ Generated {n_plots} raw fluorescence spatial plots in {fluor_dir}/")
 
-    def plot_tumor_zones_dbscan(self, adata, tumor_col: str = 'is_Tumor'):
+    def plot_tumor_zones_dbscan(self, adata, tumor_col: str = 'is_Tumor', structure_name: str = None):
         """
-        Plot unique tumor zones/clusters detected by DBSCAN.
+        Plot unique structure zones/clusters detected by DBSCAN.
 
-        Each tumor cluster is colored differently to visualize spatial heterogeneity
+        Each structure cluster is colored differently to visualize spatial heterogeneity
         and validate DBSCAN parameters (eps, min_samples).
 
         Parameters
@@ -688,9 +688,16 @@ class SpatialPlotter:
         adata : AnnData
             Annotated data object
         tumor_col : str
-            Column name for tumor cell identification
+            Column name for structure cell identification
+        structure_name : str
+            Name of the structure type (e.g., 'B cell cluster', 'Tumor')
         """
-        print("\n  Generating tumor zone (DBSCAN cluster) plots...")
+        # Get structure name from config if not provided
+        if structure_name is None:
+            structure_config = self.config.get('structure_definition', self.config.get('tumor_definition', {}))
+            structure_name = structure_config.get('name', 'Structure')
+
+        print(f"\n  Generating {structure_name} zone (DBSCAN cluster) plots...")
 
         tumor_config = self.config.get('structure_definition', self.config.get('tumor_definition', {})).get('structure_detection', {})
         eps = tumor_config.get('eps', 100)
@@ -738,10 +745,10 @@ class SpatialPlotter:
             # Create plot
             fig, ax = plt.subplots(figsize=(14, 12))
 
-            # Background: non-tumor cells
+            # Background: cells outside structure
             if len(non_tumor_coords) > 0:
                 ax.scatter(non_tumor_coords[:, 0], non_tumor_coords[:, 1],
-                          c='lightgray', s=1, alpha=0.2, label='Non-tumor', rasterized=True)
+                          c='lightgray', s=1, alpha=0.2, label='Other cells', rasterized=True)
 
             # Plot each tumor zone with unique color
             colors = plt.cm.tab20(np.linspace(0, 1, max(n_clusters, 1)))
@@ -767,7 +774,7 @@ class SpatialPlotter:
 
             ax.set_xlabel('X (μm)', fontsize=12, fontweight='bold')
             ax.set_ylabel('Y (μm)', fontsize=12, fontweight='bold')
-            ax.set_title(f'{sample} - Tumor Zones/Clusters (n={n_clusters})\n'
+            ax.set_title(f'{sample} - {structure_name} Clusters (n={n_clusters})\n'
                         f'DBSCAN: eps={eps}, min_samples={min_samples}',
                         fontsize=14, fontweight='bold')
             ax.set_aspect('equal')
@@ -775,14 +782,14 @@ class SpatialPlotter:
 
             plt.tight_layout()
 
-            plot_path = self.plots_dir / 'tumor_zones' / f'{sample}_tumor_zones_dbscan.png'
+            plot_path = self.plots_dir / 'structure_zones' / f'{sample}_structure_zones_dbscan.png'
             plot_path.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close(fig)
 
             n_plots += 1
 
-        print(f"    ✓ Generated {n_plots} tumor zone plots (DBSCAN parameters: eps={eps}, min_samples={min_samples})")
+        print(f"    ✓ Generated {n_plots} {structure_name} zone plots (DBSCAN parameters: eps={eps}, min_samples={min_samples})")
 
     def plot_marker_zones(self, adata, markers: List[Dict], tumor_col: str = 'is_Tumor'):
         """
