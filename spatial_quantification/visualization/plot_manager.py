@@ -28,6 +28,10 @@ class PlotManager:
         self.config = config
         self.output_dir = Path(output_dir)
 
+        # Get grouping column from metadata config
+        meta_config = config.get('metadata', {})
+        self.group_col = meta_config.get('primary_grouping') or meta_config.get('group_column', 'group')
+
         # Create plotting instances
         self.individual_plots = IndividualPlots(config, output_dir)
         self.composite_plots = CompositePlots(config, output_dir)
@@ -61,8 +65,11 @@ class PlotManager:
 
                     # Plot for each comparison
                     for comp in comparisons:
-                        groups = comp.get('groups', ['KPT', 'KPNT'])
-                        group_col = 'main_group'
+                        groups = comp.get('groups', [])
+                        group_col = self.group_col
+                        # Auto-detect groups if not specified
+                        if not groups and group_col in pop_data.columns:
+                            groups = sorted(pop_data[group_col].dropna().unique().tolist())
 
                         # Calculate statistics
                         timepoints = comp.get('timepoints', [])
@@ -115,8 +122,11 @@ class PlotManager:
 
             # Plot for each comparison
             for comp in comparisons:
-                groups = comp.get('groups', ['KPT', 'KPNT'])
-                group_col = 'main_group'
+                groups = comp.get('groups', [])
+                group_col = self.group_col
+                # Auto-detect groups if not specified
+                if not groups and group_col in pairing_data.columns:
+                    groups = sorted(pairing_data[group_col].dropna().unique().tolist())
 
                 # Time series plot
                 timepoints = comp.get('timepoints', [])
