@@ -79,7 +79,7 @@ class DistanceAnalysisPlotter:
 
     def plot_distance_comprehensive(self, data: pd.DataFrame,
                                     source: str, target: str,
-                                    group_col: str = 'main_group',
+                                    group_col: str = 'group',
                                     groups: List[str] = None):
         """
         Create comprehensive distance plots.
@@ -305,7 +305,7 @@ class DistanceAnalysisPlotter:
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
-    def plot_all_distances_heatmap(self, all_results: Dict, group_col: str = 'main_group'):
+    def plot_all_distances_heatmap(self, all_results: Dict, group_col: str = 'group'):
         """Create heatmap of all distance pairings."""
         # Extract mean distances per pairing
         pairing_means = {}
@@ -368,7 +368,7 @@ class DistanceAnalysisPlotter:
 
     def plot_distance_histograms_binned(self, data: pd.DataFrame,
                                         source: str, target: str,
-                                        group_col: str = 'main_group',
+                                        group_col: str = 'group',
                                         groups: List[str] = None,
                                         distance_bins: List[int] = None):
         """

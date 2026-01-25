@@ -90,7 +90,7 @@ class PopulationDynamicsPlotter:
     def plot_population_over_time(self, data: pd.DataFrame,
                                   population: str,
                                   value_col: str = 'count',
-                                  group_col: str = 'main_group',
+                                  group_col: str = 'group',
                                   groups: List[str] = None):
         """
         Create comprehensive plots for a population over time.
@@ -421,7 +421,7 @@ class PopulationDynamicsPlotter:
         plt.close(fig)
 
     def plot_all_populations_overview(self, all_results: Dict, value_col: str = 'count',
-                                     group_col: str = 'main_group'):
+                                     group_col: str = 'group'):
         """
         Create overview plot with all populations.
 
@@ -497,7 +497,7 @@ class PopulationDynamicsPlotter:
     def plot_population_adaptive(self, data: pd.DataFrame,
                                 population: str,
                                 value_col: str = 'count',
-                                group_col: str = 'main_group',
+                                group_col: str = 'group',
                                 ylabel: str = None):
         """
         Create adaptive plots (line or box depending on timepoints).

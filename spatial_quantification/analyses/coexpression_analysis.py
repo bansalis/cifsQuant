@@ -146,8 +146,7 @@ class CoexpressionAnalysis:
                 'n_tumor_cells': n_tumor_cells,
                 'timepoint': tumor_data['timepoint'].iloc[0] if 'timepoint' in tumor_data.columns else np.nan,
                 'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else '',
-                'main_group': tumor_data['main_group'].iloc[0] if 'main_group' in tumor_data.columns else ''
-            }
+                            }
 
             # Calculate frequency for each marker
             for marker_name, marker_col in self.markers.items():
@@ -192,8 +191,7 @@ class CoexpressionAnalysis:
                 'sample_id': sample,
                 'n_tumor_cells': n_tumor_cells,
                 'timepoint': tumor_data['timepoint'].iloc[0] if 'timepoint' in tumor_data.columns else np.nan,
-                'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else '',
-                'main_group': tumor_data['main_group'].iloc[0] if 'main_group' in tumor_data.columns else ''
+                'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else ''
             }
 
             # Calculate pairwise coexpression
@@ -266,8 +264,7 @@ class CoexpressionAnalysis:
                 'sample_id': sample,
                 'n_tumor_cells': n_tumor_cells,
                 'timepoint': tumor_data['timepoint'].iloc[0] if 'timepoint' in tumor_data.columns else np.nan,
-                'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else '',
-                'main_group': tumor_data['main_group'].iloc[0] if 'main_group' in tumor_data.columns else ''
+                'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else ''
             }
 
             # Check all markers are present
@@ -364,8 +361,7 @@ class CoexpressionAnalysis:
                     'tumor_id': int(structure_id),
                     'n_tumor_cells': n_tumor_cells,
                     'timepoint': tumor_data['timepoint'].iloc[0] if 'timepoint' in tumor_data.columns else np.nan,
-                    'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else '',
-                    'main_group': tumor_data['main_group'].iloc[0] if 'main_group' in tumor_data.columns else ''
+                    'group': tumor_data['group'].iloc[0] if 'group' in tumor_data.columns else ''
                 }
 
                 # Single marker frequencies per tumor
@@ -556,9 +552,9 @@ class CoexpressionAnalysis:
                 create_dual_plots(
                     df,
                     value_col=col,
-                    group_col='main_group',
+                    group_col='group',
                     timepoint_col='timepoint',
-                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    group_colors=None,
                     title_base=f'{marker} Frequency (per tumor)',
                     ylabel='% of Tumor Cells',
                     xlabel='',
@@ -582,9 +578,9 @@ class CoexpressionAnalysis:
                 create_dual_plots(
                     df,
                     value_col=col,
-                    group_col='main_group',
+                    group_col='group',
                     timepoint_col='timepoint',
-                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    group_colors=None,
                     title_base=f'{m1}+ AND {m2}+ (per tumor)',
                     ylabel='% of Tumor Cells',
                     xlabel='',
@@ -606,9 +602,9 @@ class CoexpressionAnalysis:
                 create_dual_plots(
                     df,
                     value_col=col,
-                    group_col='main_group',
+                    group_col='group',
                     timepoint_col='timepoint',
-                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    group_colors=None,
                     title_base=f'All {n_markers} Markers Positive (per tumor)',
                     ylabel='% of Tumor Cells',
                     xlabel='',
@@ -624,10 +620,10 @@ class CoexpressionAnalysis:
 
         # Calculate average Jaccard index per group
         heatmap_data = []
-        groups = sorted(df['main_group'].unique())
+        groups = sorted(df['group'].unique())
 
         for group in groups:
-            group_data = df[df['main_group'] == group]
+            group_data = df[df['group'] == group]
             row = {'group': group}
             for m1, m2 in pairs:
                 col = f'{m1}_and_{m2}_jaccard'
@@ -668,9 +664,9 @@ class CoexpressionAnalysis:
                 create_dual_plots(
                     df,
                     value_col=col,
-                    group_col='main_group',
+                    group_col='group',
                     timepoint_col='timepoint',
-                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    group_colors=None,
                     title_base=f'{marker} Frequency',
                     ylabel='% of Tumor Cells',
                     xlabel='Time (weeks)',
@@ -681,12 +677,12 @@ class CoexpressionAnalysis:
             # Fallback to basic plotting
             fig, ax = plt.subplots(figsize=(10, 6))
 
-            groups = sorted(df['main_group'].unique())
+            groups = sorted(df['group'].unique())
             colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
             linestyles = ['-', '--', ':', '-.']
 
             for group in groups:
-                group_data = df[df['main_group'] == group]
+                group_data = df[df['group'] == group]
 
                 for marker, ls in zip(marker_names, linestyles):
                     col = f'{marker}_percent'
@@ -735,9 +731,9 @@ class CoexpressionAnalysis:
                 create_dual_plots(
                     df,
                     value_col=col,
-                    group_col='main_group',
+                    group_col='group',
                     timepoint_col='timepoint',
-                    group_colors={'KPT': '#E41A1C', 'KPNT': '#377EB8'},
+                    group_colors=None,
                     title_base=f'{m1}+ AND {m2}+ Coexpression',
                     ylabel='% of Tumor Cells',
                     xlabel='Time (weeks)',
@@ -752,7 +748,7 @@ class CoexpressionAnalysis:
             if n_pairs == 1:
                 axes = [axes]
 
-            groups = sorted(df['main_group'].unique())
+            groups = sorted(df['group'].unique())
             colors = {'KPT': '#E41A1C', 'KPNT': '#377EB8'}
 
             for idx, (m1, m2) in enumerate(pairs):
@@ -763,7 +759,7 @@ class CoexpressionAnalysis:
                     continue
 
                 for group in groups:
-                    group_data = df[df['main_group'] == group]
+                    group_data = df[df['group'] == group]
 
                     summary = group_data.groupby('timepoint')[col].agg(['mean', 'sem'])
                     timepoints = summary.index.values
@@ -794,7 +790,7 @@ class CoexpressionAnalysis:
         df = self.results['multi_marker_coexpression']
 
         # Average across all samples per group/timepoint
-        groups = sorted(df['main_group'].unique())
+        groups = sorted(df['group'].unique())
         timepoints = sorted(df['timepoint'].unique())
 
         # Categories
@@ -836,7 +832,7 @@ class CoexpressionAnalysis:
 
         for idx, group in enumerate(groups):
             ax = axes[idx]
-            group_data = df[df['main_group'] == group]
+            group_data = df[df['group'] == group]
 
             # Calculate mean percentages per timepoint
             plot_data = []
@@ -887,12 +883,12 @@ class CoexpressionAnalysis:
         pairs = [('pERK', 'NINJA'), ('pERK', 'Ki67'), ('NINJA', 'Ki67')]
 
         # Calculate average coexpression per group across all timepoints
-        groups = sorted(df['main_group'].unique())
+        groups = sorted(df['group'].unique())
 
         heatmap_data = []
 
         for group in groups:
-            group_data = df[df['main_group'] == group]
+            group_data = df[df['group'] == group]
 
             row = {'group': group}
             for m1, m2 in pairs:
