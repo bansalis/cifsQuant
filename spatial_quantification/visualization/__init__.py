@@ -9,6 +9,7 @@ from .distance_analysis_plotter import DistanceAnalysisPlotter
 from .neighborhood_plotter import NeighborhoodPlotter
 from .spatial_plotter import SpatialPlotter
 from .spatial_visualization_manager import SpatialVisualizationManager
+from .permutation_plotter import PermutationPlotter
 
 __all__ = [
     'PlotManager',
@@ -20,5 +21,6 @@ __all__ = [
     'DistanceAnalysisPlotter',
     'NeighborhoodPlotter',
     'SpatialPlotter',
-    'SpatialVisualizationManager'
+    'SpatialVisualizationManager',
+    'PermutationPlotter'
 ]
