@@ -400,6 +400,68 @@ marker_region_analysis:
   analyze_holes: false
 
 # ============================================================================
+# ANALYSIS 4B: SPATIAL PERMUTATION TESTING
+# ============================================================================
+# Monte Carlo permutation testing to determine if spatial patterns are
+# biologically meaningful or artifacts of random chance.
+spatial_permutation:
+  enabled: false
+  generate_plots: true
+
+  # Test configurations
+  # Available test types: clustering, colocalization, enrichment
+  tests:
+    # Single marker clustering - Are marker+ cells spatially clustered?
+    - type: clustering
+      name: pERK_clustering
+      marker: is_pERK_positive
+      tumor_marker: is_Tumor  # Optional: restrict to tumor cells
+
+    - type: clustering
+      name: Ki67_clustering
+      marker: is_Ki67_positive
+      tumor_marker: is_Tumor
+
+    # Two-marker co-localization - Do markers overlap more than chance?
+    - type: colocalization
+      name: pERK_Ki67_overlap
+      marker1: is_pERK_positive
+      marker2: is_Ki67_positive
+      tumor_marker: is_Tumor
+      radius: 30  # Distance threshold for cross-K function
+
+    # Immune-marker enrichment - Are immune cells enriched near marker+ tumor cells?
+    - type: enrichment
+      name: CD8_near_pERK
+      tumor_marker: is_pERK_positive
+      immune_phenotype: is_CD8_T_cells
+      radius: 50
+
+    - type: enrichment
+      name: Tfh_near_GL7
+      tumor_marker: is_GL7_positive_B_cells
+      immune_phenotype: is_Tfh_cells
+      radius: 50
+
+  # Statistical parameters
+  parameters:
+    n_permutations: 500        # Number of Monte Carlo permutations
+    min_tumor_cells: 20        # Minimum cells per tumor for testing
+    alpha: 0.05                # Significance threshold
+    min_prevalence: 0.05       # Minimum marker prevalence (5%)
+    max_prevalence: 0.95       # Maximum marker prevalence (95%)
+    enrichment_radius: 50      # Default radius for enrichment tests (um)
+    clustering_radius: 30      # Default radius for clustering metrics (um)
+    colocalization_radius: 30  # Default radius for co-localization (um)
+
+  # Grouping for cross-sample comparisons
+  grouping:
+    split_by:
+      - group
+      - timepoint
+    aggregate: true  # Aggregate results across tumors within samples
+
+# ============================================================================
 # ANALYSIS 5: CELLULAR NEIGHBORHOODS
 # ============================================================================
 cellular_neighborhoods:
