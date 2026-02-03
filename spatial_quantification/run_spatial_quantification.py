@@ -463,6 +463,30 @@ def main():
             import traceback
             traceback.print_exc()
 
+    # NEW: Spatial Permutation Testing
+    if config.get('spatial_permutation', {}).get('enabled', False):
+        print("\n  ✓ Running spatial permutation testing analysis")
+        try:
+            from spatial_quantification.analyses.spatial_permutation_testing import SpatialPermutationTesting
+            permutation_testing = SpatialPermutationTesting(adata, config, output_dir)
+            all_results['spatial_permutation'] = permutation_testing.run()
+
+            # Generate plots if configured
+            if config.get('spatial_permutation', {}).get('generate_plots', True):
+                print("\n  Generating permutation testing visualizations...")
+                try:
+                    from spatial_quantification.visualization.permutation_plotter import PermutationPlotter
+                    perm_plotter = PermutationPlotter(output_dir / 'spatial_permutation', config)
+                    perm_plotter.generate_all_plots(all_results['spatial_permutation'])
+                except Exception as e:
+                    print(f"  ⚠ Could not generate permutation testing plots: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"  ⚠ Could not run spatial permutation testing: {e}")
+            import traceback
+            traceback.print_exc()
+
     # NEW: UMAP Visualization
     if config.get('umap_visualization', {}).get('enabled', False):
         print("\n  Generating UMAP visualizations...")
