@@ -5,14 +5,19 @@ Determines whether spatial patterns of tumor marker expression and immune-tumor
 marker associations are biologically meaningful or artifacts of random chance.
 
 Test Types:
-1. Single Marker Clustering - Are marker+ cells spatially clustered?
-2. Two-Marker Co-localization - Do marker+ cells overlap more than chance?
+1. Single Marker Clustering - Are marker+ cells spatially clustered within tumors?
+2. Two-Marker Co-localization - Do marker+ cells overlap more than chance within tumors?
 3. Immune-Marker Enrichment - Are immune cells enriched near marker+ tumor cells?
 
 Statistical Approach:
 - Per-tumor Monte Carlo permutation testing
 - Fixed cell coordinates with randomized marker assignments
 - Benjamini-Hochberg FDR correction per sample
+
+Key Concept:
+- Analysis runs WITHIN each tumor structure (e.g., B cell cluster, tumor mass)
+- Tests whether marker+ cells (e.g., pERK+) are spatially clustered within that tumor
+- Permutes marker status among cells while keeping positions fixed
 """
 
 import pandas as pd
@@ -23,7 +28,6 @@ from scipy.spatial import cKDTree
 from scipy import stats
 import warnings
 from itertools import combinations
-from multiprocessing import Pool, cpu_count
 import json
 
 try:
@@ -41,12 +45,9 @@ class SpatialPermutationTesting:
     Implements Monte Carlo permutation tests to determine if observed spatial
     patterns are statistically significant compared to random null distributions.
 
-    Key Features:
-    - Single marker clustering analysis (Hopkins statistic)
-    - Two-marker co-localization (Cross-K function)
-    - Immune-marker enrichment testing
-    - Per-tumor analysis with FDR correction
-    - Group-level comparisons
+    IMPORTANT: This analysis runs PER TUMOR STRUCTURE, not per marker region.
+    The question is: "Within this tumor, are pERK+ cells clustered together?"
+    NOT: "Is this pERK+ region significant?"
     """
 
     def __init__(self, adata, config: Dict, output_dir: Path):
@@ -92,11 +93,17 @@ class SpatialPermutationTesting:
         self.min_prevalence = params.get('min_prevalence', 0.05)
         self.max_prevalence = params.get('max_prevalence', 0.95)
 
-        # Parallelization
-        perf_config = self.config.get('performance', {})
-        n_jobs = perf_config.get('n_jobs', -1)
-        self.n_jobs = cpu_count() if n_jobs == -1 else n_jobs
-        self.parallel = perf_config.get('parallel_processing', True)
+        # Maximum number of structures to analyze (safety limit)
+        self.max_structures = params.get('max_structures', 500)
+
+        # CRITICAL: Get the structure column from config
+        # This should match what per_structure_analysis creates
+        structure_config = self.config.get('per_structure_analysis',
+                                           self.config.get('per_tumor_analysis', {}))
+        self.structure_column = self.analysis_config.get(
+            'structure_column',
+            structure_config.get('structure_column', 'tumor_structure_id')
+        )
 
         # Random seed for reproducibility
         self.random_seed = self.config.get('advanced', {}).get('random_seed', 42)
@@ -124,6 +131,7 @@ class SpatialPermutationTesting:
         print(f"  Permutations: {self.n_permutations}")
         print(f"  Min tumor cells: {self.min_tumor_cells}")
         print(f"  Significance threshold: {self.alpha}")
+        print(f"  Structure column: {self.structure_column}")
         print(f"  Tests configured: {len(self.tests)}")
 
         if len(self.tests) == 0:
@@ -134,7 +142,7 @@ class SpatialPermutationTesting:
         print("\n1. Validating inputs...")
         if not self._validate_inputs():
             print("  Input validation failed")
-            return {}
+            return self.results
 
         # Run per-tumor tests
         print("\n2. Running per-tumor permutation tests...")
@@ -165,12 +173,8 @@ class SpatialPermutationTesting:
 
     def _setup_default_tests(self):
         """Set up default test configurations based on available columns."""
-        # Find tumor marker columns
-        tumor_cols = [col for col in self.adata.obs.columns
-                     if col.startswith('is_') and 'tumor' in col.lower()]
-
         # Find potential marker columns (pERK, NINJA, Ki67, etc.)
-        marker_patterns = ['pERK', 'NINJA', 'Ki67', 'MHC', 'PD-L1', 'GL7']
+        marker_patterns = ['pERK', 'NINJA', 'Ki67', 'MHC', 'PD-L1', 'GL7', 'BCL6']
         marker_cols = []
         for pattern in marker_patterns:
             cols = [col for col in self.adata.obs.columns
@@ -178,38 +182,40 @@ class SpatialPermutationTesting:
             marker_cols.extend(cols)
 
         # Find immune phenotype columns
-        immune_patterns = ['CD8', 'CD4', 'T_cell', 'Tcell', 'immune']
+        immune_patterns = ['CD8', 'CD4', 'T_cell', 'Tcell', 'Tfh']
         immune_cols = []
         for pattern in immune_patterns:
             cols = [col for col in self.adata.obs.columns
                    if pattern.lower() in col.lower() and col.startswith('is_')]
             immune_cols.extend(cols)
 
+        # Remove duplicates
+        marker_cols = list(dict.fromkeys(marker_cols))
+        immune_cols = list(dict.fromkeys(immune_cols))
+
         # Set up default tests
         self.tests = []
 
-        # Add clustering tests for each marker
-        for marker_col in marker_cols[:3]:  # Limit to first 3
+        # Add clustering tests for each marker (limit to 3)
+        for marker_col in marker_cols[:3]:
             self.tests.append({
                 'type': 'clustering',
                 'name': f'{marker_col}_clustering',
-                'marker': marker_col,
-                'tumor_marker': tumor_cols[0] if tumor_cols else None
+                'marker': marker_col
             })
 
-        # Add colocalization tests for marker pairs
+        # Add colocalization tests for marker pairs (limit to 2)
         if len(marker_cols) >= 2:
-            for m1, m2 in list(combinations(marker_cols, 2))[:3]:  # Limit to first 3 pairs
+            for m1, m2 in list(combinations(marker_cols, 2))[:2]:
                 self.tests.append({
                     'type': 'colocalization',
                     'name': f'{m1}_vs_{m2}',
                     'marker1': m1,
-                    'marker2': m2,
-                    'tumor_marker': tumor_cols[0] if tumor_cols else None
+                    'marker2': m2
                 })
 
-        # Add enrichment tests
-        for immune_col in immune_cols[:2]:  # Limit to first 2
+        # Add enrichment tests (limit to 2)
+        for immune_col in immune_cols[:1]:
             for marker_col in marker_cols[:2]:
                 self.tests.append({
                     'type': 'enrichment',
@@ -220,25 +226,66 @@ class SpatialPermutationTesting:
                 })
 
         print(f"    Set up {len(self.tests)} default tests")
+        for t in self.tests:
+            print(f"      - {t['type']}: {t['name']}")
 
     def _validate_inputs(self) -> bool:
         """Validate required inputs exist."""
         valid = True
 
-        # Check for tumor_structure_id column
-        if 'tumor_structure_id' not in self.adata.obs.columns:
-            # Try to find alternative
-            struct_cols = [col for col in self.adata.obs.columns
-                          if 'structure' in col.lower() or 'cluster' in col.lower()]
-            if struct_cols:
-                print(f"    Using '{struct_cols[0]}' as tumor structure column")
-                self.tumor_structure_col = struct_cols[0]
-            else:
-                print("    WARNING: No tumor_structure_id column found")
-                print("    Will analyze at sample level only")
+        # Check for the specified structure column
+        print(f"    Looking for structure column: '{self.structure_column}'")
+
+        if self.structure_column not in self.adata.obs.columns:
+            # List available columns that might be structure-related
+            potential_cols = [col for col in self.adata.obs.columns
+                            if 'tumor' in col.lower() or 'structure' in col.lower()]
+
+            print(f"    ERROR: Structure column '{self.structure_column}' not found!")
+            print(f"    Available structure-like columns: {potential_cols}")
+            print(f"    ")
+            print(f"    Please either:")
+            print(f"    1. Run per_structure_analysis first to create tumor structures")
+            print(f"    2. Set 'structure_column' in spatial_permutation config to the correct column")
+
+            # Check if we should fall back to sample-level analysis
+            if self.analysis_config.get('allow_sample_level', False):
+                print(f"    Falling back to sample-level analysis (no per-tumor breakdown)")
                 self.tumor_structure_col = None
+            else:
+                valid = False
+                return valid
         else:
-            self.tumor_structure_col = 'tumor_structure_id'
+            self.tumor_structure_col = self.structure_column
+
+            # Count unique structures
+            n_structures = self.adata.obs[self.tumor_structure_col].nunique()
+            valid_structures = self.adata.obs[self.tumor_structure_col].dropna()
+            valid_structures = valid_structures[valid_structures != -1]
+            n_valid = valid_structures.nunique()
+
+            print(f"    Found {n_valid} valid tumor structures (excluding -1/NaN)")
+
+            # Safety check: too many structures suggests wrong column
+            if n_valid > self.max_structures:
+                print(f"    ERROR: Too many structures ({n_valid} > {self.max_structures})")
+                print(f"    This suggests the wrong column is being used.")
+                print(f"    Expected: tumor/cluster IDs (typically 10-100 per sample)")
+                print(f"    Got: {n_valid} unique values")
+
+                # Show sample of values
+                sample_values = valid_structures.head(20).tolist()
+                print(f"    Sample values: {sample_values}")
+                valid = False
+                return valid
+
+            if n_valid == 0:
+                print(f"    ERROR: No valid tumor structures found")
+                valid = False
+                return valid
+
+            if n_valid < 5:
+                print(f"    WARNING: Very few structures ({n_valid}) - limited statistical power")
 
         # Check spatial coordinates
         if 'X_centroid' not in self.adata.obs.columns:
@@ -280,14 +327,6 @@ class SpatialPermutationTesting:
         else:
             print(f"    {len(self.tests)} valid tests configured")
 
-        # Count tumors
-        if self.tumor_structure_col:
-            n_tumors = self.adata.obs[self.tumor_structure_col].nunique()
-            print(f"    Found {n_tumors} tumor structures")
-
-            if n_tumors < 10:
-                print(f"    WARNING: Low tumor count ({n_tumors}) may limit statistical power")
-
         return valid
 
     def _run_per_tumor_tests(self):
@@ -296,13 +335,15 @@ class SpatialPermutationTesting:
 
         samples = self.adata.obs['sample_id'].unique()
         total_tests = 0
+        total_structures = 0
 
         for sample in samples:
             sample_mask = self.adata.obs['sample_id'] == sample
-            sample_data = self.adata.obs[sample_mask]
-            sample_coords = self.adata.obsm['spatial'][sample_mask] if 'spatial' in self.adata.obsm else None
+            sample_data = self.adata.obs[sample_mask].copy()
 
-            if sample_coords is None:
+            if 'spatial' in self.adata.obsm:
+                sample_coords = self.adata.obsm['spatial'][sample_mask.values]
+            else:
                 sample_coords = sample_data[['X_centroid', 'Y_centroid']].values
 
             # Get metadata
@@ -312,18 +353,30 @@ class SpatialPermutationTesting:
             # Get tumor structures in this sample
             if self.tumor_structure_col:
                 tumor_ids = sample_data[self.tumor_structure_col].unique()
-                tumor_ids = [t for t in tumor_ids if pd.notna(t) and t != -1]
+                # Filter out invalid IDs
+                tumor_ids = [t for t in tumor_ids if pd.notna(t) and t != -1 and t != '-1']
+                n_tumors = len(tumor_ids)
             else:
                 tumor_ids = ['whole_sample']
+                n_tumors = 1
+
+            print(f"    {sample}: {n_tumors} tumor structures")
+
+            if n_tumors == 0:
+                print(f"      No valid structures, skipping sample")
+                continue
+
+            total_structures += n_tumors
+            structures_processed = 0
 
             for tumor_id in tumor_ids:
                 if self.tumor_structure_col and tumor_id != 'whole_sample':
                     tumor_mask = sample_data[self.tumor_structure_col] == tumor_id
                 else:
-                    tumor_mask = np.ones(len(sample_data), dtype=bool)
+                    tumor_mask = pd.Series(True, index=sample_data.index)
 
                 tumor_data = sample_data[tumor_mask]
-                tumor_coords = sample_coords[tumor_mask.values] if hasattr(tumor_mask, 'values') else sample_coords[tumor_mask]
+                tumor_coords_subset = sample_coords[tumor_mask.values]
 
                 n_cells = len(tumor_data)
 
@@ -336,6 +389,8 @@ class SpatialPermutationTesting:
                     })
                     continue
 
+                structures_processed += 1
+
                 # Run each test type
                 for test in self.tests:
                     test_type = test.get('type')
@@ -344,16 +399,16 @@ class SpatialPermutationTesting:
                     try:
                         if test_type == 'clustering':
                             result = self._run_clustering_test(
-                                tumor_data, tumor_coords, test, sample, tumor_id,
+                                tumor_data, tumor_coords_subset, test, sample, tumor_id,
                                 timepoint, group
                             )
                         elif test_type == 'colocalization':
                             result = self._run_colocalization_test(
-                                tumor_data, tumor_coords, test, sample, tumor_id,
+                                tumor_data, tumor_coords_subset, test, sample, tumor_id,
                                 timepoint, group
                             )
                         elif test_type == 'enrichment':
-                            # For enrichment, we need immune cells too
+                            # For enrichment, we need immune cells from entire sample
                             result = self._run_enrichment_test(
                                 sample_data, sample_coords, tumor_mask,
                                 test, sample, tumor_id, timepoint, group
@@ -366,16 +421,17 @@ class SpatialPermutationTesting:
                             total_tests += 1
 
                     except Exception as e:
-                        print(f"    Error in test {test_name} for {sample}/{tumor_id}: {e}")
+                        print(f"      Error in test {test_name} for tumor {tumor_id}: {e}")
                         continue
 
-            print(f"    Processed {sample}: {len(tumor_ids)} tumors")
+            print(f"      Processed {structures_processed}/{n_tumors} structures")
 
         if all_results:
             self.results['per_tumor_results'] = pd.DataFrame(all_results)
-            print(f"  Completed {total_tests} individual tests")
+            print(f"\n  Completed {total_tests} tests across {total_structures} structures")
         else:
-            print("  WARNING: No test results generated")
+            print("\n  WARNING: No test results generated")
+            self.results['per_tumor_results'] = pd.DataFrame()
 
     def _run_clustering_test(self, tumor_data: pd.DataFrame, tumor_coords: np.ndarray,
                             test: Dict, sample: str, tumor_id: Union[str, int],
@@ -383,7 +439,8 @@ class SpatialPermutationTesting:
         """
         Run single marker clustering test using Hopkins statistic.
 
-        Null hypothesis: Marker+ cells are randomly distributed.
+        Tests whether marker+ cells are spatially clustered within the tumor.
+        Null hypothesis: Marker+ cells are randomly distributed among tumor cells.
         """
         marker_col = test.get('marker')
         if marker_col not in tumor_data.columns:
@@ -400,7 +457,7 @@ class SpatialPermutationTesting:
                 'sample_id': sample,
                 'tumor_id': tumor_id,
                 'test': test.get('name'),
-                'reason': f'Prevalence out of bounds ({prevalence:.2%})'
+                'reason': f'Prevalence out of bounds ({prevalence:.1%})'
             })
             return None
 
@@ -434,7 +491,7 @@ class SpatialPermutationTesting:
         # Z-score (effect size)
         z_score = (observed_hopkins - null_mean) / null_std if null_std > 0 else 0
 
-        # P-value (one-tailed: is observed > null?)
+        # P-value (one-tailed: is observed > null? i.e., more clustered)
         p_value = (null_distribution >= observed_hopkins).sum() / len(null_distribution)
 
         return {
@@ -511,7 +568,8 @@ class SpatialPermutationTesting:
         """
         Run two-marker co-localization test using Cross-K function.
 
-        Null hypothesis: Markers are independently distributed.
+        Tests whether two markers spatially overlap more than expected by chance.
+        Null hypothesis: Markers are independently distributed among tumor cells.
         """
         marker1_col = test.get('marker1')
         marker2_col = test.get('marker2')
@@ -625,13 +683,12 @@ class SpatialPermutationTesting:
             return None
 
         # Cross-K function: normalized count
-        # K(r) = area * (count / (n1 * n2))
         cross_k = area * total_count / (n1 * n2) if n1 * n2 > 0 else 0
 
         return cross_k
 
     def _run_enrichment_test(self, sample_data: pd.DataFrame, sample_coords: np.ndarray,
-                            tumor_mask: np.ndarray, test: Dict, sample: str,
+                            tumor_mask: pd.Series, test: Dict, sample: str,
                             tumor_id: Union[str, int], timepoint: float,
                             group: str) -> Optional[Dict]:
         """
@@ -648,8 +705,8 @@ class SpatialPermutationTesting:
             return None
 
         # Get tumor cells and their marker status
-        tumor_data = sample_data[tumor_mask.values if hasattr(tumor_mask, 'values') else tumor_mask]
-        tumor_coords_subset = sample_coords[tumor_mask.values if hasattr(tumor_mask, 'values') else tumor_mask]
+        tumor_data = sample_data[tumor_mask]
+        tumor_coords_subset = sample_coords[tumor_mask.values]
 
         marker_positive = tumor_data[tumor_marker_col].values.astype(bool)
         n_positive = marker_positive.sum()
@@ -742,7 +799,7 @@ class SpatialPermutationTesting:
 
     def _aggregate_to_sample_level(self):
         """Aggregate per-tumor results to sample level with FDR correction."""
-        if 'per_tumor_results' not in self.results:
+        if 'per_tumor_results' not in self.results or len(self.results['per_tumor_results']) == 0:
             return
 
         per_tumor_df = self.results['per_tumor_results']
@@ -770,7 +827,8 @@ class SpatialPermutationTesting:
 
                 # Ensure monotonicity
                 for i in range(n_tests - 2, -1, -1):
-                    adjusted_p[i] = min(adjusted_p[i], adjusted_p[i + 1]) if i + 1 < n_tests else adjusted_p[i]
+                    if i + 1 < n_tests:
+                        adjusted_p[i] = min(adjusted_p[i], adjusted_p[i + 1])
 
                 sample_data['p_adjusted'] = adjusted_p
             else:
@@ -904,18 +962,17 @@ class SpatialPermutationTesting:
             'power_warnings': []
         }
 
-        if 'per_tumor_results' in self.results:
+        if 'per_tumor_results' in self.results and len(self.results['per_tumor_results']) > 0:
             per_tumor_df = self.results['per_tumor_results']
             qc_results['n_tests_run'] = len(per_tumor_df)
 
-            # P-value distribution check (should be approximately uniform under global null)
+            # P-value distribution check
             p_values = per_tumor_df['p_value'].dropna()
             if len(p_values) > 10:
-                # KS test against uniform
                 ks_stat, ks_p = stats.kstest(p_values, 'uniform')
                 qc_results['p_value_distribution'] = {
-                    'ks_statistic': ks_stat,
-                    'ks_p_value': ks_p,
+                    'ks_statistic': float(ks_stat),
+                    'ks_p_value': float(ks_p),
                     'interpretation': 'Uniform (no global effect)' if ks_p > 0.05 else 'Non-uniform (global effect present)'
                 }
 
@@ -951,9 +1008,10 @@ class SpatialPermutationTesting:
         # Save DataFrames
         for name, data in self.results.items():
             if isinstance(data, pd.DataFrame):
-                output_path = self.output_dir / f'{name}.csv'
-                data.to_csv(output_path, index=False)
-                print(f"    Saved {name}.csv ({len(data)} rows)")
+                if len(data) > 0:
+                    output_path = self.output_dir / f'{name}.csv'
+                    data.to_csv(output_path, index=False)
+                    print(f"    Saved {name}.csv ({len(data)} rows)")
             elif isinstance(data, dict):
                 output_path = self.output_dir / f'{name}.json'
                 with open(output_path, 'w') as f:
@@ -970,6 +1028,7 @@ class SpatialPermutationTesting:
             'enrichment_radius': self.enrichment_radius,
             'clustering_radius': self.clustering_radius,
             'colocalization_radius': self.colocalization_radius,
+            'structure_column': self.structure_column,
             'tests': self.tests,
             'random_seed': self.random_seed
         }

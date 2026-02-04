@@ -404,39 +404,39 @@ marker_region_analysis:
 # ============================================================================
 # Monte Carlo permutation testing to determine if spatial patterns are
 # biologically meaningful or artifacts of random chance.
+#
+# KEY CONCEPT: Tests run WITHIN each tumor structure (e.g., B cell cluster).
+# Question: "Are pERK+ cells clustered within this tumor?"
+# NOT: "Is this pERK+ region statistically significant?"
 spatial_permutation:
   enabled: false
   generate_plots: true
+
+  # CRITICAL: Specify the column containing tumor structure IDs
+  # This should match the output from per_structure_analysis
+  # Typical values: 'tumor_structure_id', 'B_cells_structure_id', 'cluster_id'
+  structure_column: tumor_structure_id
 
   # Test configurations
   # Available test types: clustering, colocalization, enrichment
   tests:
     # Single marker clustering - Are marker+ cells spatially clustered?
     - type: clustering
-      name: pERK_clustering
-      marker: is_pERK_positive
-      tumor_marker: is_Tumor  # Optional: restrict to tumor cells
+      name: GL7_clustering
+      marker: is_GL7_positive_B_cells
 
     - type: clustering
       name: Ki67_clustering
-      marker: is_Ki67_positive
-      tumor_marker: is_Tumor
+      marker: is_All_proliferating
 
     # Two-marker co-localization - Do markers overlap more than chance?
     - type: colocalization
-      name: pERK_Ki67_overlap
-      marker1: is_pERK_positive
-      marker2: is_Ki67_positive
-      tumor_marker: is_Tumor
+      name: GL7_Ki67_overlap
+      marker1: is_GL7_positive_B_cells
+      marker2: is_All_proliferating
       radius: 30  # Distance threshold for cross-K function
 
-    # Immune-marker enrichment - Are immune cells enriched near marker+ tumor cells?
-    - type: enrichment
-      name: CD8_near_pERK
-      tumor_marker: is_pERK_positive
-      immune_phenotype: is_CD8_T_cells
-      radius: 50
-
+    # Immune-marker enrichment - Are immune cells enriched near marker+ B cells?
     - type: enrichment
       name: Tfh_near_GL7
       tumor_marker: is_GL7_positive_B_cells
@@ -452,6 +452,7 @@ spatial_permutation:
     max_prevalence: 0.95       # Maximum marker prevalence (95%)
     enrichment_radius: 50      # Default radius for enrichment tests (um)
     clustering_radius: 30      # Default radius for clustering metrics (um)
+    max_structures: 500        # Safety limit - fail if more structures than this
     colocalization_radius: 30  # Default radius for co-localization (um)
 
   # Grouping for cross-sample comparisons
