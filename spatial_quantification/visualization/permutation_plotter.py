@@ -157,14 +157,14 @@ class PermutationPlotter:
                     # (actual null values aren't stored, regenerate from mean/std)
                     null_mean = row['null_mean']
                     null_std = row['null_std']
-                    observed = row['observed_statistic']
+                    observed = row['observed']
                     p_value = row['p_value']
                     significant = row.get('significant', p_value < 0.05)
 
                     if pd.isna(null_std) or null_std == 0:
                         ax.text(0.5, 0.5, 'Insufficient data',
                                ha='center', va='center', transform=ax.transAxes)
-                        ax.set_title(f"{row['sample_id'][:10]}/{row['tumor_id']}")
+                        ax.set_title(f"{row['sample_id'][:10]}/{row['structure_id']}")
                         continue
 
                     # Simulate null distribution
@@ -187,7 +187,7 @@ class PermutationPlotter:
 
                     ax.set_xlabel('Statistic')
                     ax.set_ylabel('Frequency')
-                    ax.set_title(f"{row['sample_id'][:8]}/T{row['tumor_id']}",
+                    ax.set_title(f"{row['sample_id'][:8]}/T{row['structure_id']}",
                                 fontsize=10)
 
                     if plot_idx == 0:
@@ -418,7 +418,7 @@ class PermutationPlotter:
             group_labels = []
 
             for i, group in enumerate(groups):
-                group_data = test_data[test_data['group'] == group]['mean_effect_size'].dropna()
+                group_data = test_data[test_data['group'] == group]['mean_z_score'].dropna()
                 if len(group_data) > 0:
                     plot_data.append(group_data.values)
                     group_labels.append(group)
@@ -655,14 +655,14 @@ class PermutationPlotter:
 
                 # Aggregate by timepoint
                 agg = group_data.groupby('timepoint').agg({
-                    'mean_effect_size': ['mean', 'sem']
+                    'mean_z_score': ['mean', 'sem']
                 }).reset_index()
                 agg.columns = ['timepoint', 'mean', 'sem']
 
                 color = self._get_group_color(group, i)
 
                 # Individual points
-                ax1.scatter(group_data['timepoint'], group_data['mean_effect_size'],
+                ax1.scatter(group_data['timepoint'], group_data['mean_z_score'],
                            alpha=0.3, s=30, color=color, edgecolors='none')
 
                 # Line with error bars
