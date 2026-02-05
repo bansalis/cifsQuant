@@ -102,6 +102,14 @@ spatial_quantification_results/
 │   └── ...
 ├── infiltration_analysis/
 │   └── ...
+├── spatial_permutation/
+│   ├── per_tumor_results.csv
+│   ├── sample_summary.csv
+│   ├── group_comparisons.csv
+│   ├── plots/
+│   │   └── *.png
+│   └── null_distributions/
+│       └── *.png
 └── neighborhoods/
     └── ...
 ```
@@ -126,6 +134,7 @@ spatial_quantification/
 │   ├── population_dynamics.py       # Population over time
 │   ├── distance_analysis.py         # Cell-to-cell distances
 │   ├── infiltration_analysis.py     # Immune infiltration + zones
+│   ├── spatial_permutation_testing.py # Per-tumor permutation tests
 │   ├── neighborhoods.py             # Cellular neighborhoods
 │   └── advanced.py                  # Pseudo-time, etc.
 │
@@ -133,6 +142,7 @@ spatial_quantification/
 │   ├── plot_manager.py              # Orchestrate plotting
 │   ├── individual_plots.py          # Single plots
 │   ├── composite_plots.py           # Multi-panel figures
+│   ├── permutation_plotter.py       # Permutation testing plots
 │   └── styles.py                    # Publication settings
 │
 ├── statistics/
@@ -156,6 +166,7 @@ spatial_quantification/
    ├── Population Dynamics
    ├── Distance Analysis
    ├── Infiltration Analysis
+   ├── Spatial Permutation Testing
    ├── Neighborhoods
    └── Advanced
    ↓
@@ -284,7 +295,203 @@ cellular_neighborhoods:
 
 ---
 
-### 5. Advanced Analyses
+### 5. Spatial Permutation Testing
+
+**What it does:**
+- Determines whether spatial patterns of marker expression within individual tumor structures are biologically meaningful or artifacts of random chance
+- Uses **per-tumor Monte Carlo permutation testing**: cell coordinates stay fixed while marker labels are randomly shuffled
+- Three test types with distinct biological questions, all operating **within** each tumor structure
+
+**Statistical approach:**
+1. Compute an observed spatial statistic for each tumor structure
+2. Randomly permute marker labels `n_permutations` times (default 500) while keeping cell positions fixed
+3. Build a null distribution of the statistic under the "no spatial pattern" hypothesis
+4. Derive a z-score `(observed - null_mean) / null_std` and empirical p-value
+5. Apply Benjamini-Hochberg FDR correction per sample
+6. Aggregate per-tumor results to sample-level summaries
+7. Run Mann-Whitney U group comparisons on the sample-level summaries
+
+#### Test Types
+
+| Test | Biological Question | Statistic | Permutation Strategy |
+|------|---------------------|-----------|---------------------|
+| **Clustering** | Are marker+ cells spatially clustered within this tumor? | Hopkins statistic (H > 0.5 = clustered, H = 0.5 = random, H < 0.5 = uniform) | Shuffle single marker labels among cells |
+| **Co-localization** | Do two markers overlap spatially more than expected by chance? | Cross-K function (mean count of marker2+ cells within radius of each marker1+ cell) | Independently shuffle both marker labels |
+| **Enrichment** | Are immune cells enriched near marker+ tumor cells? | Mean immune cell count within radius of marker+ tumor cells | Shuffle tumor marker labels |
+
+#### Interpreting Results
+
+**Per-tumor results** (`per_tumor_results.csv`) — one row per tumor structure per test:
+
+| Column | Meaning |
+|--------|---------|
+| `sample_id` | Sample the tumor belongs to |
+| `structure_id` | Unique tumor structure identifier |
+| `test_type` | `clustering`, `colocalization`, or `enrichment` |
+| `test_name` | Name from config (e.g., `pERK_clustering`) |
+| `marker` | Marker(s) tested |
+| `n_cells` | Total cells in the structure |
+| `n_positive` | Number of marker+ cells (clustering/enrichment) |
+| `prevalence` | Fraction of positive cells |
+| `observed` | Observed spatial statistic value |
+| `null_mean` | Mean of the permutation null distribution |
+| `null_std` | Standard deviation of the null distribution |
+| `z_score` | Effect size: `(observed - null_mean) / null_std`. Positive = more clustered/colocalized/enriched than chance |
+| `p_value` | Empirical p-value from the null distribution |
+| `p_adjusted` | Benjamini-Hochberg FDR-corrected p-value (per sample) |
+| `significant` | Boolean: `p_adjusted < alpha` |
+
+**How to read z-scores:**
+- **z > 0**: The observed spatial pattern is stronger than expected by chance (marker+ cells are more clustered, co-localized, or associated with immune cells than random)
+- **z ~ 0**: No spatial pattern; marker expression is spatially random
+- **z < 0**: Anti-pattern (marker+ cells are more dispersed or separated than expected by chance)
+- **|z| > 2**: Strong effect; **|z| > 3**: Very strong effect
+
+**Sample summary** (`sample_summary.csv`) — one row per sample per test:
+
+| Column | Meaning |
+|--------|---------|
+| `n_tumors` | Number of structures tested in this sample |
+| `n_significant` | Number of structures with FDR-significant spatial pattern |
+| `pct_significant` | Percentage of structures with significant spatial pattern |
+| `mean_z_score` | Mean effect size across all structures in the sample |
+| `median_p_value` | Median p-value across all structures |
+
+**How to interpret `pct_significant`:**
+- **0-10%**: Spatial pattern is rare; most tumors show random marker distribution
+- **10-30%**: A subset of tumors shows the pattern; may represent biological heterogeneity
+- **30-60%**: The pattern is common; likely a real biological phenomenon in this sample
+- **>60%**: The pattern is pervasive across tumors; strong biological signal
+
+**Group comparisons** (`group_comparisons.csv`) — pairwise comparison between groups:
+
+| Column | Meaning |
+|--------|---------|
+| `group1`, `group2` | Groups being compared |
+| `mean_z_g1`, `mean_z_g2` | Mean z-score (effect size) per group |
+| `p_value` | Mann-Whitney U p-value for the comparison |
+
+A significant group comparison means one group has systematically stronger (or weaker) spatial patterns than the other across samples.
+
+#### Generated Plots and What They Mean
+
+All plots are saved under `spatial_permutation/plots/` and `spatial_permutation/null_distributions/`.
+
+**1. Null Distribution Histograms** (`null_distributions/null_dist_{test_type}_page{N}.png`)
+
+One subplot per tumor structure. Shows a gray histogram of the reconstructed null distribution (from `null_mean` and `null_std`) with a vertical line at the observed statistic value.
+
+*How to read:* If the observed line (colored) falls far into the tail of the null distribution, that tumor has a significant spatial pattern. The line is **red** if FDR-significant, **blue** if not. The annotation shows the p-value and z-score.
+
+*Use case:* Visually confirm that the permutation test is behaving correctly. If the observed value consistently falls outside the null distribution across tumors, the spatial pattern is robust.
+
+**2. Effect Size Distribution** (`plots/effect_size_distribution_{test_type}.png`)
+
+Violin + box plots of z-scores (effect sizes) per sample, colored by group.
+
+*How to read:* Each violin shows the distribution of z-scores across all tumor structures within one sample. A violin shifted above zero means that sample's tumors generally exhibit the tested spatial pattern. Compare violins between groups to see if one group has consistently higher effect sizes.
+
+*Use case:* Assess sample-to-sample variability and spot outlier samples. Samples with violins centered near zero have random spatial organization; those shifted upward have consistent spatial clustering/enrichment.
+
+**3. Prevalence vs Effect Size** (`plots/prevalence_effect_{test_type}.png`)
+
+Scatter plot of marker prevalence (%) vs z-score for each tumor structure, with significant structures in red and non-significant in blue. Includes a linear trend line with 95% CI.
+
+*How to read:* Reveals whether the spatial pattern depends on how common the marker is. A flat trend means the spatial effect is independent of prevalence. A positive slope means higher-prevalence tumors show stronger clustering. The KS-derived correlation (r) and p-value are annotated.
+
+*Use case:* Rule out prevalence-driven artifacts. If significance is only seen at very low or very high prevalence, the result may be unreliable. Ideally, significant effects should be observed across a range of prevalences.
+
+**4. Group Comparison** (`plots/group_comparison_{test_name}.png`)
+
+Two-panel figure per test. **Left panel:** Violin + box + jitter plots of `mean_z_score` per group with Mann-Whitney U p-value. **Right panel:** Bar chart of mean `pct_significant` per group.
+
+*How to read:* The left panel shows whether one group has systematically larger spatial effects than the other (higher mean z-scores). The right panel shows what fraction of tumors are significant in each group. If KPT shows 45% significant vs KPNT at 15%, spatial clustering is much more prevalent in KPT.
+
+*Use case:* The primary comparison plot. Determines whether the spatial pattern differs between experimental conditions (e.g., treatment vs control, genotypes).
+
+**5. Significance Matrix** (`plots/significance_matrix.png`)
+
+Heatmap with samples on the y-axis and test configurations on the x-axis. Cell color intensity represents `pct_significant` (0-100%).
+
+*How to read:* Hot (red/orange) cells indicate that a large fraction of tumors in that sample are significant for that test. Cool (yellow/white) cells indicate few or no significant tumors. Look for row patterns (samples that are significant across multiple tests) and column patterns (tests that are significant across most samples).
+
+*Use case:* Overview of which samples and tests show the strongest spatial signals. Identifies samples that are outliers across all analyses.
+
+**6. P-value QQ Plot** (`plots/pvalue_qq_plot.png`)
+
+Quantile-quantile plot of observed p-values against a theoretical uniform distribution, with one panel per test type. Includes a Kolmogorov-Smirnov test statistic.
+
+*How to read:* Under the null hypothesis (no spatial pattern anywhere), p-values should fall along the diagonal red reference line. Points below the line at small p-values indicate an excess of significant results (a true global signal). Points above the line suggest the test may be conservative.
+
+*Use case:* Diagnostic for global signal. If the QQ plot shows systematic deviation from the diagonal, there is a real spatial pattern across the dataset. A KS p-value < 0.05 confirms the p-value distribution deviates from uniform.
+
+**7. Temporal Trends** (`plots/temporal_trend_{test_name}.png`)
+
+Two-panel figure per test. **Left panel:** Mean z-score (effect size) over timepoints per group, with individual points and error bars (SEM). **Right panel:** `pct_significant` over timepoints per group.
+
+*How to read:* Shows how the spatial pattern evolves over time. A rising mean z-score indicates that spatial clustering/enrichment is becoming stronger over time. A rising `pct_significant` means more tumors are developing the pattern. Compare lines between groups to see if temporal dynamics differ.
+
+*Use case:* Track spatial reorganization over the course of treatment or disease progression. For example, if pERK clustering increases over time in KPT but not KPNT, this suggests treatment-induced spatial reorganization.
+
+#### Example Configuration
+
+```yaml
+spatial_permutation:
+  enabled: true
+  generate_plots: true
+  structure_column: tumor_structure_id
+
+  tests:
+    # Are pERK+ cells clustered within tumors?
+    - type: clustering
+      name: pERK_clustering
+      marker: is_pERK_positive_tumor
+
+    # Do pERK+ and NINJA+ cells spatially overlap?
+    - type: colocalization
+      name: pERK_NINJA_overlap
+      marker1: is_pERK_positive_tumor
+      marker2: is_NINJA_positive_tumor
+      radius: 30  # um
+
+    # Are CD8 T cells enriched near NINJA+ tumor cells?
+    - type: enrichment
+      name: CD8_near_NINJA
+      tumor_marker: is_NINJA_positive_tumor
+      immune_phenotype: is_CD8_T_cells
+      radius: 50  # um
+
+  parameters:
+    n_permutations: 500
+    min_tumor_cells: 20
+    alpha: 0.05
+    min_prevalence: 0.05
+    max_prevalence: 0.95
+    max_structures: 500
+```
+
+**Outputs:**
+```
+spatial_permutation/
+├── per_tumor_results.csv       # One row per tumor per test
+├── sample_summary.csv          # Aggregated to sample level
+├── group_comparisons.csv       # Between-group statistics
+├── exclusion_log.csv           # Structures excluded (too few cells, etc.)
+├── config_used.json            # Configuration snapshot
+├── plots/
+│   ├── effect_size_distribution_{test_type}.png
+│   ├── prevalence_effect_{test_type}.png
+│   ├── group_comparison_{test_name}.png
+│   ├── significance_matrix.png
+│   ├── pvalue_qq_plot.png
+│   └── temporal_trend_{test_name}.png
+└── null_distributions/
+    └── null_dist_{test_type}_page{N}.png
+```
+
+---
+
+### 6. Advanced Analyses
 
 **Placeholder for:**
 - Pseudo-time differentiation trajectories
