@@ -324,7 +324,7 @@ population_dynamics:
 # ANALYSIS 2: CELL-TO-CELL DISTANCE ANALYSIS
 # ============================================================================
 distance_analysis:
-  enabled: false
+  enabled: true
   
   pairings:
     - source: 'CD8_T_cells'
@@ -367,7 +367,7 @@ distance_analysis:
 # ANALYSIS 3: IMMUNE INFILTRATION
 # ============================================================================
 immune_infiltration:
-  enabled: false
+  enabled: true
   use_spatialcells: true 
   use_optimized: true
   
@@ -451,72 +451,6 @@ immune_infiltration:
         - MHCII+_macrophages
         - MHCII-_macrophages
         - B_cells
-
-# ============================================================================
-# ANALYSIS 4B: SPATIAL PERMUTATION TESTING
-# ============================================================================
-# Monte Carlo permutation testing to determine if spatial patterns are
-# biologically meaningful or artifacts of random chance.
-#
-# KEY CONCEPT: Tests run WITHIN each tumor structure (e.g., B cell cluster).
-# Question: "Are pERK+ cells clustered within this tumor?"
-# NOT: "Is this pERK+ region statistically significant?"
-spatial_permutation:
-  enabled: true
-  generate_plots: true
-
-  # CRITICAL: Specify the column containing tumor structure IDs
-  # This should match the output from per_structure_analysis
-  # Typical values: 'tumor_structure_id', 'B_cells_structure_id', 'cluster_id'
-  structure_column: tumor_region_id #tumor_structure_id
-
-  # Test configurations
-  # Available test types: clustering, colocalization, enrichment
-  tests:
-    # Single marker clustering - Are marker+ cells spatially clustered?
-    - type: clustering
-      name: pERK_clustering
-      marker: is_pERK_positive_tumor
-
-    - type: clustering
-      name: NINJA_clustering
-      marker: is_NINJA_positive_tumor
-      tumor_marker: is_Tumor
-
-    # Two-marker co-localization - Do markers overlap more than chance?
-    - type: colocalization
-      name: pERK_NINJA_overlap
-      marker1: is_pERK_positive_tumor
-      marker2: is_NINJA_positive_tumor
-      tumor_marker: is_Tumor
-      radius: 30  # Distance threshold for cross-K function
-
-    # Immune-marker enrichment - Are immune cells enriched near marker+ B cells?
-    - type: enrichment
-      name: CD8_near_NINJA
-      tumor_marker: is_NINJA_positive_tumor
-      immune_phenotype: is_CD8_T_cells
-      radius: 50
-
-  # Statistical parameters
-  parameters:
-    n_permutations: 500        # Number of Monte Carlo permutations
-    min_tumor_cells: 500        # Minimum cells per tumor for testing
-    alpha: 0.05                # Significance threshold
-    min_prevalence: 0.05       # Minimum marker prevalence (5%)
-    max_prevalence: 0.95       # Maximum marker prevalence (95%)
-    enrichment_radius: 50      # Default radius for enrichment tests (um)
-    clustering_radius: 30      # Default radius for clustering metrics (um)
-    max_structures: 500        # Safety limit - fail if more structures than this
-    colocalization_radius: 30  # Default radius for co-localization (um)
-
-  # Grouping for cross-sample comparisons
-  grouping:
-    split_by:
-      - group
-      - timepoint
-    aggregate: true  # Aggregate results across tumors within samples
-
 
 # ============================================================================
 # ANALYSIS 4: CELLULAR NEIGHBORHOODS
@@ -847,7 +781,7 @@ pseudotime_analysis:
 # ANALYSIS 10: MARKER CLUSTERING ANALYSIS WITH RANDOMIZATION TESTING
 # ============================================================================
 marker_clustering_analysis:
-  enabled: false
+  enabled: true
   generate_plots: true
 
   # Number of random permutations to test against null model

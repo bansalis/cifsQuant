@@ -212,6 +212,30 @@ def main():
                     print(f"  ⚠ Could not generate spatial plots: {e}")
                     print(f"     Traceback: {traceback.format_exc()}")
 
+    # NEW: Spatial Permutation Testing
+    if config.get('spatial_permutation', {}).get('enabled', False):
+        print("\n  ✓ Running spatial permutation testing analysis")
+        try:
+            from spatial_quantification.analyses.spatial_permutation_testing import SpatialPermutationTesting
+            permutation_testing = SpatialPermutationTesting(adata, config, output_dir)
+            all_results['spatial_permutation'] = permutation_testing.run()
+
+            # Generate plots if configured
+            if config.get('spatial_permutation', {}).get('generate_plots', True):
+                print("\n  Generating permutation testing visualizations...")
+                try:
+                    from spatial_quantification.visualization.permutation_plotter import PermutationPlotter
+                    perm_plotter = PermutationPlotter(output_dir / 'spatial_permutation', config)
+                    perm_plotter.generate_all_plots(all_results['spatial_permutation'])
+                except Exception as e:
+                    print(f"  ⚠ Could not generate permutation testing plots: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"  ⚠ Could not run spatial permutation testing: {e}")
+            import traceback
+            traceback.print_exc()
+
     # Temporal Analysis (cluster metrics over time)
     if config.get('temporal_analysis', {}).get('enabled', False):
         print("\n  Running temporal analysis...")
@@ -460,30 +484,6 @@ def main():
                     traceback.print_exc()
         except Exception as e:
             print(f"  ⚠ Could not run marker clustering analysis: {e}")
-            import traceback
-            traceback.print_exc()
-
-    # NEW: Spatial Permutation Testing
-    if config.get('spatial_permutation', {}).get('enabled', False):
-        print("\n  ✓ Running spatial permutation testing analysis")
-        try:
-            from spatial_quantification.analyses.spatial_permutation_testing import SpatialPermutationTesting
-            permutation_testing = SpatialPermutationTesting(adata, config, output_dir)
-            all_results['spatial_permutation'] = permutation_testing.run()
-
-            # Generate plots if configured
-            if config.get('spatial_permutation', {}).get('generate_plots', True):
-                print("\n  Generating permutation testing visualizations...")
-                try:
-                    from spatial_quantification.visualization.permutation_plotter import PermutationPlotter
-                    perm_plotter = PermutationPlotter(output_dir / 'spatial_permutation', config)
-                    perm_plotter.generate_all_plots(all_results['spatial_permutation'])
-                except Exception as e:
-                    print(f"  ⚠ Could not generate permutation testing plots: {e}")
-                    import traceback
-                    traceback.print_exc()
-        except Exception as e:
-            print(f"  ⚠ Could not run spatial permutation testing: {e}")
             import traceback
             traceback.print_exc()
 
