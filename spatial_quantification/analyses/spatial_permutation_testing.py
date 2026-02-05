@@ -1,83 +1,44 @@
 """
 Spatial Permutation Testing Analysis
 
-Determines whether spatial patterns of tumor marker expression and immune-tumor
-marker associations are biologically meaningful or artifacts of random chance.
+Determines whether spatial patterns of tumor marker expression are
+biologically meaningful or artifacts of random chance.
 
 Test Types:
 1. Single Marker Clustering - Are marker+ cells spatially clustered within tumors?
-2. Two-Marker Co-localization - Do marker+ cells overlap more than chance within tumors?
+2. Two-Marker Co-localization - Do marker+ cells overlap more than chance?
 3. Immune-Marker Enrichment - Are immune cells enriched near marker+ tumor cells?
 
 Statistical Approach:
 - Per-tumor Monte Carlo permutation testing
 - Fixed cell coordinates with randomized marker assignments
 - Benjamini-Hochberg FDR correction per sample
-
-Key Concept:
-- Analysis runs WITHIN each tumor structure (e.g., B cell cluster, tumor mass)
-- Tests whether marker+ cells (e.g., pERK+) are spatially clustered within that tumor
-- Permutes marker status among cells while keeping positions fixed
 """
 
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Optional, Union
 from scipy.spatial import cKDTree
 from scipy import stats
 import warnings
 from itertools import combinations
 import json
 
-try:
-    from sklearn.neighbors import NearestNeighbors
-    HAS_SKLEARN = True
-except ImportError:
-    HAS_SKLEARN = False
-    warnings.warn("sklearn not available - some metrics will be limited")
-
 
 class SpatialPermutationTesting:
     """
-    Spatial permutation testing for tumor marker expression patterns.
+    Spatial permutation testing for marker expression patterns within tumor structures.
 
-    Implements Monte Carlo permutation tests to determine if observed spatial
-    patterns are statistically significant compared to random null distributions.
-
-    IMPORTANT: This analysis runs PER TUMOR STRUCTURE, not per marker region.
-    The question is: "Within this tumor, are pERK+ cells clustered together?"
-    NOT: "Is this pERK+ region significant?"
+    IMPORTANT: This analysis runs PER TUMOR STRUCTURE.
+    Question: "Within this tumor, are pERK+ cells clustered together?"
     """
 
     def __init__(self, adata, config: Dict, output_dir: Path):
-        """
-        Initialize spatial permutation testing.
-
-        Parameters
-        ----------
-        adata : AnnData
-            Annotated data with spatial coordinates and phenotype columns
-        config : dict
-            Configuration dictionary
-        output_dir : Path
-            Output directory for results
-        """
         self.adata = adata
         self.config = config
         self.output_dir = Path(output_dir) / 'spatial_permutation'
-        self.plots_dir = self.output_dir / 'plots'
-        self.null_dist_dir = self.output_dir / 'null_distributions'
-
-        # Create directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.plots_dir.mkdir(parents=True, exist_ok=True)
-        self.null_dist_dir.mkdir(parents=True, exist_ok=True)
-
-        # Get spatial coordinates
-        if 'spatial' in self.adata.obsm:
-            self.adata.obs['X_centroid'] = self.adata.obsm['spatial'][:, 0]
-            self.adata.obs['Y_centroid'] = self.adata.obsm['spatial'][:, 1]
 
         # Get analysis configuration
         self.analysis_config = self.config.get('spatial_permutation', {})
@@ -86,424 +47,313 @@ class SpatialPermutationTesting:
         params = self.analysis_config.get('parameters', {})
         self.n_permutations = params.get('n_permutations', 500)
         self.min_tumor_cells = params.get('min_tumor_cells', 20)
-        self.enrichment_radius = params.get('enrichment_radius', 50)
-        self.clustering_radius = params.get('clustering_radius', 30)
-        self.colocalization_radius = params.get('colocalization_radius', 30)
         self.alpha = params.get('alpha', 0.05)
         self.min_prevalence = params.get('min_prevalence', 0.05)
         self.max_prevalence = params.get('max_prevalence', 0.95)
-
-        # Maximum number of structures to analyze (safety limit)
         self.max_structures = params.get('max_structures', 500)
 
-        # CRITICAL: Get the structure column from config
-        # This should match what per_structure_analysis creates
-        structure_config = self.config.get('per_structure_analysis',
-                                           self.config.get('per_tumor_analysis', {}))
-        self.structure_column = self.analysis_config.get(
-            'structure_column',
-            structure_config.get('structure_column', 'tumor_structure_id')
-        )
+        # Get structure column from config
+        self.structure_column = self.analysis_config.get('structure_column', 'tumor_structure_id')
 
-        # Random seed for reproducibility
+        # Random seed
         self.random_seed = self.config.get('advanced', {}).get('random_seed', 42)
         np.random.seed(self.random_seed)
 
-        # Get test configurations
+        # Test configurations
         self.tests = self.analysis_config.get('tests', [])
 
-        # Grouping configuration
-        grouping = self.analysis_config.get('grouping', {})
-        self.split_by = grouping.get('split_by', ['group', 'timepoint'])
-        self.aggregate = grouping.get('aggregate', True)
-
-        # Results storage
+        # Results
         self.results = {}
-
-        # Track excluded tumors
         self.exclusion_log = []
 
     def run(self) -> Dict:
-        """Run complete spatial permutation testing analysis."""
+        """Run spatial permutation testing analysis."""
         print("\n" + "="*80)
         print("SPATIAL PERMUTATION TESTING ANALYSIS")
         print("="*80)
-        print(f"  Permutations: {self.n_permutations}")
-        print(f"  Min tumor cells: {self.min_tumor_cells}")
-        print(f"  Significance threshold: {self.alpha}")
         print(f"  Structure column: {self.structure_column}")
-        print(f"  Tests configured: {len(self.tests)}")
+        print(f"  Permutations: {self.n_permutations}")
+        print(f"  Min cells per tumor: {self.min_tumor_cells}")
 
-        if len(self.tests) == 0:
-            print("  No tests configured. Using default tests...")
-            self._setup_default_tests()
-
-        # Validate inputs
-        print("\n1. Validating inputs...")
-        if not self._validate_inputs():
-            print("  Input validation failed")
+        # Validate structure column
+        if not self._validate_structure_column():
             return self.results
 
+        # Setup tests
+        if len(self.tests) == 0:
+            self._setup_default_tests()
+
+        # Validate marker columns
+        self._validate_marker_columns()
+
+        if len(self.tests) == 0:
+            print("  ERROR: No valid tests configured")
+            return self.results
+
+        print(f"\n  Tests to run: {len(self.tests)}")
+        for t in self.tests:
+            print(f"    - {t['name']} ({t['type']})")
+
         # Run per-tumor tests
-        print("\n2. Running per-tumor permutation tests...")
+        print("\n" + "-"*40)
+        print("Running per-tumor permutation tests...")
+        print("-"*40)
+
         self._run_per_tumor_tests()
 
-        # Aggregate to sample level
-        print("\n3. Aggregating results to sample level...")
-        self._aggregate_to_sample_level()
+        # Aggregate and save
+        if 'per_tumor_results' in self.results and len(self.results['per_tumor_results']) > 0:
+            self._apply_fdr_correction()
+            self._aggregate_to_sample_level()
+            self._run_group_comparisons()
 
-        # Cross-sample group comparisons
-        print("\n4. Running cross-sample group comparisons...")
-        self._run_group_comparisons()
-
-        # Quality control
-        print("\n5. Running quality control checks...")
-        self._run_quality_control()
-
-        # Save results
-        print("\n6. Saving results...")
         self._save_results()
 
         print("\n" + "="*80)
         print("SPATIAL PERMUTATION TESTING COMPLETE")
-        print(f"  Results saved to: {self.output_dir}/")
         print("="*80 + "\n")
 
         return self.results
 
-    def _setup_default_tests(self):
-        """Set up default test configurations based on available columns."""
-        # Find potential marker columns (pERK, NINJA, Ki67, etc.)
-        marker_patterns = ['pERK', 'NINJA', 'Ki67', 'MHC', 'PD-L1', 'GL7', 'BCL6']
-        marker_cols = []
-        for pattern in marker_patterns:
-            cols = [col for col in self.adata.obs.columns
-                   if pattern.lower() in col.lower() and col.startswith('is_')]
-            marker_cols.extend(cols)
+    def _validate_structure_column(self) -> bool:
+        """Validate the structure column exists and has reasonable values."""
+        print(f"\n  Validating structure column: '{self.structure_column}'")
 
-        # Find immune phenotype columns
-        immune_patterns = ['CD8', 'CD4', 'T_cell', 'Tcell', 'Tfh']
-        immune_cols = []
-        for pattern in immune_patterns:
-            cols = [col for col in self.adata.obs.columns
-                   if pattern.lower() in col.lower() and col.startswith('is_')]
-            immune_cols.extend(cols)
-
-        # Remove duplicates
-        marker_cols = list(dict.fromkeys(marker_cols))
-        immune_cols = list(dict.fromkeys(immune_cols))
-
-        # Set up default tests
-        self.tests = []
-
-        # Add clustering tests for each marker (limit to 3)
-        for marker_col in marker_cols[:3]:
-            self.tests.append({
-                'type': 'clustering',
-                'name': f'{marker_col}_clustering',
-                'marker': marker_col
-            })
-
-        # Add colocalization tests for marker pairs (limit to 2)
-        if len(marker_cols) >= 2:
-            for m1, m2 in list(combinations(marker_cols, 2))[:2]:
-                self.tests.append({
-                    'type': 'colocalization',
-                    'name': f'{m1}_vs_{m2}',
-                    'marker1': m1,
-                    'marker2': m2
-                })
-
-        # Add enrichment tests (limit to 2)
-        for immune_col in immune_cols[:1]:
-            for marker_col in marker_cols[:2]:
-                self.tests.append({
-                    'type': 'enrichment',
-                    'name': f'{immune_col}_near_{marker_col}',
-                    'tumor_marker': marker_col,
-                    'immune_phenotype': immune_col,
-                    'radius': self.enrichment_radius
-                })
-
-        print(f"    Set up {len(self.tests)} default tests")
-        for t in self.tests:
-            print(f"      - {t['type']}: {t['name']}")
-
-    def _validate_inputs(self) -> bool:
-        """Validate required inputs exist."""
-        valid = True
-
-        # Check for the specified structure column
-        print(f"    Looking for structure column: '{self.structure_column}'")
+        # List all columns for debugging
+        obs_cols = list(self.adata.obs.columns)
+        structure_like = [c for c in obs_cols if 'structure' in c.lower() or 'tumor' in c.lower() or 'cluster' in c.lower()]
+        print(f"  Available structure-like columns: {structure_like}")
 
         if self.structure_column not in self.adata.obs.columns:
-            # List available columns that might be structure-related
-            potential_cols = [col for col in self.adata.obs.columns
-                            if 'tumor' in col.lower() or 'structure' in col.lower()]
+            print(f"\n  ERROR: Column '{self.structure_column}' not found!")
+            print(f"  Please set 'structure_column' in config to one of: {structure_like}")
+            return False
 
-            print(f"    ERROR: Structure column '{self.structure_column}' not found!")
-            print(f"    Available structure-like columns: {potential_cols}")
-            print(f"    ")
-            print(f"    Please either:")
-            print(f"    1. Run per_structure_analysis first to create tumor structures")
-            print(f"    2. Set 'structure_column' in spatial_permutation config to the correct column")
+        # Get unique values
+        col_values = self.adata.obs[self.structure_column]
+        unique_values = col_values.dropna().unique()
 
-            # Check if we should fall back to sample-level analysis
-            if self.analysis_config.get('allow_sample_level', False):
-                print(f"    Falling back to sample-level analysis (no per-tumor breakdown)")
-                self.tumor_structure_col = None
-            else:
-                valid = False
-                return valid
-        else:
-            self.tumor_structure_col = self.structure_column
+        # Filter out -1 and string '-1'
+        valid_values = [v for v in unique_values if v != -1 and str(v) != '-1' and str(v) != 'nan']
 
-            # Count unique structures
-            n_structures = self.adata.obs[self.tumor_structure_col].nunique()
-            valid_structures = self.adata.obs[self.tumor_structure_col].dropna()
-            valid_structures = valid_structures[valid_structures != -1]
-            n_valid = valid_structures.nunique()
+        print(f"  Total unique values: {len(unique_values)}")
+        print(f"  Valid structure IDs: {len(valid_values)}")
+        print(f"  Sample values: {valid_values[:10]}")
 
-            print(f"    Found {n_valid} valid tumor structures (excluding -1/NaN)")
+        if len(valid_values) == 0:
+            print("  ERROR: No valid structure IDs found")
+            return False
 
-            # Safety check: too many structures suggests wrong column
-            if n_valid > self.max_structures:
-                print(f"    ERROR: Too many structures ({n_valid} > {self.max_structures})")
-                print(f"    This suggests the wrong column is being used.")
-                print(f"    Expected: tumor/cluster IDs (typically 10-100 per sample)")
-                print(f"    Got: {n_valid} unique values")
+        if len(valid_values) > self.max_structures:
+            print(f"  ERROR: Too many structures ({len(valid_values)} > {self.max_structures})")
+            print("  This suggests the wrong column. Expected 10-100 tumor structures.")
+            return False
 
-                # Show sample of values
-                sample_values = valid_structures.head(20).tolist()
-                print(f"    Sample values: {sample_values}")
-                valid = False
-                return valid
+        # Count cells per structure
+        cells_per_struct = col_values.value_counts()
+        print(f"  Cells per structure: min={cells_per_struct.min()}, max={cells_per_struct.max()}, median={cells_per_struct.median():.0f}")
 
-            if n_valid == 0:
-                print(f"    ERROR: No valid tumor structures found")
-                valid = False
-                return valid
+        return True
 
-            if n_valid < 5:
-                print(f"    WARNING: Very few structures ({n_valid}) - limited statistical power")
+    def _setup_default_tests(self):
+        """Set up default tests based on available marker columns."""
+        print("\n  Setting up default tests...")
 
-        # Check spatial coordinates
-        if 'X_centroid' not in self.adata.obs.columns:
-            if 'spatial' in self.adata.obsm:
-                self.adata.obs['X_centroid'] = self.adata.obsm['spatial'][:, 0]
-                self.adata.obs['Y_centroid'] = self.adata.obsm['spatial'][:, 1]
-                print("    Extracted coordinates from obsm['spatial']")
-            else:
-                print("    ERROR: No spatial coordinates found")
-                valid = False
+        # Find marker columns
+        marker_cols = [c for c in self.adata.obs.columns
+                      if c.startswith('is_') and self.adata.obs[c].dtype == bool]
 
-        # Check marker columns exist
+        # Filter to likely interesting markers
+        interesting = ['GL7', 'Ki67', 'pERK', 'BCL6', 'proliferat']
+        selected = []
+        for col in marker_cols:
+            for pattern in interesting:
+                if pattern.lower() in col.lower():
+                    selected.append(col)
+                    break
+
+        selected = list(set(selected))[:3]  # Max 3 markers
+
+        self.tests = []
+        for marker in selected:
+            self.tests.append({
+                'type': 'clustering',
+                'name': f'{marker}_clustering',
+                'marker': marker
+            })
+
+        print(f"  Created {len(self.tests)} default clustering tests")
+
+    def _validate_marker_columns(self):
+        """Validate that marker columns exist."""
+        valid_tests = []
         for test in self.tests:
-            test_type = test.get('type')
-            if test_type == 'clustering':
-                marker = test.get('marker')
-                if marker and marker not in self.adata.obs.columns:
-                    print(f"    WARNING: Marker column '{marker}' not found, skipping test")
-                    test['skip'] = True
-            elif test_type == 'colocalization':
-                for m in ['marker1', 'marker2']:
-                    marker = test.get(m)
-                    if marker and marker not in self.adata.obs.columns:
-                        print(f"    WARNING: Marker column '{marker}' not found, skipping test")
-                        test['skip'] = True
-            elif test_type == 'enrichment':
-                for m in ['tumor_marker', 'immune_phenotype']:
-                    marker = test.get(m)
-                    if marker and marker not in self.adata.obs.columns:
-                        print(f"    WARNING: Column '{marker}' not found, skipping test")
-                        test['skip'] = True
+            markers_to_check = []
+            if test['type'] == 'clustering':
+                markers_to_check = [test.get('marker')]
+            elif test['type'] == 'colocalization':
+                markers_to_check = [test.get('marker1'), test.get('marker2')]
+            elif test['type'] == 'enrichment':
+                markers_to_check = [test.get('tumor_marker'), test.get('immune_phenotype')]
 
-        # Filter out skipped tests
-        self.tests = [t for t in self.tests if not t.get('skip', False)]
+            all_exist = True
+            for m in markers_to_check:
+                if m and m not in self.adata.obs.columns:
+                    print(f"  WARNING: Column '{m}' not found, skipping test '{test['name']}'")
+                    all_exist = False
 
-        if len(self.tests) == 0:
-            print("    ERROR: No valid tests remaining")
-            valid = False
-        else:
-            print(f"    {len(self.tests)} valid tests configured")
+            if all_exist:
+                valid_tests.append(test)
 
-        return valid
+        self.tests = valid_tests
 
     def _run_per_tumor_tests(self):
         """Run permutation tests for each tumor structure."""
         all_results = []
 
         samples = self.adata.obs['sample_id'].unique()
-        total_tests = 0
+        print(f"\n  Processing {len(samples)} samples...")
+
         total_structures = 0
+        total_tests_run = 0
 
-        for sample in samples:
+        for sample_idx, sample in enumerate(samples):
+            # Get sample data
             sample_mask = self.adata.obs['sample_id'] == sample
-            sample_data = self.adata.obs[sample_mask].copy()
+            sample_obs = self.adata.obs.loc[sample_mask].copy()
 
+            # Get coordinates
             if 'spatial' in self.adata.obsm:
                 sample_coords = self.adata.obsm['spatial'][sample_mask.values]
             else:
-                sample_coords = sample_data[['X_centroid', 'Y_centroid']].values
+                sample_coords = sample_obs[['X_centroid', 'Y_centroid']].values
 
             # Get metadata
-            timepoint = sample_data['timepoint'].iloc[0] if 'timepoint' in sample_data.columns else np.nan
-            group = sample_data['group'].iloc[0] if 'group' in sample_data.columns else ''
+            timepoint = sample_obs['timepoint'].iloc[0] if 'timepoint' in sample_obs.columns else np.nan
+            group = sample_obs['group'].iloc[0] if 'group' in sample_obs.columns else ''
 
-            # Get tumor structures in this sample
-            if self.tumor_structure_col:
-                tumor_ids = sample_data[self.tumor_structure_col].unique()
-                # Filter out invalid IDs
-                tumor_ids = [t for t in tumor_ids if pd.notna(t) and t != -1 and t != '-1']
-                n_tumors = len(tumor_ids)
-            else:
-                tumor_ids = ['whole_sample']
-                n_tumors = 1
+            # Get tumor structure IDs for this sample
+            struct_ids = sample_obs[self.structure_column].unique()
+            struct_ids = [s for s in struct_ids if pd.notna(s) and s != -1 and str(s) != '-1']
 
-            print(f"    {sample}: {n_tumors} tumor structures")
+            n_structures = len(struct_ids)
+            total_structures += n_structures
 
-            if n_tumors == 0:
-                print(f"      No valid structures, skipping sample")
+            print(f"\n  [{sample_idx+1}/{len(samples)}] {sample}: {n_structures} structures")
+
+            if n_structures == 0:
                 continue
 
-            total_structures += n_tumors
-            structures_processed = 0
+            # Process each structure
+            for struct_idx, struct_id in enumerate(struct_ids):
+                # Get cells in this structure
+                struct_mask = sample_obs[self.structure_column] == struct_id
+                struct_obs = sample_obs.loc[struct_mask]
+                struct_coords = sample_coords[struct_mask.values]
 
-            for tumor_id in tumor_ids:
-                if self.tumor_structure_col and tumor_id != 'whole_sample':
-                    tumor_mask = sample_data[self.tumor_structure_col] == tumor_id
-                else:
-                    tumor_mask = pd.Series(True, index=sample_data.index)
+                n_cells = len(struct_obs)
 
-                tumor_data = sample_data[tumor_mask]
-                tumor_coords_subset = sample_coords[tumor_mask.values]
-
-                n_cells = len(tumor_data)
-
-                # Check minimum cell count
                 if n_cells < self.min_tumor_cells:
                     self.exclusion_log.append({
-                        'sample_id': sample,
-                        'tumor_id': tumor_id,
-                        'reason': f'Insufficient cells ({n_cells} < {self.min_tumor_cells})'
+                        'sample_id': sample, 'structure_id': struct_id,
+                        'reason': f'Too few cells ({n_cells})'
                     })
                     continue
 
-                structures_processed += 1
-
-                # Run each test type
+                # Run each test
                 for test in self.tests:
-                    test_type = test.get('type')
-                    test_name = test.get('name', f'{test_type}_{test.get("marker", "")}')
+                    result = self._run_single_test(
+                        struct_obs, struct_coords, test,
+                        sample, struct_id, timepoint, group,
+                        sample_obs, sample_coords  # For enrichment tests
+                    )
 
-                    try:
-                        if test_type == 'clustering':
-                            result = self._run_clustering_test(
-                                tumor_data, tumor_coords_subset, test, sample, tumor_id,
-                                timepoint, group
-                            )
-                        elif test_type == 'colocalization':
-                            result = self._run_colocalization_test(
-                                tumor_data, tumor_coords_subset, test, sample, tumor_id,
-                                timepoint, group
-                            )
-                        elif test_type == 'enrichment':
-                            # For enrichment, we need immune cells from entire sample
-                            result = self._run_enrichment_test(
-                                sample_data, sample_coords, tumor_mask,
-                                test, sample, tumor_id, timepoint, group
-                            )
-                        else:
-                            continue
+                    if result is not None:
+                        all_results.append(result)
+                        total_tests_run += 1
 
-                        if result:
-                            all_results.append(result)
-                            total_tests += 1
+                # Progress update every 10 structures
+                if (struct_idx + 1) % 10 == 0:
+                    print(f"    Processed {struct_idx + 1}/{n_structures} structures...")
 
-                    except Exception as e:
-                        print(f"      Error in test {test_name} for tumor {tumor_id}: {e}")
-                        continue
-
-            print(f"      Processed {structures_processed}/{n_tumors} structures")
+        print(f"\n  Total: {total_structures} structures, {total_tests_run} tests completed")
 
         if all_results:
             self.results['per_tumor_results'] = pd.DataFrame(all_results)
-            print(f"\n  Completed {total_tests} tests across {total_structures} structures")
         else:
-            print("\n  WARNING: No test results generated")
             self.results['per_tumor_results'] = pd.DataFrame()
 
-    def _run_clustering_test(self, tumor_data: pd.DataFrame, tumor_coords: np.ndarray,
-                            test: Dict, sample: str, tumor_id: Union[str, int],
-                            timepoint: float, group: str) -> Optional[Dict]:
-        """
-        Run single marker clustering test using Hopkins statistic.
+    def _run_single_test(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
+                         test: Dict, sample: str, struct_id, timepoint, group,
+                         sample_obs: pd.DataFrame = None, sample_coords: np.ndarray = None) -> Optional[Dict]:
+        """Run a single permutation test on one structure."""
 
-        Tests whether marker+ cells are spatially clustered within the tumor.
-        Null hypothesis: Marker+ cells are randomly distributed among tumor cells.
-        """
-        marker_col = test.get('marker')
-        if marker_col not in tumor_data.columns:
-            return None
+        test_type = test['type']
 
-        marker_positive = tumor_data[marker_col].values.astype(bool)
-        n_positive = marker_positive.sum()
-        n_cells = len(tumor_data)
-        prevalence = n_positive / n_cells if n_cells > 0 else 0
+        if test_type == 'clustering':
+            return self._test_clustering(struct_obs, struct_coords, test, sample, struct_id, timepoint, group)
+        elif test_type == 'colocalization':
+            return self._test_colocalization(struct_obs, struct_coords, test, sample, struct_id, timepoint, group)
+        elif test_type == 'enrichment':
+            return self._test_enrichment(struct_obs, struct_coords, test, sample, struct_id, timepoint, group,
+                                        sample_obs, sample_coords)
+        return None
+
+    def _test_clustering(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
+                        test: Dict, sample: str, struct_id, timepoint, group) -> Optional[Dict]:
+        """
+        Test if marker+ cells are spatially clustered using Hopkins statistic.
+
+        Permutation: Shuffle marker labels among cells, keeping positions fixed.
+        """
+        marker_col = test['marker']
+
+        # Get marker status
+        marker_status = struct_obs[marker_col].values.astype(bool)
+        n_cells = len(marker_status)
+        n_positive = marker_status.sum()
+        prevalence = n_positive / n_cells
 
         # Check prevalence bounds
         if prevalence < self.min_prevalence or prevalence > self.max_prevalence:
-            self.exclusion_log.append({
-                'sample_id': sample,
-                'tumor_id': tumor_id,
-                'test': test.get('name'),
-                'reason': f'Prevalence out of bounds ({prevalence:.1%})'
-            })
             return None
-
-        if n_positive < 5:
+        if n_positive < 10:  # Need enough positive cells
             return None
 
         # Calculate observed Hopkins statistic
-        observed_hopkins = self._calculate_hopkins(tumor_coords, marker_positive)
-
-        if observed_hopkins is None:
+        observed = self._hopkins_statistic(struct_coords, marker_status)
+        if observed is None:
             return None
 
-        # Run permutations
-        null_distribution = []
+        # Permutation test
+        null_dist = []
         for _ in range(self.n_permutations):
-            # Shuffle marker assignments while preserving prevalence
-            permuted_positive = np.random.permutation(marker_positive)
-            perm_hopkins = self._calculate_hopkins(tumor_coords, permuted_positive)
-            if perm_hopkins is not None:
-                null_distribution.append(perm_hopkins)
+            # Shuffle marker assignments (keeps same number of positive cells)
+            perm_status = np.random.permutation(marker_status)
+            perm_stat = self._hopkins_statistic(struct_coords, perm_status)
+            if perm_stat is not None:
+                null_dist.append(perm_stat)
 
-        null_distribution = np.array(null_distribution)
-
-        if len(null_distribution) < self.n_permutations * 0.5:
+        if len(null_dist) < self.n_permutations // 2:
             return None
 
-        # Calculate statistics
-        null_mean = np.mean(null_distribution)
-        null_std = np.std(null_distribution)
+        null_dist = np.array(null_dist)
+        null_mean = null_dist.mean()
+        null_std = null_dist.std()
 
-        # Z-score (effect size)
-        z_score = (observed_hopkins - null_mean) / null_std if null_std > 0 else 0
-
-        # P-value (one-tailed: is observed > null? i.e., more clustered)
-        p_value = (null_distribution >= observed_hopkins).sum() / len(null_distribution)
+        z_score = (observed - null_mean) / null_std if null_std > 0 else 0
+        p_value = (null_dist >= observed).sum() / len(null_dist)
 
         return {
             'sample_id': sample,
-            'tumor_id': tumor_id,
+            'structure_id': struct_id,
             'test_type': 'clustering',
-            'test_name': test.get('name'),
+            'test_name': test['name'],
             'marker': marker_col,
             'n_cells': n_cells,
             'n_positive': int(n_positive),
             'prevalence': prevalence,
-            'observed_statistic': observed_hopkins,
+            'observed': observed,
             'null_mean': null_mean,
             'null_std': null_std,
             'z_score': z_score,
@@ -512,550 +362,344 @@ class SpatialPermutationTesting:
             'group': group
         }
 
-    def _calculate_hopkins(self, coords: np.ndarray, positive_mask: np.ndarray) -> Optional[float]:
+    def _hopkins_statistic(self, coords: np.ndarray, positive_mask: np.ndarray) -> Optional[float]:
         """
-        Calculate Hopkins statistic for clustering tendency.
+        Calculate Hopkins statistic for clustering tendency of positive cells.
 
-        H > 0.5 indicates clustering, H < 0.5 indicates uniformity, H ~ 0.5 is random.
+        H > 0.5 indicates clustering, H = 0.5 is random, H < 0.5 is uniform.
         """
         pos_coords = coords[positive_mask]
-        n_positive = len(pos_coords)
+        n_pos = len(pos_coords)
 
-        if n_positive < 10:
+        if n_pos < 10:
             return None
 
-        # Sample size
-        m = min(int(n_positive * 0.1), 50)
-        if m < 5:
-            m = min(5, n_positive)
-
-        # Sample points from positive cells
-        sample_idx = np.random.choice(n_positive, m, replace=False)
-        sample_coords = pos_coords[sample_idx]
+        # Sample size (10% of positive cells, max 30)
+        m = min(max(5, int(n_pos * 0.1)), 30)
 
         # Build KDTree for positive cells
         tree = cKDTree(pos_coords)
 
-        # Calculate distances from sample to nearest neighbor in positive cells (excluding self)
-        w_distances, _ = tree.query(sample_coords, k=2)
-        w_distances = w_distances[:, 1]  # Exclude self
+        # Sample m points from positive cells
+        sample_idx = np.random.choice(n_pos, m, replace=False)
+        sample_pts = pos_coords[sample_idx]
 
-        # Generate random points within bounding box
+        # W: distances from sampled points to their nearest neighbor (excluding self)
+        w_dist, _ = tree.query(sample_pts, k=2)
+        w_dist = w_dist[:, 1]  # Second nearest (first is self)
+
+        # U: distances from random points to nearest positive cell
         x_min, y_min = coords.min(axis=0)
         x_max, y_max = coords.max(axis=0)
-        random_coords = np.column_stack([
+        random_pts = np.column_stack([
             np.random.uniform(x_min, x_max, m),
             np.random.uniform(y_min, y_max, m)
         ])
-
-        # Calculate distances from random points to nearest positive cell
-        u_distances, _ = tree.query(random_coords, k=1)
+        u_dist, _ = tree.query(random_pts, k=1)
 
         # Hopkins statistic
-        sum_u = np.sum(u_distances)
-        sum_w = np.sum(w_distances)
+        sum_u = np.sum(u_dist)
+        sum_w = np.sum(w_dist)
 
         if sum_u + sum_w == 0:
             return None
 
-        hopkins = sum_u / (sum_u + sum_w)
+        return sum_u / (sum_u + sum_w)
 
-        return hopkins
-
-    def _run_colocalization_test(self, tumor_data: pd.DataFrame, tumor_coords: np.ndarray,
-                                 test: Dict, sample: str, tumor_id: Union[str, int],
-                                 timepoint: float, group: str) -> Optional[Dict]:
+    def _test_colocalization(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
+                            test: Dict, sample: str, struct_id, timepoint, group) -> Optional[Dict]:
         """
-        Run two-marker co-localization test using Cross-K function.
+        Test if two markers spatially co-localize using cross-K function.
 
-        Tests whether two markers spatially overlap more than expected by chance.
-        Null hypothesis: Markers are independently distributed among tumor cells.
+        Permutation: Independently shuffle both marker labels.
         """
-        marker1_col = test.get('marker1')
-        marker2_col = test.get('marker2')
+        marker1_col = test['marker1']
+        marker2_col = test['marker2']
+        radius = test.get('radius', 30)
 
-        if marker1_col not in tumor_data.columns or marker2_col not in tumor_data.columns:
-            return None
+        mask1 = struct_obs[marker1_col].values.astype(bool)
+        mask2 = struct_obs[marker2_col].values.astype(bool)
 
-        marker1_positive = tumor_data[marker1_col].values.astype(bool)
-        marker2_positive = tumor_data[marker2_col].values.astype(bool)
-
-        n1 = marker1_positive.sum()
-        n2 = marker2_positive.sum()
-        n_cells = len(tumor_data)
+        n1 = mask1.sum()
+        n2 = mask2.sum()
 
         if n1 < 5 or n2 < 5:
             return None
 
-        # Calculate observed cross-K at specified radius
-        radius = test.get('radius', self.colocalization_radius)
-        observed_cross_k = self._calculate_cross_k(tumor_coords, marker1_positive,
-                                                   marker2_positive, radius)
-
-        if observed_cross_k is None:
+        # Observed cross-K
+        observed = self._cross_k(struct_coords, mask1, mask2, radius)
+        if observed is None:
             return None
 
-        # Run permutations - INDEPENDENTLY permute each marker
-        null_distribution = []
+        # Permutation test
+        null_dist = []
         for _ in range(self.n_permutations):
-            perm_marker1 = np.random.permutation(marker1_positive)
-            perm_marker2 = np.random.permutation(marker2_positive)
-            perm_cross_k = self._calculate_cross_k(tumor_coords, perm_marker1,
-                                                   perm_marker2, radius)
-            if perm_cross_k is not None:
-                null_distribution.append(perm_cross_k)
+            perm1 = np.random.permutation(mask1)
+            perm2 = np.random.permutation(mask2)
+            perm_stat = self._cross_k(struct_coords, perm1, perm2, radius)
+            if perm_stat is not None:
+                null_dist.append(perm_stat)
 
-        null_distribution = np.array(null_distribution)
-
-        if len(null_distribution) < self.n_permutations * 0.5:
+        if len(null_dist) < self.n_permutations // 2:
             return None
 
-        # Calculate statistics
-        null_mean = np.mean(null_distribution)
-        null_std = np.std(null_distribution)
+        null_dist = np.array(null_dist)
+        null_mean = null_dist.mean()
+        null_std = null_dist.std()
 
-        z_score = (observed_cross_k - null_mean) / null_std if null_std > 0 else 0
+        z_score = (observed - null_mean) / null_std if null_std > 0 else 0
 
         # Two-tailed p-value
-        p_lower = (null_distribution <= observed_cross_k).sum() / len(null_distribution)
-        p_upper = (null_distribution >= observed_cross_k).sum() / len(null_distribution)
+        p_lower = (null_dist <= observed).sum() / len(null_dist)
+        p_upper = (null_dist >= observed).sum() / len(null_dist)
         p_value = 2 * min(p_lower, p_upper)
-
-        # Calculate Jaccard overlap
-        both_positive = (marker1_positive & marker2_positive).sum()
-        either_positive = (marker1_positive | marker2_positive).sum()
-        jaccard = both_positive / either_positive if either_positive > 0 else 0
 
         return {
             'sample_id': sample,
-            'tumor_id': tumor_id,
+            'structure_id': struct_id,
             'test_type': 'colocalization',
-            'test_name': test.get('name'),
+            'test_name': test['name'],
             'marker': f'{marker1_col}_vs_{marker2_col}',
-            'marker1': marker1_col,
-            'marker2': marker2_col,
-            'n_cells': n_cells,
+            'n_cells': len(struct_obs),
             'n_marker1': int(n1),
             'n_marker2': int(n2),
-            'n_double_positive': int(both_positive),
-            'jaccard_overlap': jaccard,
-            'prevalence': (n1 + n2) / (2 * n_cells),
-            'observed_statistic': observed_cross_k,
+            'prevalence': (n1 + n2) / (2 * len(struct_obs)),
+            'observed': observed,
             'null_mean': null_mean,
             'null_std': null_std,
             'z_score': z_score,
             'p_value': p_value,
-            'radius': radius,
             'timepoint': timepoint,
             'group': group
         }
 
-    def _calculate_cross_k(self, coords: np.ndarray, mask1: np.ndarray,
-                          mask2: np.ndarray, radius: float) -> Optional[float]:
-        """
-        Calculate Cross-K function value at given radius.
-
-        Measures the number of marker2+ cells within radius of marker1+ cells,
-        normalized by the expected number under CSR (complete spatial randomness).
-        """
+    def _cross_k(self, coords: np.ndarray, mask1: np.ndarray, mask2: np.ndarray, radius: float) -> Optional[float]:
+        """Calculate cross-K function at given radius."""
         coords1 = coords[mask1]
         coords2 = coords[mask2]
 
-        n1 = len(coords1)
-        n2 = len(coords2)
-
-        if n1 == 0 or n2 == 0:
+        if len(coords1) == 0 or len(coords2) == 0:
             return None
 
-        # Build KDTree for marker2 cells
         tree2 = cKDTree(coords2)
-
-        # Count marker2 cells within radius of each marker1 cell
         counts = tree2.query_ball_point(coords1, r=radius, return_length=True)
-        total_count = np.sum(counts)
 
-        # Calculate area of the region
-        x_min, y_min = coords.min(axis=0)
-        x_max, y_max = coords.max(axis=0)
-        area = (x_max - x_min) * (y_max - y_min)
+        return np.mean(counts)
 
-        if area == 0:
-            return None
-
-        # Cross-K function: normalized count
-        cross_k = area * total_count / (n1 * n2) if n1 * n2 > 0 else 0
-
-        return cross_k
-
-    def _run_enrichment_test(self, sample_data: pd.DataFrame, sample_coords: np.ndarray,
-                            tumor_mask: pd.Series, test: Dict, sample: str,
-                            tumor_id: Union[str, int], timepoint: float,
-                            group: str) -> Optional[Dict]:
+    def _test_enrichment(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
+                        test: Dict, sample: str, struct_id, timepoint, group,
+                        sample_obs: pd.DataFrame, sample_coords: np.ndarray) -> Optional[Dict]:
         """
-        Run immune-marker enrichment test.
+        Test if immune cells are enriched near marker+ tumor cells.
 
-        Tests whether immune cells are enriched near marker+ tumor cells.
-        Null hypothesis: Immune cells are equally distributed near marker+ and marker- cells.
+        Permutation: Shuffle marker status among tumor cells.
         """
-        tumor_marker_col = test.get('tumor_marker')
-        immune_col = test.get('immune_phenotype')
-        radius = test.get('radius', self.enrichment_radius)
+        tumor_marker = test['tumor_marker']
+        immune_col = test['immune_phenotype']
+        radius = test.get('radius', 50)
 
-        if tumor_marker_col not in sample_data.columns or immune_col not in sample_data.columns:
+        # Tumor cells and their marker status
+        marker_status = struct_obs[tumor_marker].values.astype(bool)
+        n_positive = marker_status.sum()
+
+        if n_positive < 5 or n_positive == len(marker_status):
             return None
 
-        # Get tumor cells and their marker status
-        tumor_data = sample_data[tumor_mask]
-        tumor_coords_subset = sample_coords[tumor_mask.values]
-
-        marker_positive = tumor_data[tumor_marker_col].values.astype(bool)
-        n_positive = marker_positive.sum()
-        n_tumor = len(tumor_data)
-
-        if n_positive < 5 or n_positive == n_tumor:
-            return None
-
-        # Get immune cells (from entire sample, not just tumor)
-        immune_mask = sample_data[immune_col].values.astype(bool)
+        # Immune cells from entire sample
+        immune_mask = sample_obs[immune_col].values.astype(bool)
         immune_coords = sample_coords[immune_mask]
-        n_immune = len(immune_coords)
 
-        if n_immune < 5:
+        if len(immune_coords) < 5:
             return None
 
-        # Calculate observed enrichment: mean immune count near marker+ cells
-        observed_enrichment = self._calculate_enrichment(
-            tumor_coords_subset, marker_positive, immune_coords, radius
-        )
-
-        if observed_enrichment is None:
+        # Observed enrichment
+        observed = self._enrichment_score(struct_coords, marker_status, immune_coords, radius)
+        if observed is None:
             return None
 
-        # Run permutations - permute marker status among tumor cells
-        null_distribution = []
+        # Permutation test
+        null_dist = []
         for _ in range(self.n_permutations):
-            perm_positive = np.random.permutation(marker_positive)
-            perm_enrichment = self._calculate_enrichment(
-                tumor_coords_subset, perm_positive, immune_coords, radius
-            )
-            if perm_enrichment is not None:
-                null_distribution.append(perm_enrichment)
+            perm_status = np.random.permutation(marker_status)
+            perm_stat = self._enrichment_score(struct_coords, perm_status, immune_coords, radius)
+            if perm_stat is not None:
+                null_dist.append(perm_stat)
 
-        null_distribution = np.array(null_distribution)
-
-        if len(null_distribution) < self.n_permutations * 0.5:
+        if len(null_dist) < self.n_permutations // 2:
             return None
 
-        # Calculate statistics
-        null_mean = np.mean(null_distribution)
-        null_std = np.std(null_distribution)
+        null_dist = np.array(null_dist)
+        null_mean = null_dist.mean()
+        null_std = null_dist.std()
 
-        z_score = (observed_enrichment - null_mean) / null_std if null_std > 0 else 0
-
-        # One-tailed p-value (enrichment = observed > null)
-        p_value = (null_distribution >= observed_enrichment).sum() / len(null_distribution)
-
-        # Fold change
-        fold_change = observed_enrichment / null_mean if null_mean > 0 else np.inf
+        z_score = (observed - null_mean) / null_std if null_std > 0 else 0
+        p_value = (null_dist >= observed).sum() / len(null_dist)
 
         return {
             'sample_id': sample,
-            'tumor_id': tumor_id,
+            'structure_id': struct_id,
             'test_type': 'enrichment',
-            'test_name': test.get('name'),
-            'marker': f'{immune_col}_near_{tumor_marker_col}',
-            'tumor_marker': tumor_marker_col,
-            'immune_phenotype': immune_col,
-            'n_cells': n_tumor,
+            'test_name': test['name'],
+            'marker': f'{immune_col}_near_{tumor_marker}',
+            'n_cells': len(struct_obs),
             'n_positive': int(n_positive),
-            'n_immune': n_immune,
-            'prevalence': n_positive / n_tumor,
-            'observed_statistic': observed_enrichment,
+            'n_immune': len(immune_coords),
+            'prevalence': n_positive / len(struct_obs),
+            'observed': observed,
             'null_mean': null_mean,
             'null_std': null_std,
             'z_score': z_score,
             'p_value': p_value,
-            'fold_change': fold_change,
-            'radius': radius,
             'timepoint': timepoint,
             'group': group
         }
 
-    def _calculate_enrichment(self, tumor_coords: np.ndarray, marker_positive: np.ndarray,
-                             immune_coords: np.ndarray, radius: float) -> Optional[float]:
-        """Calculate mean immune count within radius of marker+ tumor cells."""
+    def _enrichment_score(self, tumor_coords: np.ndarray, marker_positive: np.ndarray,
+                         immune_coords: np.ndarray, radius: float) -> Optional[float]:
+        """Mean immune count within radius of marker+ tumor cells."""
         pos_coords = tumor_coords[marker_positive]
 
-        if len(pos_coords) == 0 or len(immune_coords) == 0:
+        if len(pos_coords) == 0:
             return None
 
-        # Build KDTree for immune cells
         tree = cKDTree(immune_coords)
-
-        # Count immune cells within radius of each marker+ tumor cell
         counts = tree.query_ball_point(pos_coords, r=radius, return_length=True)
 
         return np.mean(counts)
 
-    def _aggregate_to_sample_level(self):
-        """Aggregate per-tumor results to sample level with FDR correction."""
-        if 'per_tumor_results' not in self.results or len(self.results['per_tumor_results']) == 0:
+    def _apply_fdr_correction(self):
+        """Apply Benjamini-Hochberg FDR correction per sample."""
+        if 'per_tumor_results' not in self.results:
             return
 
-        per_tumor_df = self.results['per_tumor_results']
+        df = self.results['per_tumor_results']
 
-        # Apply FDR correction per sample
-        corrected_results = []
+        corrected = []
+        for sample in df['sample_id'].unique():
+            sample_df = df[df['sample_id'] == sample].copy()
+            p_values = sample_df['p_value'].values
+            n = len(p_values)
 
-        for sample in per_tumor_df['sample_id'].unique():
-            sample_data = per_tumor_df[per_tumor_df['sample_id'] == sample].copy()
-
-            # FDR correction using Benjamini-Hochberg
-            p_values = sample_data['p_value'].values
-            n_tests = len(p_values)
-
-            if n_tests > 1:
-                # Sort p-values
-                sorted_idx = np.argsort(p_values)
-                sorted_p = p_values[sorted_idx]
-
+            if n > 1:
                 # BH correction
-                adjusted_p = np.zeros(n_tests)
-                for i, idx in enumerate(sorted_idx):
-                    rank = i + 1
-                    adjusted_p[idx] = min(sorted_p[i] * n_tests / rank, 1.0)
+                sorted_idx = np.argsort(p_values)
+                ranks = np.empty(n)
+                ranks[sorted_idx] = np.arange(1, n + 1)
+                adjusted = np.minimum(1, p_values * n / ranks)
 
                 # Ensure monotonicity
-                for i in range(n_tests - 2, -1, -1):
-                    if i + 1 < n_tests:
-                        adjusted_p[i] = min(adjusted_p[i], adjusted_p[i + 1])
+                sorted_adj = adjusted[sorted_idx]
+                for i in range(n - 2, -1, -1):
+                    sorted_adj[i] = min(sorted_adj[i], sorted_adj[i + 1])
+                adjusted[sorted_idx] = sorted_adj
 
-                sample_data['p_adjusted'] = adjusted_p
+                sample_df['p_adjusted'] = adjusted
             else:
-                sample_data['p_adjusted'] = sample_data['p_value']
+                sample_df['p_adjusted'] = sample_df['p_value']
 
-            sample_data['significant'] = sample_data['p_adjusted'] < self.alpha
-            corrected_results.append(sample_data)
+            sample_df['significant'] = sample_df['p_adjusted'] < self.alpha
+            corrected.append(sample_df)
 
-        if corrected_results:
-            self.results['per_tumor_results'] = pd.concat(corrected_results, ignore_index=True)
+        self.results['per_tumor_results'] = pd.concat(corrected, ignore_index=True)
 
-        # Aggregate to sample level
-        sample_summaries = []
-        per_tumor_df = self.results['per_tumor_results']
+    def _aggregate_to_sample_level(self):
+        """Aggregate per-tumor results to sample level."""
+        df = self.results['per_tumor_results']
 
-        for sample in per_tumor_df['sample_id'].unique():
-            sample_data = per_tumor_df[per_tumor_df['sample_id'] == sample]
+        summaries = []
+        for sample in df['sample_id'].unique():
+            sample_df = df[df['sample_id'] == sample]
+            timepoint = sample_df['timepoint'].iloc[0]
+            group = sample_df['group'].iloc[0]
 
-            # Get metadata
-            timepoint = sample_data['timepoint'].iloc[0]
-            group = sample_data['group'].iloc[0]
+            for test_name in sample_df['test_name'].unique():
+                test_df = sample_df[sample_df['test_name'] == test_name]
+                n_tumors = len(test_df)
+                n_sig = test_df['significant'].sum()
 
-            # Summarize by test type/name
-            for test_name in sample_data['test_name'].unique():
-                test_data = sample_data[sample_data['test_name'] == test_name]
-
-                n_tumors = len(test_data)
-                n_significant = test_data['significant'].sum()
-
-                summary = {
+                summaries.append({
                     'sample_id': sample,
                     'group': group,
                     'timepoint': timepoint,
-                    'test_type': test_data['test_type'].iloc[0],
                     'test_name': test_name,
-                    'marker': test_data['marker'].iloc[0],
-                    'n_tumors_tested': n_tumors,
-                    'n_significant': int(n_significant),
-                    'pct_significant': n_significant / n_tumors * 100 if n_tumors > 0 else 0,
-                    'mean_effect_size': test_data['z_score'].mean(),
-                    'std_effect_size': test_data['z_score'].std(),
-                    'median_p_value': test_data['p_value'].median(),
-                    'mean_observed': test_data['observed_statistic'].mean(),
-                    'mean_null': test_data['null_mean'].mean()
-                }
+                    'test_type': test_df['test_type'].iloc[0],
+                    'marker': test_df['marker'].iloc[0],
+                    'n_tumors': n_tumors,
+                    'n_significant': int(n_sig),
+                    'pct_significant': 100 * n_sig / n_tumors if n_tumors > 0 else 0,
+                    'mean_z_score': test_df['z_score'].mean(),
+                    'median_p_value': test_df['p_value'].median()
+                })
 
-                sample_summaries.append(summary)
-
-        if sample_summaries:
-            self.results['sample_summary'] = pd.DataFrame(sample_summaries)
-            print(f"    Aggregated results for {len(per_tumor_df['sample_id'].unique())} samples")
+        self.results['sample_summary'] = pd.DataFrame(summaries)
+        print(f"\n  Aggregated to {len(summaries)} sample-level results")
 
     def _run_group_comparisons(self):
-        """Run statistical comparisons between groups."""
+        """Compare results between groups."""
         if 'sample_summary' not in self.results:
             return
 
-        summary_df = self.results['sample_summary']
-
-        # Get unique groups
-        groups = summary_df['group'].unique()
+        df = self.results['sample_summary']
+        groups = df['group'].unique()
 
         if len(groups) < 2:
-            print("    Insufficient groups for comparison")
             return
 
         comparisons = []
-
-        # Compare all pairs of groups
-        for test_name in summary_df['test_name'].unique():
-            test_data = summary_df[summary_df['test_name'] == test_name]
+        for test_name in df['test_name'].unique():
+            test_df = df[df['test_name'] == test_name]
 
             for g1, g2 in combinations(groups, 2):
-                g1_data = test_data[test_data['group'] == g1]['mean_effect_size'].dropna()
-                g2_data = test_data[test_data['group'] == g2]['mean_effect_size'].dropna()
+                g1_z = test_df[test_df['group'] == g1]['mean_z_score'].dropna()
+                g2_z = test_df[test_df['group'] == g2]['mean_z_score'].dropna()
 
-                if len(g1_data) < 2 or len(g2_data) < 2:
+                if len(g1_z) < 2 or len(g2_z) < 2:
                     continue
 
-                # Wilcoxon rank-sum test for effect sizes
                 try:
-                    stat, p_value = stats.mannwhitneyu(g1_data, g2_data, alternative='two-sided')
-                except Exception:
+                    _, p = stats.mannwhitneyu(g1_z, g2_z)
+                except:
                     continue
 
-                # Fisher's exact test for proportion significant
-                g1_sig = test_data[test_data['group'] == g1]['n_significant'].sum()
-                g1_total = test_data[test_data['group'] == g1]['n_tumors_tested'].sum()
-                g2_sig = test_data[test_data['group'] == g2]['n_significant'].sum()
-                g2_total = test_data[test_data['group'] == g2]['n_tumors_tested'].sum()
-
-                if g1_total > 0 and g2_total > 0:
-                    table = [[g1_sig, g1_total - g1_sig], [g2_sig, g2_total - g2_sig]]
-                    try:
-                        _, fisher_p = stats.fisher_exact(table)
-                    except Exception:
-                        fisher_p = np.nan
-                else:
-                    fisher_p = np.nan
-
-                comparison = {
-                    'test_type': test_data['test_type'].iloc[0],
+                comparisons.append({
                     'test_name': test_name,
-                    'marker': test_data['marker'].iloc[0],
                     'group1': g1,
                     'group2': g2,
-                    'n_samples_g1': len(g1_data),
-                    'n_samples_g2': len(g2_data),
-                    'mean_effect_g1': g1_data.mean(),
-                    'mean_effect_g2': g2_data.mean(),
-                    'effect_difference': g1_data.mean() - g2_data.mean(),
-                    'wilcoxon_p': p_value,
-                    'pct_sig_g1': g1_sig / g1_total * 100 if g1_total > 0 else 0,
-                    'pct_sig_g2': g2_sig / g2_total * 100 if g2_total > 0 else 0,
-                    'fisher_p': fisher_p
-                }
-
-                comparisons.append(comparison)
+                    'mean_z_g1': g1_z.mean(),
+                    'mean_z_g2': g2_z.mean(),
+                    'p_value': p
+                })
 
         if comparisons:
-            self.results['group_comparison'] = pd.DataFrame(comparisons)
-            print(f"    Completed {len(comparisons)} group comparisons")
-
-    def _run_quality_control(self):
-        """Run quality control checks on results."""
-        qc_results = {
-            'n_tests_run': 0,
-            'n_tumors_excluded': len(self.exclusion_log),
-            'exclusion_reasons': {},
-            'p_value_distribution': {},
-            'power_warnings': []
-        }
-
-        if 'per_tumor_results' in self.results and len(self.results['per_tumor_results']) > 0:
-            per_tumor_df = self.results['per_tumor_results']
-            qc_results['n_tests_run'] = len(per_tumor_df)
-
-            # P-value distribution check
-            p_values = per_tumor_df['p_value'].dropna()
-            if len(p_values) > 10:
-                ks_stat, ks_p = stats.kstest(p_values, 'uniform')
-                qc_results['p_value_distribution'] = {
-                    'ks_statistic': float(ks_stat),
-                    'ks_p_value': float(ks_p),
-                    'interpretation': 'Uniform (no global effect)' if ks_p > 0.05 else 'Non-uniform (global effect present)'
-                }
-
-            # Check for degenerate tests
-            zero_variance = (per_tumor_df['null_std'] == 0).sum()
-            if zero_variance > 0:
-                qc_results['power_warnings'].append(
-                    f'{zero_variance} tests had zero variance in null distribution'
-                )
-
-        # Summarize exclusion reasons
-        for entry in self.exclusion_log:
-            reason = entry.get('reason', 'Unknown')
-            qc_results['exclusion_reasons'][reason] = qc_results['exclusion_reasons'].get(reason, 0) + 1
-
-        self.results['quality_control'] = qc_results
-
-        # Save exclusion log
-        if self.exclusion_log:
-            exclusion_df = pd.DataFrame(self.exclusion_log)
-            exclusion_df.to_csv(self.output_dir / 'exclusion_log.csv', index=False)
-
-        # Print summary
-        print(f"    Tests run: {qc_results['n_tests_run']}")
-        print(f"    Tumors excluded: {qc_results['n_tumors_excluded']}")
-        if qc_results['exclusion_reasons']:
-            print("    Exclusion reasons:")
-            for reason, count in qc_results['exclusion_reasons'].items():
-                print(f"      - {reason}: {count}")
+            self.results['group_comparisons'] = pd.DataFrame(comparisons)
 
     def _save_results(self):
-        """Save all results to files."""
-        # Save DataFrames
+        """Save all results."""
         for name, data in self.results.items():
-            if isinstance(data, pd.DataFrame):
-                if len(data) > 0:
-                    output_path = self.output_dir / f'{name}.csv'
-                    data.to_csv(output_path, index=False)
-                    print(f"    Saved {name}.csv ({len(data)} rows)")
-            elif isinstance(data, dict):
-                output_path = self.output_dir / f'{name}.json'
-                with open(output_path, 'w') as f:
-                    json.dump(data, f, indent=2, default=str)
-                print(f"    Saved {name}.json")
+            if isinstance(data, pd.DataFrame) and len(data) > 0:
+                path = self.output_dir / f'{name}.csv'
+                data.to_csv(path, index=False)
+                print(f"  Saved {name}.csv ({len(data)} rows)")
 
-        # Save configuration used
-        config_used = {
+        # Save config
+        config = {
+            'structure_column': self.structure_column,
             'n_permutations': self.n_permutations,
             'min_tumor_cells': self.min_tumor_cells,
             'alpha': self.alpha,
-            'min_prevalence': self.min_prevalence,
-            'max_prevalence': self.max_prevalence,
-            'enrichment_radius': self.enrichment_radius,
-            'clustering_radius': self.clustering_radius,
-            'colocalization_radius': self.colocalization_radius,
-            'structure_column': self.structure_column,
-            'tests': self.tests,
-            'random_seed': self.random_seed
+            'tests': self.tests
         }
+        with open(self.output_dir / 'config_used.json', 'w') as f:
+            json.dump(config, f, indent=2)
 
-        with open(self.output_dir / 'configuration_used.json', 'w') as f:
-            json.dump(config_used, f, indent=2)
-
-        print(f"    Saved configuration_used.json")
+        # Save exclusions
+        if self.exclusion_log:
+            pd.DataFrame(self.exclusion_log).to_csv(
+                self.output_dir / 'exclusion_log.csv', index=False
+            )
 
 
 def run_spatial_permutation_testing(adata, config: Dict, output_dir: Path) -> Dict:
-    """
-    Convenience function to run spatial permutation testing.
-
-    Parameters
-    ----------
-    adata : AnnData
-        Annotated data object
-    config : dict
-        Configuration dictionary
-    output_dir : Path
-        Output directory
-
-    Returns
-    -------
-    dict
-        Results dictionary
-    """
+    """Convenience function to run spatial permutation testing."""
     analysis = SpatialPermutationTesting(adata, config, output_dir)
     return analysis.run()
