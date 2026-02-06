@@ -375,9 +375,11 @@ A significant group comparison means one group has systematically stronger (or w
 
 #### Generated Plots and What They Mean
 
-All plots are saved under `spatial_permutation/plots/` and `spatial_permutation/null_distributions/`.
+All plots are generated **per analysis** (i.e., per `test_name` such as `pERK_clustering` or `NINJA_clustering`), not merely per test type. This means each configured test gets its own dedicated plots, so results for different markers or marker pairs are never conflated.
 
-**1. Null Distribution Histograms** (`null_distributions/null_dist_{test_type}_page{N}.png`)
+Plots are saved under `spatial_permutation/plots/` and `spatial_permutation/null_distributions/`.
+
+**1. Null Distribution Histograms** (`null_distributions/null_dist_{test_name}_page{N}.png`)
 
 One subplot per tumor structure. Shows a gray histogram of the reconstructed null distribution (from `null_mean` and `null_std`) with a vertical line at the observed statistic value.
 
@@ -385,7 +387,7 @@ One subplot per tumor structure. Shows a gray histogram of the reconstructed nul
 
 *Use case:* Visually confirm that the permutation test is behaving correctly. If the observed value consistently falls outside the null distribution across tumors, the spatial pattern is robust.
 
-**2. Effect Size Distribution** (`plots/effect_size_distribution_{test_type}.png`)
+**2. Effect Size Distribution** (`plots/effect_size_distribution_{test_name}.png`)
 
 Violin + box plots of z-scores (effect sizes) per sample, colored by group.
 
@@ -393,11 +395,11 @@ Violin + box plots of z-scores (effect sizes) per sample, colored by group.
 
 *Use case:* Assess sample-to-sample variability and spot outlier samples. Samples with violins centered near zero have random spatial organization; those shifted upward have consistent spatial clustering/enrichment.
 
-**3. Prevalence vs Effect Size** (`plots/prevalence_effect_{test_type}.png`)
+**3. Prevalence vs Effect Size** (`plots/prevalence_effect_{test_name}.png`)
 
 Scatter plot of marker prevalence (%) vs z-score for each tumor structure, with significant structures in red and non-significant in blue. Includes a linear trend line with 95% CI.
 
-*How to read:* Reveals whether the spatial pattern depends on how common the marker is. A flat trend means the spatial effect is independent of prevalence. A positive slope means higher-prevalence tumors show stronger clustering. The KS-derived correlation (r) and p-value are annotated.
+*How to read:* Reveals whether the spatial pattern depends on how common the marker is. A flat trend means the spatial effect is independent of prevalence. A positive slope means higher-prevalence tumors show stronger clustering. The correlation (r) and p-value are annotated.
 
 *Use case:* Rule out prevalence-driven artifacts. If significance is only seen at very low or very high prevalence, the result may be unreliable. Ideally, significant effects should be observed across a range of prevalences.
 
@@ -419,11 +421,11 @@ Heatmap with samples on the y-axis and test configurations on the x-axis. Cell c
 
 **6. P-value QQ Plot** (`plots/pvalue_qq_plot.png`)
 
-Quantile-quantile plot of observed p-values against a theoretical uniform distribution, with one panel per test type. Includes a Kolmogorov-Smirnov test statistic.
+Quantile-quantile plot of observed p-values against a theoretical uniform distribution, with **one panel per analysis** (e.g., `pERK_clustering` and `NINJA_clustering` get separate panels). Includes per-panel sample count and Kolmogorov-Smirnov test statistic.
 
 *How to read:* Under the null hypothesis (no spatial pattern anywhere), p-values should fall along the diagonal red reference line. Points below the line at small p-values indicate an excess of significant results (a true global signal). Points above the line suggest the test may be conservative.
 
-*Use case:* Diagnostic for global signal. If the QQ plot shows systematic deviation from the diagonal, there is a real spatial pattern across the dataset. A KS p-value < 0.05 confirms the p-value distribution deviates from uniform.
+*Use case:* Diagnostic for global signal. If the QQ plot shows systematic deviation from the diagonal, there is a real spatial pattern across the dataset. A KS p-value < 0.05 confirms the p-value distribution deviates from uniform. Because each analysis gets its own panel, you can compare whether pERK clustering shows a different global signal than NINJA clustering.
 
 **7. Temporal Trends** (`plots/temporal_trend_{test_name}.png`)
 
@@ -432,6 +434,21 @@ Two-panel figure per test. **Left panel:** Mean z-score (effect size) over timep
 *How to read:* Shows how the spatial pattern evolves over time. A rising mean z-score indicates that spatial clustering/enrichment is becoming stronger over time. A rising `pct_significant` means more tumors are developing the pattern. Compare lines between groups to see if temporal dynamics differ.
 
 *Use case:* Track spatial reorganization over the course of treatment or disease progression. For example, if pERK clustering increases over time in KPT but not KPNT, this suggests treatment-induced spatial reorganization.
+
+**8. Aggregate Null vs Observed KDE** (`plots/aggregate_null_vs_observed_{test_name}_*.png`)
+
+Overlapped kernel density estimate (KDE) plots showing the aggregate reconstructed null distribution (gray) versus the distribution of observed statistics (red) across all tumor structures. Three variants are generated per analysis:
+
+- **`_all.png`** — Two panels: clean KDE overlay (left) and stats-annotated version (right) pooling all samples. The stats panel shows dashed median lines for null and observed, plus a 2-sample KS test, median shift, and Cohen's d.
+- **`_by_group.png`** — One subplot per group, each with its own null and observed KDE plus statistics. Directly shows whether the separation between null and observed differs between groups.
+- **`_by_timepoint.png`** — One subplot per timepoint, each with its own null and observed KDE plus statistics. Shows how the null-vs-observed separation evolves over time.
+
+*How to read:* If the red (observed) KDE is shifted to the right of the gray (null) KDE, the observed spatial statistic is systematically larger than expected by chance — meaning the spatial pattern is real. The further apart the two distributions, the stronger the biological signal. Key statistics:
+- **KS statistic**: Measures maximum separation between the two distributions (0 = identical, 1 = completely separated)
+- **Median shift**: How far the observed median is from the null median (positive = observed > null)
+- **Cohen's d**: Standardized effect size (|d| > 0.2 small, |d| > 0.5 medium, |d| > 0.8 large)
+
+*Use case:* The "big picture" plot for each analysis. While the per-tumor null distribution histograms (plot 1) show individual structures, this plot answers: "Across ALL tumors, is there a systematic shift between what we observe and what we'd expect by chance?" The by-group and by-timepoint variants reveal whether this shift is driven by specific experimental conditions or emerges at particular timepoints.
 
 #### Example Configuration
 
@@ -479,14 +496,17 @@ spatial_permutation/
 ├── exclusion_log.csv           # Structures excluded (too few cells, etc.)
 ├── config_used.json            # Configuration snapshot
 ├── plots/
-│   ├── effect_size_distribution_{test_type}.png
-│   ├── prevalence_effect_{test_type}.png
+│   ├── effect_size_distribution_{test_name}.png
+│   ├── prevalence_effect_{test_name}.png
 │   ├── group_comparison_{test_name}.png
 │   ├── significance_matrix.png
-│   ├── pvalue_qq_plot.png
-│   └── temporal_trend_{test_name}.png
+│   ├── pvalue_qq_plot.png                              # One panel per analysis
+│   ├── temporal_trend_{test_name}.png
+│   ├── aggregate_null_vs_observed_{test_name}_all.png
+│   ├── aggregate_null_vs_observed_{test_name}_by_group.png
+│   └── aggregate_null_vs_observed_{test_name}_by_timepoint.png
 └── null_distributions/
-    └── null_dist_{test_type}_page{N}.png
+    └── null_dist_{test_name}_page{N}.png
 ```
 
 ---
