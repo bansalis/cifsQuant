@@ -121,9 +121,10 @@ class PermutationPlotter:
 
         print("    Generating null distribution plots...")
 
-        # Group by test type
-        for test_type in per_tumor_df['test_type'].unique():
-            test_data = per_tumor_df[per_tumor_df['test_type'] == test_type]
+        # Group by test name (each analysis gets its own set of pages)
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name]
+            test_type = test_data['test_type'].iloc[0]
 
             # Create batches of plots
             n_tumors = len(test_data)
@@ -199,11 +200,12 @@ class PermutationPlotter:
                     ax_col = idx % n_cols
                     axes[ax_row, ax_col].set_visible(False)
 
-                plt.suptitle(f'Null Distributions - {test_type.title()} (Page {fig_idx + 1}/{n_figures})',
+                clean_name = test_name.replace('/', '_').replace(' ', '_')
+                plt.suptitle(f'Null Distributions - {test_name} ({test_type}) (Page {fig_idx + 1}/{n_figures})',
                             fontsize=14, fontweight='bold')
                 plt.tight_layout()
 
-                plot_path = self.null_dist_dir / f'null_dist_{test_type}_page{fig_idx + 1}.png'
+                plot_path = self.null_dist_dir / f'null_dist_{clean_name}_page{fig_idx + 1}.png'
                 plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
                 plt.close()
 
@@ -223,9 +225,10 @@ class PermutationPlotter:
 
         print("    Generating effect size distribution plots...")
 
-        # One figure per test type
-        for test_type in per_tumor_df['test_type'].unique():
-            test_data = per_tumor_df[per_tumor_df['test_type'] == test_type].copy()
+        # One figure per test name
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            test_type = test_data['test_type'].iloc[0]
 
             samples = sorted(test_data['sample_id'].unique())
             n_samples = len(samples)
@@ -287,7 +290,7 @@ class PermutationPlotter:
             ax.set_xticklabels([s[:12] for s in samples], rotation=45, ha='right')
             ax.set_xlabel('Sample', fontweight='bold')
             ax.set_ylabel('Effect Size (z-score)', fontweight='bold')
-            ax.set_title(f'Effect Size Distribution - {test_type.title()}',
+            ax.set_title(f'Effect Size Distribution - {test_name} ({test_type})',
                         fontsize=14, fontweight='bold')
 
             # Add legend for groups
@@ -299,7 +302,8 @@ class PermutationPlotter:
 
             plt.tight_layout()
 
-            plot_path = self.plots_dir / f'effect_size_distribution_{test_type}.png'
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+            plot_path = self.plots_dir / f'effect_size_distribution_{clean_name}.png'
             plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
             plt.close()
 
@@ -319,8 +323,9 @@ class PermutationPlotter:
 
         print("    Generating prevalence-effect relationship plots...")
 
-        for test_type in per_tumor_df['test_type'].unique():
-            test_data = per_tumor_df[per_tumor_df['test_type'] == test_type].copy()
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            test_type = test_data['test_type'].iloc[0]
 
             if 'prevalence' not in test_data.columns:
                 continue
@@ -373,13 +378,14 @@ class PermutationPlotter:
 
             ax.set_xlabel('Marker Prevalence (%)', fontweight='bold')
             ax.set_ylabel('Effect Size (z-score)', fontweight='bold')
-            ax.set_title(f'Prevalence vs Effect Size - {test_type.title()}',
+            ax.set_title(f'Prevalence vs Effect Size - {test_name} ({test_type})',
                         fontsize=14, fontweight='bold')
             ax.legend(loc='best')
 
             plt.tight_layout()
 
-            plot_path = self.plots_dir / f'prevalence_effect_{test_type}.png'
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+            plot_path = self.plots_dir / f'prevalence_effect_{clean_name}.png'
             plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
             plt.close()
 
@@ -555,7 +561,9 @@ class PermutationPlotter:
         """
         Plot QQ plot of p-values against uniform distribution.
 
-        Useful for detecting systematic biases or global effects.
+        Generates one subplot per test_name (e.g., pERK_clustering and
+        NINJA_clustering get separate panels) so that different analyses
+        within the same test type are not conflated.
 
         Parameters
         ----------
@@ -565,23 +573,34 @@ class PermutationPlotter:
         if per_tumor_df is None or len(per_tumor_df) == 0:
             return
 
-        print("    Generating p-value QQ plot...")
+        print("    Generating p-value QQ plots...")
 
-        fig, axes = plt.subplots(1, len(per_tumor_df['test_type'].unique()),
-                                figsize=(6 * len(per_tumor_df['test_type'].unique()), 5))
+        test_names = per_tumor_df['test_name'].unique()
+        n_tests = len(test_names)
 
-        if len(per_tumor_df['test_type'].unique()) == 1:
-            axes = [axes]
+        if n_tests == 0:
+            return
 
-        for ax, test_type in zip(axes, per_tumor_df['test_type'].unique()):
-            test_data = per_tumor_df[per_tumor_df['test_type'] == test_type]
+        n_cols = min(3, n_tests)
+        n_rows = (n_tests + n_cols - 1) // n_cols
+
+        fig, axes = plt.subplots(n_rows, n_cols,
+                                figsize=(6 * n_cols, 5.5 * n_rows),
+                                squeeze=False)
+
+        for idx, test_name in enumerate(test_names):
+            r, c = idx // n_cols, idx % n_cols
+            ax = axes[r, c]
+
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name]
+            test_type = test_data['test_type'].iloc[0]
             p_values = test_data['p_value'].dropna().sort_values()
 
             n = len(p_values)
             if n < 10:
                 ax.text(0.5, 0.5, 'Insufficient data',
                        ha='center', va='center', transform=ax.transAxes)
-                ax.set_title(f'{test_type.title()}')
+                ax.set_title(f'{test_name}')
                 continue
 
             # Expected uniform quantiles
@@ -596,25 +615,32 @@ class PermutationPlotter:
 
             # KS test
             ks_stat, ks_p = stats.kstest(p_values.values, 'uniform')
-            ax.text(0.05, 0.95, f'KS stat = {ks_stat:.3f}\np = {ks_p:.3f}',
+            ax.text(0.05, 0.95,
+                    f'n = {n}\nKS stat = {ks_stat:.3f}\np = {ks_p:.3f}',
                    transform=ax.transAxes, va='top', fontsize=10,
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
             ax.set_xlabel('Expected (Uniform)', fontweight='bold')
             ax.set_ylabel('Observed P-values', fontweight='bold')
-            ax.set_title(f'P-value QQ Plot: {test_type.title()}', fontweight='bold')
+            ax.set_title(f'{test_name} ({test_type})', fontweight='bold')
             ax.set_xlim(0, 1)
             ax.set_ylim(0, 1)
             ax.set_aspect('equal')
             ax.legend(loc='lower right')
 
+        # Hide empty subplots
+        for idx in range(n_tests, n_rows * n_cols):
+            r, c = idx // n_cols, idx % n_cols
+            axes[r, c].set_visible(False)
+
+        plt.suptitle('P-value QQ Plots (per analysis)', fontsize=14, fontweight='bold')
         plt.tight_layout()
 
         plot_path = self.plots_dir / 'pvalue_qq_plot.png'
         plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
         plt.close()
 
-        print(f"      Saved QQ plot to {self.plots_dir.name}/")
+        print(f"      Saved QQ plots to {self.plots_dir.name}/")
 
     def plot_temporal_trends(self, sample_summary_df: pd.DataFrame):
         """
@@ -705,6 +731,192 @@ class PermutationPlotter:
 
         print(f"      Saved temporal trend plots to {self.plots_dir.name}/")
 
+    def _reconstruct_null_samples(self, df: pd.DataFrame, n_samples_per_tumor: int = 200) -> np.ndarray:
+        """
+        Reconstruct an aggregate null distribution by sampling from each tumor's
+        null distribution (parameterized by null_mean and null_std).
+        """
+        null_samples = []
+        for _, row in df.iterrows():
+            nm, ns = row['null_mean'], row['null_std']
+            if pd.notna(nm) and pd.notna(ns) and ns > 0:
+                null_samples.append(np.random.normal(nm, ns, n_samples_per_tumor))
+        if null_samples:
+            return np.concatenate(null_samples)
+        return np.array([])
+
+    def _plot_null_vs_observed_kde(self, ax: plt.Axes, null_values: np.ndarray,
+                                   observed_values: np.ndarray, title: str,
+                                   show_stats: bool = False):
+        """
+        Draw overlapped KDE of aggregate null and observed distributions on one axis.
+        """
+        if len(null_values) < 5 or len(observed_values) < 5:
+            ax.text(0.5, 0.5, 'Insufficient data',
+                    ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(title, fontweight='bold')
+            return
+
+        # Shared x-range
+        all_vals = np.concatenate([null_values, observed_values])
+        x_min = np.percentile(all_vals, 0.5)
+        x_max = np.percentile(all_vals, 99.5)
+        x_grid = np.linspace(x_min, x_max, 300)
+
+        # Null KDE
+        null_kde = stats.gaussian_kde(null_values)
+        ax.fill_between(x_grid, null_kde(x_grid), alpha=0.35, color='#999999', label='Aggregate Null')
+        ax.plot(x_grid, null_kde(x_grid), color='#666666', linewidth=1.5)
+
+        # Observed KDE
+        obs_kde = stats.gaussian_kde(observed_values)
+        ax.fill_between(x_grid, obs_kde(x_grid), alpha=0.35, color=self.sig_color, label='Observed')
+        ax.plot(x_grid, obs_kde(x_grid), color=self.sig_color, linewidth=1.5)
+
+        ax.set_xlabel('Statistic Value', fontweight='bold')
+        ax.set_ylabel('Density', fontweight='bold')
+        ax.set_title(title, fontweight='bold')
+
+        if show_stats:
+            # KS test
+            ks_stat, ks_p = stats.ks_2samp(observed_values, null_values)
+            # Median shift
+            null_med = np.median(null_values)
+            obs_med = np.median(observed_values)
+            shift = obs_med - null_med
+            # Cohen's d
+            pooled_std = np.sqrt((np.var(null_values) + np.var(observed_values)) / 2)
+            cohens_d = (np.mean(observed_values) - np.mean(null_values)) / pooled_std if pooled_std > 0 else 0
+
+            # Median lines
+            ax.axvline(null_med, color='#666666', linestyle='--', linewidth=1.5, alpha=0.8)
+            ax.axvline(obs_med, color=self.sig_color, linestyle='--', linewidth=1.5, alpha=0.8)
+
+            stat_text = (f"KS = {ks_stat:.3f}, p = {ks_p:.2e}\n"
+                         f"Median shift = {shift:+.3f}\n"
+                         f"Cohen's d = {cohens_d:.2f}")
+            ax.text(0.97, 0.95, stat_text, transform=ax.transAxes,
+                    ha='right', va='top', fontsize=9,
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
+
+        ax.legend(loc='upper left', fontsize=9)
+
+    def plot_aggregate_null_vs_observed(self, per_tumor_df: pd.DataFrame):
+        """
+        Plot overlapped KDE of aggregate null vs observed distributions.
+
+        Generates three figures per test type:
+        1. All samples (two panels: clean + stats-annotated)
+        2. Separated by group (one subplot per group, with stats)
+        3. Separated by timepoint (one subplot per timepoint, with stats)
+
+        Parameters
+        ----------
+        per_tumor_df : pd.DataFrame
+            Per-tumor results with observed and null statistics
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        print("    Generating aggregate null vs observed KDE plots...")
+
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            test_type = test_data['test_type'].iloc[0]
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+            observed_all = test_data['observed'].dropna().values
+
+            if len(observed_all) < 5:
+                continue
+
+            null_all = self._reconstruct_null_samples(test_data)
+            if len(null_all) < 5:
+                continue
+
+            # --- 1. All samples: clean (left) + stats (right) ---
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+            self._plot_null_vs_observed_kde(
+                axes[0], null_all, observed_all,
+                title='All Samples', show_stats=False)
+            self._plot_null_vs_observed_kde(
+                axes[1], null_all, observed_all,
+                title='All Samples (with statistics)', show_stats=True)
+
+            n_tumors = len(test_data)
+            plt.suptitle(
+                f'Aggregate Null vs Observed - {test_name} ({test_type}) (n={n_tumors} structures)',
+                fontsize=14, fontweight='bold')
+            plt.tight_layout()
+            plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_all.png'
+            plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+
+            # --- 2. By group ---
+            if 'group' in test_data.columns:
+                groups = sorted(test_data['group'].dropna().unique())
+                if len(groups) >= 2:
+                    n_groups = len(groups)
+                    fig, axes = plt.subplots(1, n_groups, figsize=(6 * n_groups, 5))
+                    if n_groups == 1:
+                        axes = [axes]
+
+                    for ax, group in zip(axes, groups):
+                        grp_data = test_data[test_data['group'] == group]
+                        grp_obs = grp_data['observed'].dropna().values
+                        grp_null = self._reconstruct_null_samples(grp_data)
+                        self._plot_null_vs_observed_kde(
+                            ax, grp_null, grp_obs,
+                            title=f'{group} (n={len(grp_data)})', show_stats=True)
+
+                    plt.suptitle(
+                        f'Aggregate Null vs Observed by Group - {test_name} ({test_type})',
+                        fontsize=14, fontweight='bold')
+                    plt.tight_layout()
+                    plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_by_group.png'
+                    plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+                    plt.close()
+
+            # --- 3. By timepoint ---
+            if 'timepoint' in test_data.columns:
+                timepoints = sorted(test_data['timepoint'].dropna().unique())
+                if len(timepoints) >= 2:
+                    n_tp = len(timepoints)
+                    n_cols = min(4, n_tp)
+                    n_rows = (n_tp + n_cols - 1) // n_cols
+                    fig, axes = plt.subplots(n_rows, n_cols,
+                                            figsize=(5.5 * n_cols, 4.5 * n_rows))
+                    if n_tp == 1:
+                        axes = np.array([[axes]])
+                    elif n_rows == 1:
+                        axes = axes.reshape(1, -1)
+                    elif n_cols == 1:
+                        axes = axes.reshape(-1, 1)
+
+                    for idx, tp in enumerate(timepoints):
+                        r, c = idx // n_cols, idx % n_cols
+                        ax = axes[r, c]
+                        tp_data = test_data[test_data['timepoint'] == tp]
+                        tp_obs = tp_data['observed'].dropna().values
+                        tp_null = self._reconstruct_null_samples(tp_data)
+                        self._plot_null_vs_observed_kde(
+                            ax, tp_null, tp_obs,
+                            title=f'Timepoint {tp} (n={len(tp_data)})', show_stats=True)
+
+                    # Hide empty subplots
+                    for idx in range(n_tp, n_rows * n_cols):
+                        r, c = idx // n_cols, idx % n_cols
+                        axes[r, c].set_visible(False)
+
+                    plt.suptitle(
+                        f'Aggregate Null vs Observed by Timepoint - {test_name} ({test_type})',
+                        fontsize=14, fontweight='bold')
+                    plt.tight_layout()
+                    plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_by_timepoint.png'
+                    plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+                    plt.close()
+
+        print(f"      Saved aggregate null vs observed plots to {self.plots_dir.name}/")
+
     def generate_all_plots(self, results: Dict):
         """
         Generate all permutation testing visualization plots.
@@ -746,5 +958,9 @@ class PermutationPlotter:
         # 7. Temporal trends
         if 'sample_summary' in results:
             self.plot_temporal_trends(results['sample_summary'])
+
+        # 8. Aggregate null vs observed KDE
+        if 'per_tumor_results' in results:
+            self.plot_aggregate_null_vs_observed(results['per_tumor_results'])
 
         print(f"  All permutation plots saved to {self.plots_dir}/")
