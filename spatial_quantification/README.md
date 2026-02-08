@@ -117,6 +117,7 @@ spatial_quantification_results/
 │       └── *.png
 ├── neighborhood_permutation/
 │   ├── pairwise_enrichment.csv
+│   ├── differential_enrichment.csv
 │   ├── aggregate_enrichment_matrix.csv
 │   └── plots/
 │       └── *.png
@@ -585,17 +586,21 @@ distance_permutation/
 ### 7. Neighborhood Enrichment Permutation Testing
 
 **What it does:**
-- Tests whether cell-type pairs are spatial neighbors more (enrichment/attraction) or less (depletion/avoidance) than expected by chance
-- Follows the squidpy `gr.nhood_enrichment` / imcRtools `testInteractions` approach
-- Produces per-sample and aggregate enrichment matrices
+- **Pairwise enrichment**: Tests whether cell-type pairs are spatial neighbors more (enrichment/attraction) or less (depletion/avoidance) than expected by chance. Follows the squidpy `gr.nhood_enrichment` / imcRtools `testInteractions` approach.
+- **Differential enrichment**: Tests whether a specific immune population is more enriched in the neighborhood of marker+ vs marker- tumor cells (e.g., "Are CD8 T cells more enriched around pERK+ tumor than pERK- tumor?"). Tests ALL immune populations against ALL marker comparisons.
 
-**Statistical approach:**
+**Statistical approach — pairwise enrichment:**
 1. Build a k-NN spatial graph (default k=30) — positions fixed throughout
 2. Count edges between each cell-type pair (i, j): how many neighbors of type-i cells are type-j
 3. Permute cell-type labels N times (graph unchanged), recount interactions each time
 4. Z-score = `(observed_count - mean_perm) / std_perm`
-5. Positive z = enrichment (cell types co-occur as neighbors more than chance), negative z = depletion (avoidance)
-6. Two-tailed permutation p-value
+5. Positive z = enrichment, negative z = depletion. Two-tailed permutation p-value.
+
+**Statistical approach — differential enrichment:**
+1. Build k-NN spatial graph. For each marker+ tumor cell, count immune neighbors. Same for marker- tumor cells.
+2. Test statistic = mean(immune neighbors per marker+ cell) - mean(immune neighbors per marker- cell)
+3. Null: shuffle marker+/- labels among all tumor cells N times, recompute the difference each time
+4. Positive z = immune cells preferentially neighbor marker+ tumor cells
 
 **Example configuration:**
 ```yaml
@@ -607,6 +612,11 @@ neighborhood_permutation_testing:
     - CD8_T_cells
     - Macrophages
     - B_cells
+  differential_enrichment_tests:
+    - name: CD8_enrichment_pERK_vs_nonpERK
+      immune_population: CD8_T_cells
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
   parameters:
     n_permutations: 1000
     k_neighbors: 30
@@ -614,25 +624,38 @@ neighborhood_permutation_testing:
     alpha: 0.05
 ```
 
-**Output columns** (`pairwise_enrichment.csv`):
+**Output columns — pairwise** (`pairwise_enrichment.csv`):
 
 | Column | Meaning |
 |--------|---------|
 | `cell_type_a`, `cell_type_b` | Cell-type pair |
 | `observed_count` | Number of a→b edges in k-NN graph |
-| `null_mean` / `null_std` | Mean/std from permutation null |
 | `z_score` | Enrichment (>0) or depletion (<0) |
+| `p_value` | Two-tailed permutation p-value |
+
+**Output columns — differential** (`differential_enrichment.csv`):
+
+| Column | Meaning |
+|--------|---------|
+| `immune_population` | Immune cell type tested |
+| `tumor_marker` | Tumor marker being compared (e.g., pERK+/-) |
+| `mean_immune_neighbors_pos` / `_neg` | Mean immune neighbors per marker+ / marker- tumor cell |
+| `observed_diff` | Difference (pos - neg). Positive = more immune near marker+ |
+| `z_score` | Standardized effect size under null |
 | `p_value` | Two-tailed permutation p-value |
 
 **Plots:**
 - **Enrichment heatmaps**: Clustered heatmap of mean z-scores (red = enrichment, blue = depletion). Generated for all samples, per group, and per sample.
 - **Top interactions bar chart**: Top N most enriched and depleted cell-type pairs ranked by mean z-score.
 - **Interaction dot plot**: Grid of all pairs; dot size = -log10(p), color = z-score.
+- **Differential enrichment by group**: Violin plots of z-scores per test, split by group.
+- **Differential enrichment heatmap**: Rows = immune populations, columns = tumor markers, values = mean z-score. Shows which immune-marker combinations have significant differential enrichment.
 
 **Outputs:**
 ```
 neighborhood_permutation/
 ├── pairwise_enrichment.csv
+├── differential_enrichment.csv
 ├── aggregate_enrichment_matrix.csv
 ├── enrichment_matrix_{group}.csv
 └── plots/
@@ -640,7 +663,9 @@ neighborhood_permutation/
     ├── enrichment_heatmap_group_{group}.png
     ├── enrichment_{sample}.png
     ├── top_interactions.png
-    └── interaction_dotplot.png
+    ├── interaction_dotplot.png
+    ├── differential_enrichment_by_group.png
+    └── differential_enrichment_heatmap.png
 ```
 
 ---
