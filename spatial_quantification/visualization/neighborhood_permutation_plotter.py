@@ -39,6 +39,10 @@ class NeighborhoodPermutationPlotter:
             self.plot_top_interactions(results['pairwise_enrichment'])
             self.plot_interaction_dotplot(results['pairwise_enrichment'])
 
+        if 'differential_enrichment' in results and not results['differential_enrichment'].empty:
+            self.plot_differential_enrichment(results['differential_enrichment'])
+            self.plot_differential_enrichment_heatmap(results['differential_enrichment'])
+
         print("  Done.")
 
     def plot_enrichment_heatmap(self, matrix: pd.DataFrame, label: str):
@@ -169,4 +173,75 @@ class NeighborhoodPermutationPlotter:
         plt.colorbar(scatter, ax=ax, label='Z-score', shrink=0.8)
         plt.tight_layout()
         plt.savefig(self.plots_dir / 'interaction_dotplot.png', dpi=self.dpi, bbox_inches='tight')
+        plt.close()
+
+    def plot_differential_enrichment(self, df: pd.DataFrame):
+        """Grouped bar/violin of differential enrichment z-scores by test, colored by group."""
+        if 'group' not in df.columns:
+            return
+
+        groups = [g for g in df['group'].unique() if pd.notna(g) and g != '']
+        if len(groups) < 2:
+            return
+
+        test_names = df['test_name'].unique()
+        n_tests = len(test_names)
+        n_cols = min(3, n_tests)
+        n_rows = (n_tests + n_cols - 1) // n_cols
+
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False)
+
+        palette = {}
+        for i, g in enumerate(groups):
+            if g in self.group_colors:
+                palette[g] = self.group_colors[g]
+            else:
+                palette[g] = sns.color_palette('colorblind', len(groups))[i]
+
+        for idx, test_name in enumerate(test_names):
+            ax = axes[idx // n_cols, idx % n_cols]
+            tdf = df[(df['test_name'] == test_name) & df['group'].isin(groups)]
+            if tdf.empty:
+                ax.set_visible(False)
+                continue
+            sns.violinplot(data=tdf, x='group', y='z_score', palette=palette,
+                          ax=ax, inner='box', cut=0)
+            ax.axhline(0, color='gray', linestyle='--', alpha=0.5)
+            ax.set_title(test_name, fontsize=9)
+            ax.set_ylabel('Z-score')
+            ax.set_xlabel('')
+
+        for idx in range(n_tests, n_rows * n_cols):
+            axes[idx // n_cols, idx % n_cols].set_visible(False)
+
+        plt.suptitle('Differential Enrichment: Immune Neighbors of Marker+ vs Marker- Tumor', fontsize=12)
+        plt.tight_layout()
+        plt.savefig(self.plots_dir / 'differential_enrichment_by_group.png',
+                   dpi=self.dpi, bbox_inches='tight')
+        plt.close()
+
+    def plot_differential_enrichment_heatmap(self, df: pd.DataFrame):
+        """Heatmap: rows = immune populations, columns = tumor markers, values = mean z-score."""
+        if df.empty:
+            return
+
+        # Extract immune pop and marker from test results
+        pivot = df.pivot_table(values='z_score', index='immune_population',
+                                columns='tumor_marker', aggfunc='mean')
+        if pivot.empty:
+            return
+
+        fig, ax = plt.subplots(figsize=(max(6, pivot.shape[1] * 1.2),
+                                         max(4, pivot.shape[0] * 0.5)))
+        vmax = pivot.abs().max().max()
+        sns.heatmap(pivot, cmap='RdBu_r', center=0, vmin=-vmax, vmax=vmax,
+                   ax=ax, annot=True, fmt='.2f', linewidths=0.5,
+                   cbar_kws={'label': 'Mean Z-score (+ = more immune near marker+)'})
+        ax.set_title('Differential Enrichment: Immune near Marker+ vs Marker-')
+        ax.set_ylabel('Immune Population')
+        ax.set_xlabel('Tumor Marker')
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right', fontsize=9)
+        plt.tight_layout()
+        plt.savefig(self.plots_dir / 'differential_enrichment_heatmap.png',
+                   dpi=self.dpi, bbox_inches='tight')
         plt.close()

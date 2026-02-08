@@ -51,6 +51,9 @@ class NeighborhoodPermutationTesting:
         # Cell types to include
         self.cell_types = self.analysis_config.get('cell_types', [])
 
+        # Differential enrichment tests
+        self.diff_enrichment_tests = self.analysis_config.get('differential_enrichment_tests', [])
+
         # Random seed
         self.random_seed = self.config.get('advanced', {}).get('random_seed', 42)
         np.random.seed(self.random_seed)
@@ -90,6 +93,13 @@ class NeighborhoodPermutationTesting:
             self._build_aggregate_matrix()
         else:
             self.results['pairwise_enrichment'] = pd.DataFrame()
+
+        # Run differential enrichment tests
+        if self.diff_enrichment_tests:
+            print(f"\n  Differential enrichment tests: {len(self.diff_enrichment_tests)}")
+            diff_results = self._run_differential_enrichment_tests()
+            if diff_results:
+                self.results['differential_enrichment'] = pd.DataFrame(diff_results)
 
         # Save results
         self._save_results()
@@ -240,6 +250,129 @@ class NeighborhoodPermutationTesting:
                 counts[i, j] = (nb_labels == j).sum()
 
         return counts
+
+    def _run_differential_enrichment_tests(self) -> List[Dict]:
+        """
+        Differential enrichment: is immune pop X more enriched around
+        marker+ vs marker- tumor cells?
+
+        For each test: count immune neighbors of marker+ tumor cells vs
+        marker- tumor cells. Shuffle marker labels among tumor cells to build null.
+        """
+        all_results = []
+
+        for test in self.diff_enrichment_tests:
+            test_name = test['name']
+            immune_pop = test['immune_population']
+            tumor_base = test['tumor_base']
+            tumor_marker = test['tumor_marker']
+
+            immune_col = f'is_{immune_pop}'
+            base_col = f'is_{tumor_base}'
+            marker_col = tumor_marker if tumor_marker.startswith('is_') else f'is_{tumor_marker}'
+
+            print(f"\n    [{test_name}] {immune_pop} near {tumor_marker}")
+
+            missing = [c for c in [immune_col, base_col, marker_col]
+                       if c not in self.adata.obs.columns]
+            if missing:
+                print(f"      WARNING: Missing columns {missing}, skipping")
+                continue
+
+            for sample in self.adata.obs['sample_id'].unique():
+                result = self._diff_enrichment_sample(
+                    sample, test_name, immune_col, base_col, marker_col,
+                    immune_pop, tumor_base, tumor_marker
+                )
+                if result is not None:
+                    all_results.append(result)
+
+        return all_results
+
+    def _diff_enrichment_sample(self, sample: str, test_name: str,
+                                 immune_col: str, base_col: str, marker_col: str,
+                                 immune_pop: str, tumor_base: str,
+                                 tumor_marker: str) -> Optional[Dict]:
+        """Differential enrichment test for a single sample."""
+        sample_mask = self.adata.obs['sample_id'] == sample
+        sample_obs = self.adata.obs.loc[sample_mask]
+        sample_coords = self.adata.obsm['spatial'][sample_mask.values]
+
+        n_cells = len(sample_obs)
+        if n_cells < self.k_neighbors + 1:
+            return None
+
+        # Get populations
+        immune_mask = sample_obs[immune_col].values.astype(bool)
+        base_mask = sample_obs[base_col].values.astype(bool)
+        marker_status = sample_obs[marker_col].values.astype(bool)
+
+        pos_mask = base_mask & marker_status
+        neg_mask = base_mask & ~marker_status
+
+        n_immune = immune_mask.sum()
+        n_pos = pos_mask.sum()
+        n_neg = neg_mask.sum()
+
+        if n_immune < self.min_cells_per_type or n_pos < self.min_cells_per_type or n_neg < self.min_cells_per_type:
+            return None
+
+        # Build k-NN graph
+        tree = cKDTree(sample_coords)
+        _, neighbor_indices = tree.query(sample_coords, k=self.k_neighbors + 1)
+        neighbor_indices = neighbor_indices[:, 1:]
+
+        # Count: how many immune neighbors does each tumor+ / tumor- cell have?
+        neighbor_is_immune = immune_mask[neighbor_indices]  # (n_cells, k) bool
+
+        obs_count_pos = neighbor_is_immune[pos_mask].sum() / n_pos  # mean immune neighbors per marker+ cell
+        obs_count_neg = neighbor_is_immune[neg_mask].sum() / n_neg
+        observed_diff = float(obs_count_pos - obs_count_neg)
+
+        # Permutation: shuffle marker labels among base (tumor) cells
+        base_indices = np.where(base_mask)[0]
+        n_base_pos = pos_mask[base_mask].sum()
+
+        null_diffs = []
+        for _ in range(self.n_permutations):
+            perm = np.random.permutation(len(base_indices))
+            perm_pos_idx = base_indices[perm[:n_base_pos]]
+            perm_neg_idx = base_indices[perm[n_base_pos:]]
+
+            perm_count_pos = neighbor_is_immune[perm_pos_idx].sum() / len(perm_pos_idx)
+            perm_count_neg = neighbor_is_immune[perm_neg_idx].sum() / len(perm_neg_idx)
+            null_diffs.append(float(perm_count_pos - perm_count_neg))
+
+        null_diffs = np.array(null_diffs)
+        null_mean = null_diffs.mean()
+        null_std = null_diffs.std()
+
+        z_score = (observed_diff - null_mean) / null_std if null_std > 0 else 0.0
+        p_value = (np.abs(null_diffs - null_mean) >= np.abs(observed_diff - null_mean)).sum() / len(null_diffs)
+        p_value = max(p_value, 1.0 / (self.n_permutations + 1))
+
+        timepoint = sample_obs['timepoint'].iloc[0] if 'timepoint' in sample_obs.columns else np.nan
+        group = sample_obs['group'].iloc[0] if 'group' in sample_obs.columns else ''
+
+        return {
+            'sample_id': sample,
+            'test_name': test_name,
+            'immune_population': immune_pop,
+            'tumor_base': tumor_base,
+            'tumor_marker': tumor_marker,
+            'n_immune': int(n_immune),
+            'n_marker_pos': int(n_pos),
+            'n_marker_neg': int(n_neg),
+            'mean_immune_neighbors_pos': float(obs_count_pos),
+            'mean_immune_neighbors_neg': float(obs_count_neg),
+            'observed_diff': observed_diff,
+            'null_mean': null_mean,
+            'null_std': null_std,
+            'z_score': z_score,
+            'p_value': p_value,
+            'timepoint': timepoint,
+            'group': group
+        }
 
     def _build_aggregate_matrix(self):
         """Build aggregate enrichment matrix (mean z-score across samples)."""

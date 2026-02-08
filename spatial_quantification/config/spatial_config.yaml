@@ -530,27 +530,72 @@ distance_permutation_testing:
   enabled: false
   generate_plots: true
 
+  # Differential tests: is source immune pop closer to marker+ vs marker- tumor?
+  # Mirrors the distance_analysis pairings
   differential_tests:
+    # CD8 T cells
     - name: CD8_to_pERK_vs_nonpERK
       source: CD8_T_cells
       target_base: Tumor
       target_marker: is_pERK_positive_tumor
-
     - name: CD8_to_NINJA_vs_nonNINJA
       source: CD8_T_cells
       target_base: Tumor
       target_marker: is_NINJA_positive_tumor
+    - name: CD8_to_MHCII_vs_nonMHCII_tumor
+      source: CD8_T_cells
+      target_base: Tumor
+      target_marker: is_MHCII_positive_tumor
 
-    - name: Macrophage_to_pERK_vs_nonpERK
-      source: Macrophages
+    # PD1+ CD8 T cells
+    - name: PD1CD8_to_pERK_vs_nonpERK
+      source: PD1_positive_CD8
       target_base: Tumor
       target_marker: is_pERK_positive_tumor
+    - name: PD1CD8_to_NINJA_vs_nonNINJA
+      source: PD1_positive_CD8
+      target_base: Tumor
+      target_marker: is_NINJA_positive_tumor
+
+    # CD4 Tregs
+    - name: Tregs_to_pERK_vs_nonpERK
+      source: CD4_Tregs
+      target_base: Tumor
+      target_marker: is_pERK_positive_tumor
+    - name: Tregs_to_NINJA_vs_nonNINJA
+      source: CD4_Tregs
+      target_base: Tumor
+      target_marker: is_NINJA_positive_tumor
+
+    # MHCII+ macrophages
+    - name: MHCIIpos_mac_to_pERK_vs_nonpERK
+      source: MHCII+_macrophages
+      target_base: Tumor
+      target_marker: is_pERK_positive_tumor
+    - name: MHCIIpos_mac_to_NINJA_vs_nonNINJA
+      source: MHCII+_macrophages
+      target_base: Tumor
+      target_marker: is_NINJA_positive_tumor
+
+    # MHCII- macrophages
+    - name: MHCIIneg_mac_to_pERK_vs_nonpERK
+      source: MHCII-_macrophages
+      target_base: Tumor
+      target_marker: is_pERK_positive_tumor
+    - name: MHCIIneg_mac_to_NINJA_vs_nonNINJA
+      source: MHCII-_macrophages
+      target_base: Tumor
+      target_marker: is_NINJA_positive_tumor
 
   proximity_tests:
     - name: CD8_proximity_to_tumor
       source: CD8_T_cells
       target: Tumor
       shuffle_pool: [CD8_T_cells, CD4_T_cells, Macrophages, B_cells]
+    - name: Tregs_proximity_to_tumor
+      source: CD4_Tregs
+      target: Tumor
+      shuffle_pool: [CD8_T_cells, CD4_T_cells, CD4_Tregs, Macrophages, B_cells]
 
   parameters:
     n_permutations: 999
@@ -573,13 +618,73 @@ neighborhood_permutation_testing:
     - pERK_negative_tumor
     - NINJA_positive_tumor
     - NINJA_negative_tumor
+    - PDL1_positive_tumor
+    - CC3_positive_tumor
+    - MHCII_positive_tumor
+    - MHCII_negative_tumor
     - CD8_T_cells
+    - PD1_positive_CD8
     - CD4_T_cells
     - CD4_Tregs
     - Macrophages
     - MHCII+_macrophages
     - MHCII-_macrophages
     - B_cells
+
+  # Differential enrichment: is immune pop X more enriched around marker+ vs
+  # marker- tumor cells? Shuffles marker labels among tumor cells.
+  differential_enrichment_tests:
+    # All immune pops vs pERK+/-
+    - name: CD8_enrichment_pERK_vs_nonpERK
+      immune_population: CD8_T_cells
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
+    - name: PD1CD8_enrichment_pERK_vs_nonpERK
+      immune_population: PD1_positive_CD8
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
+    - name: Tregs_enrichment_pERK_vs_nonpERK
+      immune_population: CD4_Tregs
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
+    - name: MHCIIpos_mac_enrichment_pERK_vs_nonpERK
+      immune_population: MHCII+_macrophages
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
+    - name: MHCIIneg_mac_enrichment_pERK_vs_nonpERK
+      immune_population: MHCII-_macrophages
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
+    - name: B_cells_enrichment_pERK_vs_nonpERK
+      immune_population: B_cells
+      tumor_base: Tumor
+      tumor_marker: is_pERK_positive_tumor
+
+    # All immune pops vs NINJA+/-
+    - name: CD8_enrichment_NINJA_vs_nonNINJA
+      immune_population: CD8_T_cells
+      tumor_base: Tumor
+      tumor_marker: is_NINJA_positive_tumor
+    - name: PD1CD8_enrichment_NINJA_vs_nonNINJA
+      immune_population: PD1_positive_CD8
+      tumor_base: Tumor
+      tumor_marker: is_NINJA_positive_tumor
+    - name: Tregs_enrichment_NINJA_vs_nonNINJA
+      immune_population: CD4_Tregs
+      tumor_base: Tumor
+      tumor_marker: is_NINJA_positive_tumor
+    - name: MHCIIpos_mac_enrichment_NINJA_vs_nonNINJA
+      immune_population: MHCII+_macrophages
+      tumor_base: Tumor
+      tumor_marker: is_NINJA_positive_tumor
+    - name: MHCIIneg_mac_enrichment_NINJA_vs_nonNINJA
+      immune_population: MHCII-_macrophages
+      tumor_base: Tumor
+      tumor_marker: is_NINJA_positive_tumor
+    - name: B_cells_enrichment_NINJA_vs_nonNINJA
+      immune_population: B_cells
+      tumor_base: Tumor
+      tumor_marker: is_NINJA_positive_tumor
 
   parameters:
     n_permutations: 1000
