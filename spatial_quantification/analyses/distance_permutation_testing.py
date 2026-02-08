@@ -217,6 +217,10 @@ class DistancePermutationTesting:
         timepoint = sample_obs['timepoint'].iloc[0] if 'timepoint' in sample_obs.columns else np.nan
         group = sample_obs['group'].iloc[0] if 'group' in sample_obs.columns else ''
 
+        # Prevalence and effect size
+        prevalence = n_pos / (n_pos + n_neg) if (n_pos + n_neg) > 0 else np.nan
+        cohens_d = observed_diff / null_std if null_std > 0 else 0.0
+
         return {
             'sample_id': sample,
             'test_name': test_name,
@@ -227,12 +231,14 @@ class DistancePermutationTesting:
             'n_source': int(n_source),
             'n_target_pos': int(n_pos),
             'n_target_neg': int(n_neg),
+            'marker_prevalence': prevalence,
             'observed_mean_dist_to_pos': observed_mean_pos,
             'observed_mean_dist_to_neg': observed_mean_neg,
             'observed_diff': observed_diff,
             'null_mean': null_mean,
             'null_std': null_std,
             'z_score': z_score,
+            'cohens_d': cohens_d,
             'p_value': p_value,
             'timepoint': timepoint,
             'group': group
