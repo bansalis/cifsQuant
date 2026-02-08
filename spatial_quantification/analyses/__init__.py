@@ -9,6 +9,8 @@ from .neighborhoods_optimized import NeighborhoodAnalysisOptimized
 from .advanced import AdvancedAnalysis
 from .tumor_microenvironment_analysis import TumorMicroenvironmentAnalysis
 from .spatial_permutation_testing import SpatialPermutationTesting
+from .distance_permutation_testing import DistancePermutationTesting
+from .neighborhood_permutation_testing import NeighborhoodPermutationTesting
 
 # Coexpression and overlap analyses
 try:
@@ -44,6 +46,8 @@ __all__ = [
     'AdvancedAnalysis',
     'TumorMicroenvironmentAnalysis',
     'SpatialPermutationTesting',
+    'DistancePermutationTesting',
+    'NeighborhoodPermutationTesting',
     'PerTumorAnalysisSpatialCells',
     'InfiltrationAnalysisSpatialCells',
     'MarkerRegionAnalysisSpatialCells',
