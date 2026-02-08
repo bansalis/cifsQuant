@@ -351,6 +351,10 @@ class NeighborhoodPermutationTesting:
         p_value = (np.abs(null_diffs - null_mean) >= np.abs(observed_diff - null_mean)).sum() / len(null_diffs)
         p_value = max(p_value, 1.0 / (self.n_permutations + 1))
 
+        # Prevalence and effect size
+        marker_prevalence = n_pos / (n_pos + n_neg) if (n_pos + n_neg) > 0 else np.nan
+        cohens_d = observed_diff / null_std if null_std > 0 else 0.0
+
         timepoint = sample_obs['timepoint'].iloc[0] if 'timepoint' in sample_obs.columns else np.nan
         group = sample_obs['group'].iloc[0] if 'group' in sample_obs.columns else ''
 
@@ -363,12 +367,14 @@ class NeighborhoodPermutationTesting:
             'n_immune': int(n_immune),
             'n_marker_pos': int(n_pos),
             'n_marker_neg': int(n_neg),
+            'marker_prevalence': marker_prevalence,
             'mean_immune_neighbors_pos': float(obs_count_pos),
             'mean_immune_neighbors_neg': float(obs_count_neg),
             'observed_diff': observed_diff,
             'null_mean': null_mean,
             'null_std': null_std,
             'z_score': z_score,
+            'cohens_d': cohens_d,
             'p_value': p_value,
             'timepoint': timepoint,
             'group': group

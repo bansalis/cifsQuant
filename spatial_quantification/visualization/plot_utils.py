@@ -281,6 +281,11 @@ def plot_with_stats(data: pd.DataFrame,
                 labels.append(group)
                 colors.append(group_colors.get(group, '#000000'))
 
+        if not box_data:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12)
+            return ax
+
         # Create box plots with narrower boxes and bolder lines
         bp = ax.boxplot(box_data, positions=positions, widths=0.5,
                        patch_artist=True, showfliers=True,
@@ -422,6 +427,11 @@ def plot_with_stats_clean(data: pd.DataFrame,
                 positions.append(idx)
                 labels.append(group)
                 colors.append(group_colors.get(group, '#000000'))
+
+        if not box_data:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   transform=ax.transAxes, fontsize=12)
+            return ax
 
         # Create box plots - NO scatter points added
         bp = ax.boxplot(box_data, positions=positions, widths=0.5,

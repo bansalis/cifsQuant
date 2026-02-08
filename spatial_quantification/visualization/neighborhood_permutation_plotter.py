@@ -42,6 +42,11 @@ class NeighborhoodPermutationPlotter:
         if 'differential_enrichment' in results and not results['differential_enrichment'].empty:
             self.plot_differential_enrichment(results['differential_enrichment'])
             self.plot_differential_enrichment_heatmap(results['differential_enrichment'])
+            self.plot_differential_temporal(results['differential_enrichment'])
+
+        # Temporal heatmaps from pairwise
+        if 'pairwise_enrichment' in results and not results['pairwise_enrichment'].empty:
+            self.plot_temporal_enrichment_heatmaps(results['pairwise_enrichment'])
 
         print("  Done.")
 
@@ -245,3 +250,66 @@ class NeighborhoodPermutationPlotter:
         plt.savefig(self.plots_dir / 'differential_enrichment_heatmap.png',
                    dpi=self.dpi, bbox_inches='tight')
         plt.close()
+
+    def plot_differential_temporal(self, df: pd.DataFrame):
+        """Plot differential enrichment z-scores over timepoints per group."""
+        if 'timepoint' not in df.columns or 'group' not in df.columns:
+            return
+        timepoints = sorted(df['timepoint'].dropna().unique())
+        if len(timepoints) < 2:
+            return
+
+        test_names = df['test_name'].unique()
+        n_tests = len(test_names)
+        n_cols = min(3, n_tests)
+        n_rows = (n_tests + n_cols - 1) // n_cols
+
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False)
+        groups = [g for g in df['group'].unique() if pd.notna(g) and g != '']
+        palette = sns.color_palette('colorblind', len(groups))
+
+        for idx, test_name in enumerate(test_names):
+            ax = axes[idx // n_cols, idx % n_cols]
+            tdf = df[df['test_name'] == test_name]
+
+            for gi, group in enumerate(groups):
+                gdf = tdf[tdf['group'] == group]
+                summary = gdf.groupby('timepoint')['z_score'].agg(['mean', 'sem']).reindex(timepoints)
+                color = self.group_colors.get(group, palette[gi])
+                ax.plot(summary.index, summary['mean'], '-o', color=color, label=group, linewidth=2)
+                ax.fill_between(summary.index,
+                               summary['mean'] - summary['sem'],
+                               summary['mean'] + summary['sem'],
+                               alpha=0.2, color=color)
+
+            ax.axhline(0, color='gray', linestyle='--', alpha=0.5)
+            ax.set_title(test_name, fontsize=9)
+            ax.set_xlabel('Timepoint')
+            ax.set_ylabel('Mean Z-score')
+            if idx == 0:
+                ax.legend(fontsize=7)
+
+        for idx in range(n_tests, n_rows * n_cols):
+            axes[idx // n_cols, idx % n_cols].set_visible(False)
+
+        plt.suptitle('Differential Enrichment Over Time', fontsize=12)
+        plt.tight_layout()
+        plt.savefig(self.plots_dir / 'differential_enrichment_temporal.png',
+                   dpi=self.dpi, bbox_inches='tight')
+        plt.close()
+
+    def plot_temporal_enrichment_heatmaps(self, df: pd.DataFrame):
+        """Enrichment heatmaps at each timepoint."""
+        if 'timepoint' not in df.columns:
+            return
+        timepoints = sorted(df['timepoint'].dropna().unique())
+        if len(timepoints) < 2:
+            return
+
+        for tp in timepoints:
+            tdf = df[df['timepoint'] == tp]
+            pivot = tdf.pivot_table(values='z_score', index='cell_type_a',
+                                     columns='cell_type_b', aggfunc='mean')
+            if pivot.empty:
+                continue
+            self.plot_enrichment_heatmap(pivot, f'timepoint_{tp}')
