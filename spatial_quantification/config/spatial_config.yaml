@@ -519,6 +519,75 @@ spatial_permutation:
 
 
 # ============================================================================
+# ANALYSIS 4C: DISTANCE PERMUTATION TESTING
+# ============================================================================
+# Permutation testing to determine if observed distance differences between
+# cell populations are statistically significant.
+#
+# Differential tests: Are source cells closer to marker+ vs marker- targets?
+# Proximity tests: Are source cells specifically close to a target population?
+distance_permutation_testing:
+  enabled: false
+  generate_plots: true
+
+  differential_tests:
+    - name: CD8_to_pERK_vs_nonpERK
+      source: CD8_T_cells
+      target_base: Tumor
+      target_marker: is_pERK_positive_tumor
+
+    - name: CD8_to_NINJA_vs_nonNINJA
+      source: CD8_T_cells
+      target_base: Tumor
+      target_marker: is_NINJA_positive_tumor
+
+    - name: Macrophage_to_pERK_vs_nonpERK
+      source: Macrophages
+      target_base: Tumor
+      target_marker: is_pERK_positive_tumor
+
+  proximity_tests:
+    - name: CD8_proximity_to_tumor
+      source: CD8_T_cells
+      target: Tumor
+      shuffle_pool: [CD8_T_cells, CD4_T_cells, Macrophages, B_cells]
+
+  parameters:
+    n_permutations: 999
+    min_cells: 10
+    alpha: 0.05
+
+# ============================================================================
+# ANALYSIS 4D: NEIGHBORHOOD ENRICHMENT PERMUTATION TESTING
+# ============================================================================
+# Permutation testing for spatial neighborhood enrichment between cell types.
+# Following squidpy gr.nhood_enrichment approach: build k-NN graph, count
+# interactions between cell-type pairs, permute labels to build null.
+neighborhood_permutation_testing:
+  enabled: false
+  generate_plots: true
+
+  cell_types:
+    - Tumor
+    - pERK_positive_tumor
+    - pERK_negative_tumor
+    - NINJA_positive_tumor
+    - NINJA_negative_tumor
+    - CD8_T_cells
+    - CD4_T_cells
+    - CD4_Tregs
+    - Macrophages
+    - MHCII+_macrophages
+    - MHCII-_macrophages
+    - B_cells
+
+  parameters:
+    n_permutations: 1000
+    k_neighbors: 30
+    min_cells_per_type: 10
+    alpha: 0.05
+
+# ============================================================================
 # ANALYSIS 4: CELLULAR NEIGHBORHOODS
 # ============================================================================
 cellular_neighborhoods:
