@@ -302,7 +302,11 @@ class SpatialPermutationTesting:
     def _test_clustering(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
                         test: Dict, sample: str, struct_id, timepoint, group) -> Optional[Dict]:
         """
-        Test if marker+ cells are spatially clustered using Hopkins statistic.
+        Test if marker+ cells form spatial sub-clusters within a tumor structure.
+
+        Uses two complementary statistics under random labeling:
+        1. Mean NN distance among marker+ cells (lower = more sub-clustered)
+        2. Cross-type NN ratio: mean(pos→pos) / mean(pos→neg), R<1 = segregation
 
         Permutation: Shuffle marker labels among cells, keeping positions fixed.
         """
@@ -319,30 +323,47 @@ class SpatialPermutationTesting:
             return None
         if n_positive < 10:  # Need enough positive cells
             return None
+        if (n_cells - n_positive) < 5:  # Need enough negative cells
+            return None
 
-        # Calculate observed Hopkins statistic
-        observed = self._hopkins_statistic(struct_coords, marker_status)
-        if observed is None:
+        # Calculate observed statistics
+        observed_nn = self._mean_nn_distance(struct_coords, marker_status)
+        observed_ratio = self._cross_type_nn_ratio(struct_coords, marker_status)
+        if observed_nn is None:
             return None
 
         # Permutation test
-        null_dist = []
+        null_nn = []
+        null_ratio = []
         for _ in range(self.n_permutations):
             # Shuffle marker assignments (keeps same number of positive cells)
             perm_status = np.random.permutation(marker_status)
-            perm_stat = self._hopkins_statistic(struct_coords, perm_status)
-            if perm_stat is not None:
-                null_dist.append(perm_stat)
+            perm_nn = self._mean_nn_distance(struct_coords, perm_status)
+            if perm_nn is not None:
+                null_nn.append(perm_nn)
+            perm_r = self._cross_type_nn_ratio(struct_coords, perm_status)
+            if perm_r is not None:
+                null_ratio.append(perm_r)
 
-        if len(null_dist) < self.n_permutations // 2:
+        if len(null_nn) < self.n_permutations // 2:
             return None
 
-        null_dist = np.array(null_dist)
-        null_mean = null_dist.mean()
-        null_std = null_dist.std()
+        # Mean NN distance statistics (lower observed = more clustered)
+        null_nn = np.array(null_nn)
+        null_mean_nn = null_nn.mean()
+        null_std_nn = null_nn.std()
+        z_score_nn = (observed_nn - null_mean_nn) / null_std_nn if null_std_nn > 0 else 0
+        p_value_nn = (null_nn <= observed_nn).sum() / len(null_nn)
 
-        z_score = (observed - null_mean) / null_std if null_std > 0 else 0
-        p_value = (null_dist >= observed).sum() / len(null_dist)
+        # Cross-type NN ratio statistics (lower observed = more segregated)
+        nn_ratio_z = np.nan
+        nn_ratio_p = np.nan
+        if observed_ratio is not None and len(null_ratio) > 0:
+            null_ratio = np.array(null_ratio)
+            null_mean_r = null_ratio.mean()
+            null_std_r = null_ratio.std()
+            nn_ratio_z = (observed_ratio - null_mean_r) / null_std_r if null_std_r > 0 else 0
+            nn_ratio_p = (null_ratio <= observed_ratio).sum() / len(null_ratio)
 
         return {
             'sample_id': sample,
@@ -353,20 +374,24 @@ class SpatialPermutationTesting:
             'n_cells': n_cells,
             'n_positive': int(n_positive),
             'prevalence': prevalence,
-            'observed': observed,
-            'null_mean': null_mean,
-            'null_std': null_std,
-            'z_score': z_score,
-            'p_value': p_value,
+            'observed': observed_nn,
+            'observed_nn_ratio': observed_ratio if observed_ratio is not None else np.nan,
+            'null_mean': null_mean_nn,
+            'null_std': null_std_nn,
+            'z_score': z_score_nn,
+            'p_value': p_value_nn,
+            'nn_ratio_z_score': nn_ratio_z,
+            'nn_ratio_p_value': nn_ratio_p,
             'timepoint': timepoint,
             'group': group
         }
 
-    def _hopkins_statistic(self, coords: np.ndarray, positive_mask: np.ndarray) -> Optional[float]:
+    def _mean_nn_distance(self, coords: np.ndarray, positive_mask: np.ndarray) -> Optional[float]:
         """
-        Calculate Hopkins statistic for clustering tendency of positive cells.
+        Mean nearest-neighbor distance among marker+ cells.
 
-        H > 0.5 indicates clustering, H = 0.5 is random, H < 0.5 is uniform.
+        Lower values indicate that marker+ cells are closer together
+        (sub-clustered) than a random subset of the same size.
         """
         pos_coords = coords[positive_mask]
         n_pos = len(pos_coords)
@@ -374,37 +399,42 @@ class SpatialPermutationTesting:
         if n_pos < 10:
             return None
 
-        # Sample size (10% of positive cells, max 30)
-        m = min(max(5, int(n_pos * 0.1)), 30)
-
-        # Build KDTree for positive cells
         tree = cKDTree(pos_coords)
+        dists, _ = tree.query(pos_coords, k=2)
+        nn_dists = dists[:, 1]  # second nearest (first is self)
 
-        # Sample m points from positive cells
-        sample_idx = np.random.choice(n_pos, m, replace=False)
-        sample_pts = pos_coords[sample_idx]
+        return float(np.mean(nn_dists))
 
-        # W: distances from sampled points to their nearest neighbor (excluding self)
-        w_dist, _ = tree.query(sample_pts, k=2)
-        w_dist = w_dist[:, 1]  # Second nearest (first is self)
+    def _cross_type_nn_ratio(self, coords: np.ndarray, positive_mask: np.ndarray) -> Optional[float]:
+        """
+        Cross-type nearest-neighbor ratio.
 
-        # U: distances from random points to nearest positive cell
-        x_min, y_min = coords.min(axis=0)
-        x_max, y_max = coords.max(axis=0)
-        random_pts = np.column_stack([
-            np.random.uniform(x_min, x_max, m),
-            np.random.uniform(y_min, y_max, m)
-        ])
-        u_dist, _ = tree.query(random_pts, k=1)
+        R = mean(NN dist: marker+ to marker+) / mean(NN dist: marker+ to marker-)
 
-        # Hopkins statistic
-        sum_u = np.sum(u_dist)
-        sum_w = np.sum(w_dist)
+        R < 1: marker+ cells are closer to each other than to marker- (segregation)
+        R = 1: random labeling (no spatial preference)
+        R > 1: marker+ cells are closer to marker- than to each other (intermixing)
+        """
+        pos_coords = coords[positive_mask]
+        neg_coords = coords[~positive_mask]
 
-        if sum_u + sum_w == 0:
+        if len(pos_coords) < 10 or len(neg_coords) < 5:
             return None
 
-        return sum_u / (sum_u + sum_w)
+        # NN distance: marker+ to marker+ (excluding self)
+        tree_pos = cKDTree(pos_coords)
+        dists_pp, _ = tree_pos.query(pos_coords, k=2)
+        mean_pp = np.mean(dists_pp[:, 1])
+
+        # NN distance: marker+ to nearest marker-
+        tree_neg = cKDTree(neg_coords)
+        dists_pn, _ = tree_neg.query(pos_coords, k=1)
+        mean_pn = np.mean(dists_pn)
+
+        if mean_pn == 0:
+            return None
+
+        return float(mean_pp / mean_pn)
 
     def _test_colocalization(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
                             test: Dict, sample: str, struct_id, timepoint, group) -> Optional[Dict]:

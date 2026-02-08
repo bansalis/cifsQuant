@@ -320,6 +320,29 @@ def main():
         distance_analysis = DistanceAnalysis(adata, config, output_dir)
         all_results['distance_analysis'] = distance_analysis.run()
 
+    # Distance Permutation Testing
+    if config.get('distance_permutation_testing', {}).get('enabled', False):
+        print("\n  ✓ Running distance permutation testing")
+        try:
+            from spatial_quantification.analyses.distance_permutation_testing import DistancePermutationTesting
+            dist_perm = DistancePermutationTesting(adata, config, output_dir)
+            all_results['distance_permutation'] = dist_perm.run()
+
+            if config.get('distance_permutation_testing', {}).get('generate_plots', True):
+                print("\n  Generating distance permutation visualizations...")
+                try:
+                    from spatial_quantification.visualization.distance_permutation_plotter import DistancePermutationPlotter
+                    dist_perm_plotter = DistancePermutationPlotter(output_dir / 'distance_permutation', config)
+                    dist_perm_plotter.generate_all_plots(all_results['distance_permutation'])
+                except Exception as e:
+                    print(f"  ⚠ Could not generate distance permutation plots: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"  ⚠ Could not run distance permutation testing: {e}")
+            import traceback
+            traceback.print_exc()
+
     # Infiltration Analysis
     if config.get('immune_infiltration', {}).get('enabled', False):
         use_spatialcells = config.get('immune_infiltration', {}).get('use_spatialcells', False)
@@ -373,6 +396,29 @@ def main():
             neighborhood_analysis = NeighborhoodAnalysis(adata, config, output_dir)
 
         all_results['neighborhood_analysis'] = neighborhood_analysis.run()
+
+    # Neighborhood Enrichment Permutation Testing
+    if config.get('neighborhood_permutation_testing', {}).get('enabled', False):
+        print("\n  ✓ Running neighborhood enrichment permutation testing")
+        try:
+            from spatial_quantification.analyses.neighborhood_permutation_testing import NeighborhoodPermutationTesting
+            nhood_perm = NeighborhoodPermutationTesting(adata, config, output_dir)
+            all_results['neighborhood_permutation'] = nhood_perm.run()
+
+            if config.get('neighborhood_permutation_testing', {}).get('generate_plots', True):
+                print("\n  Generating neighborhood permutation visualizations...")
+                try:
+                    from spatial_quantification.visualization.neighborhood_permutation_plotter import NeighborhoodPermutationPlotter
+                    nhood_plotter = NeighborhoodPermutationPlotter(output_dir / 'neighborhood_permutation', config)
+                    nhood_plotter.generate_all_plots(all_results['neighborhood_permutation'])
+                except Exception as e:
+                    print(f"  ⚠ Could not generate neighborhood permutation plots: {e}")
+                    import traceback
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"  ⚠ Could not run neighborhood permutation testing: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Advanced Analysis
     if config.get('advanced_analyses', {}).get('enabled', False):
