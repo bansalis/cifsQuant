@@ -110,6 +110,16 @@ spatial_quantification_results/
 │   │   └── *.png
 │   └── null_distributions/
 │       └── *.png
+├── distance_permutation/
+│   ├── differential_tests.csv
+│   ├── proximity_tests.csv
+│   └── plots/
+│       └── *.png
+├── neighborhood_permutation/
+│   ├── pairwise_enrichment.csv
+│   ├── aggregate_enrichment_matrix.csv
+│   └── plots/
+│       └── *.png
 └── neighborhoods/
     └── ...
 ```
@@ -135,6 +145,8 @@ spatial_quantification/
 │   ├── distance_analysis.py         # Cell-to-cell distances
 │   ├── infiltration_analysis.py     # Immune infiltration + zones
 │   ├── spatial_permutation_testing.py # Per-tumor permutation tests
+│   ├── distance_permutation_testing.py # Distance significance testing
+│   ├── neighborhood_permutation_testing.py # Neighborhood enrichment permutation
 │   ├── neighborhoods.py             # Cellular neighborhoods
 │   └── advanced.py                  # Pseudo-time, etc.
 │
@@ -143,6 +155,8 @@ spatial_quantification/
 │   ├── individual_plots.py          # Single plots
 │   ├── composite_plots.py           # Multi-panel figures
 │   ├── permutation_plotter.py       # Permutation testing plots
+│   ├── distance_permutation_plotter.py  # Distance permutation plots
+│   ├── neighborhood_permutation_plotter.py # Neighborhood enrichment plots
 │   └── styles.py                    # Publication settings
 │
 ├── statistics/
@@ -167,6 +181,8 @@ spatial_quantification/
    ├── Distance Analysis
    ├── Infiltration Analysis
    ├── Spatial Permutation Testing
+   ├── Distance Permutation Testing
+   ├── Neighborhood Enrichment Permutation Testing
    ├── Neighborhoods
    └── Advanced
    ↓
@@ -315,7 +331,7 @@ cellular_neighborhoods:
 
 | Test | Biological Question | Statistic | Permutation Strategy |
 |------|---------------------|-----------|---------------------|
-| **Clustering** | Are marker+ cells spatially clustered within this tumor? | Hopkins statistic (H > 0.5 = clustered, H = 0.5 = random, H < 0.5 = uniform) | Shuffle single marker labels among cells |
+| **Clustering** | Are marker+ cells sub-clustered within this tumor? | Mean NN distance among marker+ cells (lower = more clustered) + cross-type NN ratio R = mean(pos→pos) / mean(pos→neg) (R<1 = segregation, R=1 = random, R>1 = intermixing) | Shuffle marker labels among all cells in the structure (random labeling) |
 | **Co-localization** | Do two markers overlap spatially more than expected by chance? | Cross-K function (mean count of marker2+ cells within radius of each marker1+ cell) | Independently shuffle both marker labels |
 | **Enrichment** | Are immune cells enriched near marker+ tumor cells? | Mean immune cell count within radius of marker+ tumor cells | Shuffle tumor marker labels |
 
@@ -511,7 +527,125 @@ spatial_permutation/
 
 ---
 
-### 6. Advanced Analyses
+### 6. Distance Permutation Testing
+
+**What it does:**
+- Tests whether observed distances between cell populations are statistically significant or could arise by chance
+- Two test types: **differential** (is source closer to marker+ than marker- targets?) and **proximity** (is source specifically close to target?)
+- Keeps all cell positions fixed; shuffles labels to build null distribution
+
+**Statistical approach:**
+- **Differential test**: For each sample, compute mean NN distance from source cells (e.g., CD8 T cells) to marker+ targets (e.g., pERK+ tumor) and marker- targets (e.g., pERK- tumor). The test statistic is the difference. Null: shuffle marker labels among all target base cells (e.g., all tumor cells), recompute distances N times. Two-tailed p-value + BH FDR correction.
+- **Proximity test**: Compute mean NN distance from source to target. Null: randomly assign source/target labels within a shuffle pool of related cell types, recompute distances. One-tailed p-value (lower = closer than chance).
+
+**Example configuration:**
+```yaml
+distance_permutation_testing:
+  enabled: true
+  differential_tests:
+    - name: CD8_to_pERK_vs_nonpERK
+      source: CD8_T_cells
+      target_base: Tumor
+      target_marker: is_pERK_positive_tumor
+  proximity_tests:
+    - name: CD8_proximity_to_tumor
+      source: CD8_T_cells
+      target: Tumor
+      shuffle_pool: [CD8_T_cells, CD4_T_cells, Macrophages, B_cells]
+  parameters:
+    n_permutations: 999
+    min_cells: 10
+    alpha: 0.05
+```
+
+**Output columns** (`differential_tests.csv`):
+
+| Column | Meaning |
+|--------|---------|
+| `observed_mean_dist_to_pos` / `_to_neg` | Observed mean NN distance to marker+ / marker- targets |
+| `observed_diff` | Difference (pos - neg). Negative = source closer to marker+ |
+| `z_score` | `(observed_diff - null_mean) / null_std` |
+| `p_value` / `p_adjusted` | Two-tailed empirical p-value / BH-corrected |
+
+**Plots:** Observed vs null bar charts, volcano plots (z-score vs -log10(p)), group comparison violins.
+
+**Outputs:**
+```
+distance_permutation/
+├── differential_tests.csv
+├── proximity_tests.csv
+└── plots/
+    ├── {test_name}_obs_vs_null.png
+    ├── {test_name}_volcano.png
+    └── {test_name}_group_comparison.png
+```
+
+---
+
+### 7. Neighborhood Enrichment Permutation Testing
+
+**What it does:**
+- Tests whether cell-type pairs are spatial neighbors more (enrichment/attraction) or less (depletion/avoidance) than expected by chance
+- Follows the squidpy `gr.nhood_enrichment` / imcRtools `testInteractions` approach
+- Produces per-sample and aggregate enrichment matrices
+
+**Statistical approach:**
+1. Build a k-NN spatial graph (default k=30) — positions fixed throughout
+2. Count edges between each cell-type pair (i, j): how many neighbors of type-i cells are type-j
+3. Permute cell-type labels N times (graph unchanged), recount interactions each time
+4. Z-score = `(observed_count - mean_perm) / std_perm`
+5. Positive z = enrichment (cell types co-occur as neighbors more than chance), negative z = depletion (avoidance)
+6. Two-tailed permutation p-value
+
+**Example configuration:**
+```yaml
+neighborhood_permutation_testing:
+  enabled: true
+  cell_types:
+    - Tumor
+    - pERK_positive_tumor
+    - CD8_T_cells
+    - Macrophages
+    - B_cells
+  parameters:
+    n_permutations: 1000
+    k_neighbors: 30
+    min_cells_per_type: 10
+    alpha: 0.05
+```
+
+**Output columns** (`pairwise_enrichment.csv`):
+
+| Column | Meaning |
+|--------|---------|
+| `cell_type_a`, `cell_type_b` | Cell-type pair |
+| `observed_count` | Number of a→b edges in k-NN graph |
+| `null_mean` / `null_std` | Mean/std from permutation null |
+| `z_score` | Enrichment (>0) or depletion (<0) |
+| `p_value` | Two-tailed permutation p-value |
+
+**Plots:**
+- **Enrichment heatmaps**: Clustered heatmap of mean z-scores (red = enrichment, blue = depletion). Generated for all samples, per group, and per sample.
+- **Top interactions bar chart**: Top N most enriched and depleted cell-type pairs ranked by mean z-score.
+- **Interaction dot plot**: Grid of all pairs; dot size = -log10(p), color = z-score.
+
+**Outputs:**
+```
+neighborhood_permutation/
+├── pairwise_enrichment.csv
+├── aggregate_enrichment_matrix.csv
+├── enrichment_matrix_{group}.csv
+└── plots/
+    ├── enrichment_heatmap_all_samples.png
+    ├── enrichment_heatmap_group_{group}.png
+    ├── enrichment_{sample}.png
+    ├── top_interactions.png
+    └── interaction_dotplot.png
+```
+
+---
+
+### 8. Advanced Analyses
 
 **Placeholder for:**
 - Pseudo-time differentiation trajectories
