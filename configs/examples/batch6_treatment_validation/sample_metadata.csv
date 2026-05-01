@@ -1,0 +1,14 @@
+sample_id,group,treatment,timepoint
+JL97A, KPNT cis, p14, 8
+JL97B, KPNT cis, none, 8
+JL98A, KPNT trans, p14, 6
+JL98B, KPNT trans, none, 6
+JL99A, KPNT trans, p14, 8
+JL99B, KPNT trans, none, 8
+JL100, KPNT trans, none, 3
+JL101A, KPT, p14, 8
+JL101B, KPT, none, 8
+JL103A, KPNT cis, p14, 8
+JL104A, KPNT cis, none, 8
+JL104B, KPNT cis, p14, 8
+JL105, KPT, none, 3

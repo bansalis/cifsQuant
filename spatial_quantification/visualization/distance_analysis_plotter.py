@@ -366,6 +366,143 @@ class DistanceAnalysisPlotter:
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close(fig)
 
+    def plot_differential_distances(self, diff_data: pd.DataFrame,
+                                    group_col: str = 'group',
+                                    groups: List[str] = None):
+        """
+        Plot differential distance (mean_dist_to_pos - mean_dist_to_neg) for each
+        source/marker pair.
+
+        Two panels per marker:
+        1. Paired dot plot: mean_dist_to_pos and mean_dist_to_neg per sample, connected
+           by a line. Slope direction shows whether source cells are closer to pos or neg.
+        2. Violin/box of differential_distance by group. Negative = closer to positive zone.
+
+        Label note: 'within-tumor immune cells only' if within_tumor_only is set.
+        """
+        if diff_data is None or len(diff_data) == 0:
+            return
+
+        print("    Generating differential distance plots...")
+
+        if groups is None and group_col in diff_data.columns:
+            groups = sorted(diff_data[group_col].dropna().unique())
+
+        within_tumor = diff_data['within_tumor_only'].any() if 'within_tumor_only' in diff_data.columns else False
+        scope_label = ' (within-tumor immune cells only)' if within_tumor else ''
+
+        for source in diff_data['source_population'].unique():
+            source_data = diff_data[diff_data['source_population'] == source]
+
+            for marker in source_data['marker'].unique():
+                marker_data = source_data[source_data['marker'] == marker].copy()
+
+                if len(marker_data) == 0:
+                    continue
+
+                fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+                fig.suptitle(
+                    f'Differential Distance: {source} → {marker}+/- tumor{scope_label}',
+                    fontsize=13, fontweight='bold'
+                )
+
+                # Panel 1: Paired dot plot
+                ax1 = axes[0]
+                if groups is None or group_col not in marker_data.columns:
+                    plot_groups = ['all']
+                    marker_data['_grp'] = 'all'
+                    grp_col = '_grp'
+                else:
+                    plot_groups = [g for g in groups if g in marker_data[group_col].values]
+                    grp_col = group_col
+
+                x_pos = 0
+                x_ticks = []
+                x_labels = []
+
+                for grp in plot_groups:
+                    grp_data = marker_data[marker_data[grp_col] == grp] if grp != 'all' else marker_data
+                    color = self._get_color(grp, plot_groups)
+
+                    for _, row in grp_data.iterrows():
+                        if pd.isna(row.get('mean_dist_to_pos')) or pd.isna(row.get('mean_dist_to_neg')):
+                            continue
+                        ax1.plot([x_pos - 0.1, x_pos + 0.1],
+                                 [row['mean_dist_to_pos'], row['mean_dist_to_neg']],
+                                 '-', color=color, alpha=0.5, linewidth=1)
+                        ax1.scatter(x_pos - 0.1, row['mean_dist_to_pos'],
+                                    color=color, s=40, zorder=5, marker='o')
+                        ax1.scatter(x_pos + 0.1, row['mean_dist_to_neg'],
+                                    color=color, s=40, zorder=5, marker='s')
+
+                    x_ticks.append(x_pos)
+                    x_labels.append(grp)
+                    x_pos += 1
+
+                ax1.set_xticks(x_ticks)
+                ax1.set_xticklabels(x_labels, rotation=30, ha='right')
+                ax1.set_ylabel('Mean Distance (μm)', fontsize=11, fontweight='bold')
+                ax1.set_title('Paired distances: circle=pos, square=neg', fontsize=10)
+                ax1.grid(True, alpha=0.3, axis='y')
+
+                from matplotlib.lines import Line2D
+                legend_handles = [
+                    Line2D([0], [0], marker='o', color='gray', linestyle='none', label=f'{marker}+'),
+                    Line2D([0], [0], marker='s', color='gray', linestyle='none', label=f'{marker}-'),
+                ]
+                ax1.legend(handles=legend_handles, loc='best', frameon=True)
+
+                # Panel 2: Violin/box of differential_distance by group
+                ax2 = axes[1]
+                if group_col in marker_data.columns and len(plot_groups) > 1:
+                    plot_data_list = []
+                    color_list = []
+                    label_list = []
+                    for grp in plot_groups:
+                        grp_vals = marker_data[marker_data[group_col] == grp]['differential_distance'].dropna().values
+                        if len(grp_vals) > 0:
+                            plot_data_list.append(grp_vals)
+                            color_list.append(self._get_color(grp, plot_groups))
+                            label_list.append(grp)
+
+                    if plot_data_list:
+                        positions = list(range(len(plot_data_list)))
+                        vparts = ax2.violinplot(plot_data_list, positions=positions,
+                                               showmeans=True, showmedians=False)
+                        for i, pc in enumerate(vparts['bodies']):
+                            pc.set_facecolor(color_list[i])
+                            pc.set_alpha(0.6)
+
+                        bp = ax2.boxplot(plot_data_list, positions=positions, widths=0.15,
+                                        patch_artist=True, showfliers=False)
+                        for patch in bp['boxes']:
+                            patch.set_facecolor('white')
+                            patch.set_alpha(0.8)
+
+                        ax2.set_xticks(positions)
+                        ax2.set_xticklabels(label_list)
+                else:
+                    diffs = marker_data['differential_distance'].dropna().values
+                    if len(diffs) > 0:
+                        ax2.violinplot([diffs], positions=[0], showmeans=True)
+                        ax2.set_xticks([0])
+                        ax2.set_xticklabels(['all'])
+
+                ax2.axhline(0, color='black', linestyle='--', linewidth=1.5, alpha=0.7)
+                ax2.set_ylabel('Differential Distance (μm)\n(pos - neg; negative = closer to positive zone)',
+                               fontsize=10, fontweight='bold')
+                ax2.set_title('Differential Distance by Group', fontsize=11, fontweight='bold')
+                ax2.grid(True, alpha=0.3, axis='y')
+
+                plt.tight_layout()
+
+                safe_source = source.replace('+', 'pos').replace('-', 'neg')
+                plot_path = self.plots_dir / f'differential_distance_{safe_source}_{marker}.png'
+                plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)
+
+        print(f"    ✓ Saved differential distance plots to {self.plots_dir.name}/")
+
     def plot_distance_histograms_binned(self, data: pd.DataFrame,
                                         source: str, target: str,
                                         group_col: str = 'group',

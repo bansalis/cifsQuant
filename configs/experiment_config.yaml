@@ -1,69 +1,32 @@
 # Experiment Configuration
-experiment_name: "lung_adenocarcinoma_spatial"
-data_path: "spatial_pipeline/results"
-rawdata_path: "rawdata"  # Path to raw OME-TIFF files
+# Update paths and slide metadata for your study.
+
+experiment_name: "my_experiment"
+data_path: "results"
+rawdata_path: "rawdata"
 output_path: "spatial_analysis/outputs"
 
-# Slide metadata - add your slide IDs and groupings
+# Sample metadata - add one entry per slide
 slides:
-  # Example entries - replace with your actual slide IDs
-  - slide_id: "GUEST29"
-    treatment: "control"
-    timepoint: 14
-    immunogenic: true
-    
-  - slide_id: "GUEST44" 
-    treatment: "treatment_A"
-    timepoint: 21
-    immunogenic: false
+  - slide_id: "SAMPLE1"
+    group: "GroupA"
+    treatment: "treated"
+    timepoint: 10
 
-# Channel mapping (update based on your markers.csv)
+  - slide_id: "SAMPLE2"
+    group: "GroupB"
+    treatment: "untreated"
+    timepoint: 10
+
+# Channel mapping (update to match your markers.csv)
 channels:
   dapi: "Channel_1"
-  panck: "Channel_2"  # Tumor marker
-  cd3: "Channel_3"    # T cell marker
-  cd8: "Channel_4"    # CD8 T cell marker
-  perk: "Channel_5"   # pERK functional marker
-  ninja: "Channel_6"  # Neoantigen marker
-  cd45: "Channel_7"   # Pan-immune marker
-  ki67: "Channel_8"   # Proliferation marker
-  # Add additional channels as needed
+  structure_marker: "Channel_2"    # primary structure marker (e.g. tumor)
+  immune_marker: "Channel_3"       # pan-immune marker (e.g. CD45)
+  t_cell_marker: "Channel_4"       # T cell marker (e.g. CD3)
+  # add additional channels as needed
 
 # Analysis parameters
 analysis:
-  neighborhood_radii: [30, 50, 100]  # Distance thresholds in pixels
-  min_cells_per_slide: 1000          # QC threshold
-  
-# Phenotyping targets (use + for positive, - for negative)
-target_phenotypes:
-  - name: "perk_positive_tumor"
-    description: "pERK+ tumor cells"
-    markers: ["panck+", "perk+"]
-    
-  - name: "perk_negative_tumor"
-    description: "pERK- tumor cells" 
-    markers: ["panck+", "perk-"]
-    
-  - name: "ninja_positive_tumor" 
-    description: "NINJA+ tumor cells"
-    markers: ["panck+", "ninja+"]
-    
-  - name: "ninja_negative_tumor"
-    description: "NINJA- tumor cells"
-    markers: ["panck+", "ninja-"]
-    
-  - name: "cd8_t_cells"
-    description: "CD8+ T cells"
-    markers: ["cd3+", "cd8+"]
-    
-  - name: "cd4_t_cells"
-    description: "CD4+ T cells (CD3+ CD8-)"
-    markers: ["cd3+", "cd8-"]
-    
-  - name: "all_tumor_cells"
-    description: "All tumor cells"
-    markers: ["panck+"]
-    
-  - name: "all_t_cells"
-    description: "All T cells"
-    markers: ["cd3+"]
+  neighborhood_radii: [30, 50, 100]
+  min_cells_per_slide: 1000

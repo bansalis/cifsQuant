@@ -747,9 +747,11 @@ class PermutationPlotter:
 
     def _plot_null_vs_observed_kde(self, ax: plt.Axes, null_values: np.ndarray,
                                    observed_values: np.ndarray, title: str,
-                                   show_stats: bool = False):
+                                   show_stats: bool = False, direction_label: str = ''):
         """
         Draw overlapped KDE of aggregate null and observed distributions on one axis.
+
+        direction_label: e.g. '← more clustered  |  more dispersed →'
         """
         if len(null_values) < 5 or len(observed_values) < 5:
             ax.text(0.5, 0.5, 'Insufficient data',
@@ -773,7 +775,8 @@ class PermutationPlotter:
         ax.fill_between(x_grid, obs_kde(x_grid), alpha=0.35, color=self.sig_color, label='Observed')
         ax.plot(x_grid, obs_kde(x_grid), color=self.sig_color, linewidth=1.5)
 
-        ax.set_xlabel('Statistic Value', fontweight='bold')
+        xlabel = f'Statistic Value\n{direction_label}' if direction_label else 'Statistic Value'
+        ax.set_xlabel(xlabel, fontweight='bold')
         ax.set_ylabel('Density', fontweight='bold')
         ax.set_title(title, fontweight='bold')
 
@@ -801,24 +804,84 @@ class PermutationPlotter:
 
         ax.legend(loc='upper left', fontsize=9)
 
+    def _plot_direct_metric_dist(self, ax: plt.Axes, values: np.ndarray,
+                                  null_ref: float, title: str,
+                                  direction_label: str = '', color: str = '#377EB8'):
+        """
+        Plot observed distribution of a directly computed metric (clark_evans_r,
+        morans_i) with a vertical reference line at the theoretical null value.
+        No permutation null is stored for these — the null is the theoretical
+        random expectation (R=1 for CE, I=0 for Moran's I).
+        """
+        if len(values) < 3:
+            ax.text(0.5, 0.5, 'Insufficient data', ha='center', va='center',
+                    transform=ax.transAxes)
+            ax.set_title(title, fontweight='bold')
+            return
+
+        ax.hist(values, bins=min(20, max(5, len(values) // 3)), color=color,
+                alpha=0.45, density=True, edgecolor='white', linewidth=0.5)
+        try:
+            kde = stats.gaussian_kde(values)
+            x_range = np.linspace(values.min() - values.std() * 0.3,
+                                   values.max() + values.std() * 0.3, 200)
+            ax.plot(x_range, kde(x_range), color=color, linewidth=2)
+        except Exception:
+            pass
+
+        # Null reference
+        ax.axvline(null_ref, color='black', linestyle='--', linewidth=2,
+                   alpha=0.85, label=f'Null (={null_ref})', zorder=5)
+
+        # Median
+        med = np.median(values)
+        ax.axvline(med, color=color, linestyle='-', linewidth=1.8,
+                   alpha=0.9, label=f'Median={med:.3f}', zorder=4)
+
+        # 1-sample t-test vs null
+        try:
+            _, p_t = stats.ttest_1samp(values, null_ref)
+            stars = '***' if p_t < 0.001 else ('**' if p_t < 0.01 else
+                    ('*' if p_t < 0.05 else 'ns'))
+            ax.text(0.97, 0.97, f'n={len(values)}\nt-test p={p_t:.3f} {stars}',
+                    transform=ax.transAxes, ha='right', va='top', fontsize=9,
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
+        except Exception:
+            ax.text(0.97, 0.97, f'n={len(values)}', transform=ax.transAxes,
+                    ha='right', va='top', fontsize=9)
+
+        xlabel = f'Metric Value\n{direction_label}' if direction_label else 'Metric Value'
+        ax.set_xlabel(xlabel, fontweight='bold')
+        ax.set_ylabel('Density', fontweight='bold')
+        ax.set_title(title, fontweight='bold')
+        ax.legend(loc='upper left', fontsize=8)
+
     def plot_aggregate_null_vs_observed(self, per_tumor_df: pd.DataFrame):
         """
-        Plot overlapped KDE of aggregate null vs observed distributions.
+        Multi-metric null vs observed plots.
 
-        Generates three figures per test type:
-        1. All samples (two panels: clean + stats-annotated)
-        2. Separated by group (one subplot per group, with stats)
-        3. Separated by timepoint (one subplot per timepoint, with stats)
-
-        Parameters
-        ----------
-        per_tumor_df : pd.DataFrame
-            Per-tumor results with observed and null statistics
+        Per test generates:
+        1. All-sample KDE (mean NN statistic vs permutation null): clean + stats panels
+        2. By-group figure: rows = mean NN null/obs + clark_evans_r dist + morans_i dist;
+           cols = groups. All X-axes annotated with clustering direction.
+        3. By-timepoint KDE (mean NN statistic).
         """
         if per_tumor_df is None or len(per_tumor_df) == 0:
             return
 
         print("    Generating aggregate null vs observed KDE plots...")
+
+        ce_direction = '← clustered (R<1)  |  R=1 random  |  dispersed (R>1) →'
+        mi_direction = '← dispersed (I<0)  |  I=0 random  |  clustered (I>0) →'
+
+        # Direction labels depend on test type for the primary z_score statistic
+        _nn_by_type = {
+            'clustering':     '← more clustered (shorter NN)  |  more dispersed →',
+            'colocalization': '← fewer co-localizing  |  more co-localizing →',
+            'enrichment':     '← fewer immune near marker+  |  more immune near marker+ →',
+        }
+
+        group_col = 'main_group' if 'main_group' in per_tumor_df.columns else 'group'
 
         for test_name in per_tumor_df['test_name'].unique():
             test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
@@ -833,82 +896,126 @@ class PermutationPlotter:
             if len(null_all) < 5:
                 continue
 
+            n_tumors = len(test_data)
+
+            nn_direction = _nn_by_type.get(test_type, '← lower  |  higher →')
+
             # --- 1. All samples: clean (left) + stats (right) ---
             fig, axes = plt.subplots(1, 2, figsize=(14, 5))
             self._plot_null_vs_observed_kde(
                 axes[0], null_all, observed_all,
-                title='All Samples', show_stats=False)
+                title='All Samples', show_stats=False,
+                direction_label=nn_direction)
             self._plot_null_vs_observed_kde(
                 axes[1], null_all, observed_all,
-                title='All Samples (with statistics)', show_stats=True)
+                title='All Samples (with statistics)', show_stats=True,
+                direction_label=nn_direction)
 
-            n_tumors = len(test_data)
             plt.suptitle(
-                f'Aggregate Null vs Observed - {test_name} ({test_type}) (n={n_tumors} structures)',
+                f'Mean NN: Null vs Observed — {test_name} ({test_type}) (n={n_tumors} structures)',
                 fontsize=14, fontweight='bold')
             plt.tight_layout()
             plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_all.png'
             plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
             plt.close()
 
-            # --- 2. By group ---
-            if 'group' in test_data.columns:
-                groups = sorted(test_data['group'].dropna().unique())
-                if len(groups) >= 2:
-                    n_groups = len(groups)
-                    fig, axes = plt.subplots(1, n_groups, figsize=(6 * n_groups, 5))
-                    if n_groups == 1:
-                        axes = [axes]
+            # --- 2. Multi-metric by group ---
+            # rows: mean_NN null/obs | clark_evans_r | morans_i
+            # cols: each group
+            groups = [g for g in sorted(test_data[group_col].dropna().unique())
+                      if str(g).strip() != '']
+            if len(groups) >= 1:
+                has_ce = ('clark_evans_r' in test_data.columns and
+                          test_data['clark_evans_r'].notna().any())
+                has_mi = ('morans_i' in test_data.columns and
+                          test_data['morans_i'].notna().any())
 
-                    for ax, group in zip(axes, groups):
-                        grp_data = test_data[test_data['group'] == group]
-                        grp_obs = grp_data['observed'].dropna().values
-                        grp_null = self._reconstruct_null_samples(grp_data)
-                        self._plot_null_vs_observed_kde(
-                            ax, grp_null, grp_obs,
-                            title=f'{group} (n={len(grp_data)})', show_stats=True)
+                n_rows = 1 + int(has_ce) + int(has_mi)
+                n_cols = len(groups)
+                fig, axes = plt.subplots(n_rows, n_cols,
+                                         figsize=(5.5 * n_cols, 4.5 * n_rows),
+                                         squeeze=False)
 
-                    plt.suptitle(
-                        f'Aggregate Null vs Observed by Group - {test_name} ({test_type})',
-                        fontsize=14, fontweight='bold')
-                    plt.tight_layout()
-                    plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_by_group.png'
-                    plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
-                    plt.close()
+                # Row 0: mean NN null vs observed
+                for col_j, group in enumerate(groups):
+                    grp_data = test_data[test_data[group_col] == group]
+                    grp_obs = grp_data['observed'].dropna().values
+                    grp_null = self._reconstruct_null_samples(grp_data)
+                    color = self._get_group_color(group, col_j)
+                    # Temporarily override sig_color for per-group colour
+                    orig_sig = self.sig_color
+                    self.sig_color = color
+                    self._plot_null_vs_observed_kde(
+                        axes[0][col_j], grp_null, grp_obs,
+                        title=f'Mean NN — {group} (n={len(grp_data)})',
+                        show_stats=True, direction_label=nn_direction)
+                    self.sig_color = orig_sig
 
-            # --- 3. By timepoint ---
+                # Row 1: clark_evans_r distribution
+                if has_ce:
+                    ce_row = 1
+                    for col_j, group in enumerate(groups):
+                        grp_data = test_data[test_data[group_col] == group]
+                        ce_vals = grp_data['clark_evans_r'].dropna().values
+                        color = self._get_group_color(group, col_j)
+                        self._plot_direct_metric_dist(
+                            axes[ce_row][col_j], ce_vals, null_ref=1.0,
+                            title=f'Clark-Evans R — {group}',
+                            direction_label=ce_direction, color=color)
+
+                # Row 2 (or 1 if no CE): morans_i distribution
+                if has_mi:
+                    mi_row = 1 + int(has_ce)
+                    for col_j, group in enumerate(groups):
+                        grp_data = test_data[test_data[group_col] == group]
+                        mi_vals = grp_data['morans_i'].dropna().values
+                        color = self._get_group_color(group, col_j)
+                        self._plot_direct_metric_dist(
+                            axes[mi_row][col_j], mi_vals, null_ref=0.0,
+                            title=f"Moran's I — {group}",
+                            direction_label=mi_direction, color=color)
+
+                plt.suptitle(
+                    f'All Metrics by Group — {test_name} ({test_type})',
+                    fontsize=14, fontweight='bold')
+                plt.tight_layout()
+                plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_by_group.png'
+                plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+                plt.close()
+
+            # --- 3. By timepoint (mean NN only) ---
             if 'timepoint' in test_data.columns:
                 timepoints = sorted(test_data['timepoint'].dropna().unique())
                 if len(timepoints) >= 2:
                     n_tp = len(timepoints)
-                    n_cols = min(4, n_tp)
-                    n_rows = (n_tp + n_cols - 1) // n_cols
-                    fig, axes = plt.subplots(n_rows, n_cols,
-                                            figsize=(5.5 * n_cols, 4.5 * n_rows))
+                    n_cols_tp = min(4, n_tp)
+                    n_rows_tp = (n_tp + n_cols_tp - 1) // n_cols_tp
+                    fig, axes = plt.subplots(n_rows_tp, n_cols_tp,
+                                            figsize=(5.5 * n_cols_tp, 4.5 * n_rows_tp))
                     if n_tp == 1:
                         axes = np.array([[axes]])
-                    elif n_rows == 1:
+                    elif n_rows_tp == 1:
                         axes = axes.reshape(1, -1)
-                    elif n_cols == 1:
+                    elif n_cols_tp == 1:
                         axes = axes.reshape(-1, 1)
 
                     for idx, tp in enumerate(timepoints):
-                        r, c = idx // n_cols, idx % n_cols
+                        r, c = idx // n_cols_tp, idx % n_cols_tp
                         ax = axes[r, c]
                         tp_data = test_data[test_data['timepoint'] == tp]
                         tp_obs = tp_data['observed'].dropna().values
                         tp_null = self._reconstruct_null_samples(tp_data)
                         self._plot_null_vs_observed_kde(
                             ax, tp_null, tp_obs,
-                            title=f'Timepoint {tp} (n={len(tp_data)})', show_stats=True)
+                            title=f'Timepoint {tp} (n={len(tp_data)})',
+                            show_stats=True, direction_label=nn_direction)
 
-                    # Hide empty subplots
-                    for idx in range(n_tp, n_rows * n_cols):
-                        r, c = idx // n_cols, idx % n_cols
+                    for idx in range(n_tp, n_rows_tp * n_cols_tp):
+                        r, c = idx // n_cols_tp, idx % n_cols_tp
                         axes[r, c].set_visible(False)
 
                     plt.suptitle(
-                        f'Aggregate Null vs Observed by Timepoint - {test_name} ({test_type})',
+                        f'Mean NN: Null vs Observed by Timepoint — {test_name} ({test_type})',
                         fontsize=14, fontweight='bold')
                     plt.tight_layout()
                     plot_path = self.plots_dir / f'aggregate_null_vs_observed_{clean_name}_by_timepoint.png'
@@ -916,6 +1023,651 @@ class PermutationPlotter:
                     plt.close()
 
         print(f"      Saved aggregate null vs observed plots to {self.plots_dir.name}/")
+
+    def plot_by_prevalence_group(self, per_tumor_df: pd.DataFrame):
+        """
+        Plot z-scores split by prevalence group (low/medium/high tertile).
+
+        For each test, generates a violin plot panel with three groups of violins
+        (low/medium/high prevalence), showing both mean_NN z-score and clark_evans_r.
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        if 'prevalence_group' not in per_tumor_df.columns:
+            return
+
+        print("    Generating prevalence group plots...")
+
+        group_order = ['low', 'medium', 'high']
+        group_palette = {'low': '#4DAF4A', 'medium': '#FF7F00', 'high': '#E41A1C'}
+
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            test_type = test_data['test_type'].iloc[0]
+
+            has_ce = 'clark_evans_r' in test_data.columns and test_data['clark_evans_r'].notna().any()
+            n_panels = 2 if has_ce else 1
+
+            fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 6))
+            if n_panels == 1:
+                axes = [axes]
+
+            # Panel 1: mean_NN z-score by prevalence group
+            ax1 = axes[0]
+            present_groups = [g for g in group_order if g in test_data['prevalence_group'].values]
+            plot_data = [test_data[test_data['prevalence_group'] == g]['z_score'].dropna().values
+                         for g in present_groups]
+            plot_data = [d for d in plot_data if len(d) > 0]
+            present_groups_filtered = [g for g, d in zip(present_groups,
+                                        [test_data[test_data['prevalence_group'] == g]['z_score'].dropna().values
+                                         for g in present_groups]) if len(d) > 0]
+
+            if plot_data:
+                positions = list(range(len(plot_data)))
+                colors = [group_palette.get(g, '#999999') for g in present_groups_filtered]
+
+                vparts = ax1.violinplot(plot_data, positions=positions, showmeans=True)
+                for i, pc in enumerate(vparts['bodies']):
+                    pc.set_facecolor(colors[i])
+                    pc.set_alpha(0.7)
+
+                bp = ax1.boxplot(plot_data, positions=positions, widths=0.12,
+                                patch_artist=True, showfliers=False)
+                for patch in bp['boxes']:
+                    patch.set_facecolor('white')
+                    patch.set_alpha(0.8)
+
+                ax1.set_xticks(positions)
+                ax1.set_xticklabels(present_groups_filtered)
+                ax1.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.6)
+
+            ax1.set_xlabel('Prevalence Tertile', fontweight='bold')
+            ax1.set_ylabel('Effect Size (z-score)', fontweight='bold')
+            ax1.set_title(f'Mean NN z-score\nby Prevalence Group', fontweight='bold')
+
+            # Panel 2: Clark-Evans R by prevalence group
+            if has_ce:
+                ax2 = axes[1]
+                ce_data = [test_data[test_data['prevalence_group'] == g]['clark_evans_r'].dropna().values
+                           for g in present_groups]
+                ce_data_f = [(g, d) for g, d in zip(present_groups, ce_data) if len(d) > 0]
+
+                if ce_data_f:
+                    pos2 = list(range(len(ce_data_f)))
+                    cols2 = [group_palette.get(g, '#999999') for g, _ in ce_data_f]
+                    ce_vals = [d for _, d in ce_data_f]
+                    ce_grps = [g for g, _ in ce_data_f]
+
+                    vparts2 = ax2.violinplot(ce_vals, positions=pos2, showmeans=True)
+                    for i, pc in enumerate(vparts2['bodies']):
+                        pc.set_facecolor(cols2[i])
+                        pc.set_alpha(0.7)
+
+                    ax2.set_xticks(pos2)
+                    ax2.set_xticklabels(ce_grps)
+                    ax2.axhline(1, color='gray', linestyle='--', linewidth=1.5, alpha=0.7)
+
+                ax2.set_xlabel('Prevalence Tertile', fontweight='bold')
+                ax2.set_ylabel('Clark-Evans R', fontweight='bold')
+                ax2.set_title('Clark-Evans R\n(R<1=clustered, R>1=dispersed)', fontweight='bold')
+
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+            plt.suptitle(f'Clustering by Prevalence Group: {test_name} ({test_type})',
+                        fontsize=13, fontweight='bold')
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'prevalence_group_{clean_name}.png'
+            plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+
+        print(f"      Saved prevalence group plots to {self.plots_dir.name}/")
+
+    def plot_binned_null_vs_observed_by_prevalence(self, per_tumor_df: pd.DataFrame):
+        """
+        Null vs observed KDE plots separated by prevalence tertile.
+
+        The aggregate null distribution is often trimodal because tumors with very
+        different marker prevalences have different null expectations. This plot
+        re-runs the comparison WITHIN each tertile (low/medium/high % positive),
+        showing whether the observed statistic departs from the null at each level.
+
+        Layout: rows = prevalence tertiles (low/medium/high), 2 cols (clean + stats).
+        One figure per test. Saved as: binned_null_vs_observed_{test}.png
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        print("    Generating binned null vs observed plots by prevalence tertile...")
+
+        _nn_by_type = {
+            'clustering':     '← more clustered (shorter NN)  |  more dispersed →',
+            'colocalization': '← fewer co-localizing  |  more co-localizing →',
+            'enrichment':     '← fewer immune near marker+  |  more immune near marker+ →',
+        }
+
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            test_type = test_data['test_type'].iloc[0]
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+            nn_direction = _nn_by_type.get(test_type, '← lower  |  higher →')
+
+            # Assign prevalence tertiles within this test (may already exist)
+            if 'prevalence_group' not in test_data.columns or test_data['prevalence_group'].isna().all():
+                prev = test_data['prevalence'].dropna()
+                if len(prev) < 9:
+                    continue
+                try:
+                    test_data['prevalence_group'] = pd.qcut(
+                        test_data['prevalence'], q=3,
+                        labels=['low', 'medium', 'high'], duplicates='drop')
+                except Exception:
+                    continue
+
+            tertile_order = ['low', 'medium', 'high']
+            present = [t for t in tertile_order if t in test_data['prevalence_group'].values]
+            if not present:
+                continue
+
+            n_tertiles = len(present)
+            fig, axes = plt.subplots(n_tertiles, 2,
+                                     figsize=(14, 4.5 * n_tertiles),
+                                     squeeze=False)
+
+            for row_i, tertile in enumerate(present):
+                bin_data = test_data[test_data['prevalence_group'] == tertile]
+                bin_obs = bin_data['observed'].dropna().values
+                bin_null = self._reconstruct_null_samples(bin_data)
+                n_structs = len(bin_data)
+                # Median prevalence in this bin
+                med_prev = bin_data['prevalence'].median() * 100
+
+                if len(bin_obs) < 5 or len(bin_null) < 5:
+                    for c in range(2):
+                        axes[row_i][c].text(0.5, 0.5,
+                            f'{tertile} prevalence\nn={n_structs} (insufficient)',
+                            ha='center', va='center', transform=axes[row_i][c].transAxes)
+                        axes[row_i][c].set_title(f'{tertile.capitalize()} prevalence '
+                                                 f'(median {med_prev:.0f}% positive)',
+                                                 fontweight='bold')
+                    continue
+
+                title_base = (f'{tertile.capitalize()} prevalence '
+                              f'(median {med_prev:.0f}% positive, n={n_structs})')
+                self._plot_null_vs_observed_kde(
+                    axes[row_i][0], bin_null, bin_obs,
+                    title=title_base, show_stats=False,
+                    direction_label=nn_direction)
+                self._plot_null_vs_observed_kde(
+                    axes[row_i][1], bin_null, bin_obs,
+                    title=f'{title_base} + stats', show_stats=True,
+                    direction_label=nn_direction)
+
+            plt.suptitle(
+                f'Null vs Observed by Prevalence Tertile — {test_name} ({test_type})',
+                fontsize=14, fontweight='bold')
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'binned_null_vs_observed_{clean_name}.png'
+            plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+
+        print(f"      Saved binned null vs observed plots to {self.plots_dir.name}/")
+
+    def plot_colocalization_double_positive(self, per_tumor_df: pd.DataFrame):
+        """
+        Scatter plot of observed vs expected % double-positive cells for colocalization tests.
+
+        For each tumor, under marker independence:
+            expected_pct_both = P(marker1) * P(marker2) * 100
+        Observed:
+            observed_pct_both = (n_cells positive for BOTH markers) / n_total * 100
+
+        Points above the y=x line have MORE double-positives than expected (enrichment);
+        points below have FEWER (mutual exclusion or spatial segregation).
+        Points colored by main_group.
+
+        Requires n_both, observed_pct_both, expected_pct_both columns (added in
+        _test_colocalization in spatial_permutation_testing.py).
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        coloc_data = per_tumor_df[per_tumor_df['test_type'] == 'colocalization'].copy()
+        if len(coloc_data) == 0:
+            return
+
+        required = ['observed_pct_both', 'expected_pct_both']
+        if not all(c in coloc_data.columns for c in required):
+            return
+
+        coloc_data = coloc_data.dropna(subset=required)
+        if len(coloc_data) < 3:
+            return
+
+        print("    Generating colocalization double-positive plots...")
+
+        group_col = 'main_group' if 'main_group' in coloc_data.columns else 'group'
+        groups = sorted(coloc_data[group_col].dropna().unique())
+
+        for test_name in coloc_data['test_name'].unique():
+            test_data = coloc_data[coloc_data['test_name'] == test_name].copy()
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+
+            if len(test_data) < 3:
+                continue
+
+            fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
+
+            # --- Panel 1: scatter observed vs expected per tumor ---
+            ax1 = axes[0]
+            xy_max = max(test_data['observed_pct_both'].max(),
+                         test_data['expected_pct_both'].max()) * 1.1
+            xy_max = max(xy_max, 1.0)
+
+            ax1.plot([0, xy_max], [0, xy_max], 'k--', linewidth=1.5,
+                     alpha=0.6, label='y = x (independence)')
+
+            for i, g in enumerate(groups):
+                grp = test_data[test_data[group_col].fillna('').astype(str) == str(g)]
+                if len(grp) == 0:
+                    continue
+                color = self._get_group_color(g, i)
+                ax1.scatter(grp['expected_pct_both'], grp['observed_pct_both'],
+                            color=color, alpha=0.65, s=35, edgecolors='white',
+                            linewidth=0.4, label=g, zorder=3)
+
+            ax1.set_xlim(0, xy_max)
+            ax1.set_ylim(0, xy_max)
+            ax1.set_xlabel('Expected % double positive\n(under independence)',
+                           fontweight='bold')
+            ax1.set_ylabel('Observed % double positive', fontweight='bold')
+            ax1.set_title('Observed vs Expected % Double Positive\n(per tumor structure)',
+                          fontweight='bold')
+            ax1.legend(fontsize=9, loc='upper left')
+            ax1.set_aspect('equal')
+
+            # Annotation: overall enrichment test
+            obs_all = test_data['observed_pct_both'].values
+            exp_all = test_data['expected_pct_both'].values
+            try:
+                _, p_paired = stats.wilcoxon(obs_all - exp_all)
+                fold = (obs_all.mean() / exp_all.mean()) if exp_all.mean() > 0 else np.nan
+                ax1.text(0.97, 0.05,
+                         f'Wilcoxon p = {p_paired:.3f}\nmean fold = {fold:.2f}x',
+                         transform=ax1.transAxes, ha='right', va='bottom', fontsize=9,
+                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
+            except Exception:
+                pass
+
+            # --- Panel 2: fold enrichment distribution by group ---
+            ax2 = axes[1]
+            test_data = test_data.copy()
+            test_data['fold_enrichment'] = np.where(
+                test_data['expected_pct_both'] > 0,
+                test_data['observed_pct_both'] / test_data['expected_pct_both'],
+                np.nan)
+
+            plot_data2, labels2, colors2 = [], [], []
+            for i, g in enumerate(groups):
+                grp = test_data[test_data[group_col].fillna('').astype(str) == str(g)]
+                fe = grp['fold_enrichment'].dropna().values
+                if len(fe) >= 2:
+                    plot_data2.append(fe)
+                    labels2.append(g)
+                    colors2.append(self._get_group_color(g, i))
+
+            if plot_data2:
+                positions = list(range(len(plot_data2)))
+                try:
+                    vp = ax2.violinplot(plot_data2, positions=positions, showmeans=True)
+                    for j, pc in enumerate(vp['bodies']):
+                        pc.set_facecolor(colors2[j])
+                        pc.set_alpha(0.7)
+                except Exception:
+                    pass
+                bp = ax2.boxplot(plot_data2, positions=positions, widths=0.15,
+                                 patch_artist=True, showfliers=False)
+                for patch in bp['boxes']:
+                    patch.set_facecolor('white')
+                    patch.set_alpha(0.8)
+                for j, data in enumerate(plot_data2):
+                    jitter = np.random.uniform(-0.12, 0.12, len(data))
+                    ax2.scatter([j + jitter[k] for k in range(len(data))], data,
+                                color=colors2[j], alpha=0.55, s=25,
+                                edgecolors='white', linewidth=0.4)
+
+                ax2.axhline(1.0, color='black', linestyle='--', linewidth=1.5,
+                            alpha=0.7, label='Fold=1 (independence)')
+                ax2.set_xticks(positions)
+                ax2.set_xticklabels(labels2)
+
+            ax2.set_xlabel('Group', fontweight='bold')
+            ax2.set_ylabel('Fold enrichment\n(observed / expected)', fontweight='bold')
+            ax2.set_title('Double-Positive Fold Enrichment by Group', fontweight='bold')
+            ax2.legend(fontsize=9)
+
+            plt.suptitle(f'Co-expression Enrichment: {test_name}',
+                         fontsize=13, fontweight='bold')
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'coloc_double_positive_{clean_name}.png'
+            plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+
+        print(f"      Saved double-positive plots to {self.plots_dir.name}/")
+
+    def plot_multi_metric_group_comparison(self, per_tumor_df: pd.DataFrame):
+        """
+        Per-group distributions of each clustering metric vs theoretical null.
+
+        Layout: rows = metrics, cols = groups (KPT / KPNT).
+        Each cell shows a histogram + KDE of per-tumor metric values for that group,
+        with a vertical line at the null/random expectation:
+          - z_score:          null = 0   (no clustering signal vs permutation)
+          - Clark-Evans R:    null = 1.0 (complete spatial randomness)
+          - Moran's I:        null = 0.0 (no spatial autocorrelation)
+          - NN ratio z-score: null = 0
+
+        1-sample t-test annotation shows whether each group departs significantly
+        from the null; the x-axis label shows which direction means clustered.
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        group_col = 'main_group' if 'main_group' in per_tumor_df.columns else 'group'
+        groups = [g for g in sorted(per_tumor_df[group_col].dropna().unique())
+                  if str(g).strip() != '']
+        if not groups:
+            return
+
+        print("    Generating multi-metric vs null plots...")
+
+        _z_direction_by_type = {
+            'clustering':     '← clustered (z<0)  |  dispersed (z>0) →',
+            'colocalization': '← fewer co-localizing (z<0)  |  more co-localizing (z>0) →',
+            'enrichment':     '← fewer immune near marker+ (z<0)  |  more (z>0) →',
+        }
+
+        # Clark-Evans and Moran's I only meaningful for clustering tests;
+        # they will be absent from colocalization/enrichment results naturally.
+        _ce_dlbl = '← clustered (R<1)  |  R=1 random  |  dispersed (R>1) →'
+        _mi_dlbl = '← dispersed (I<0)  |  I=0 random  |  clustered (I>0) →'
+        _nn_dlbl = '← segregated (z<0)  |  intermixed (z>0) →'
+
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+            ttype = test_data['test_type'].iloc[0] if 'test_type' in test_data.columns else 'clustering'
+
+            metrics = [
+                ('z_score',          'z-score',
+                 0.0, _z_direction_by_type.get(ttype, '← lower  |  higher →')),
+                ('clark_evans_r',    'Clark-Evans R',    1.0, _ce_dlbl),
+                ('morans_i',         "Moran's I",        0.0, _mi_dlbl),
+                ('nn_ratio_z_score', 'NN ratio z-score', 0.0, _nn_dlbl),
+            ]
+            available = [(col, lbl, null, dlbl) for col, lbl, null, dlbl in metrics
+                         if col in test_data.columns and test_data[col].notna().any()]
+
+            if not available:
+                continue
+
+            n_rows = len(available)
+            n_cols = len(groups)
+            fig, axes = plt.subplots(n_rows, n_cols,
+                                     figsize=(4.8 * n_cols, 4.0 * n_rows),
+                                     squeeze=False)
+
+            for row_i, (metric, ylabel, null_val, dir_label) in enumerate(available):
+                for col_j, group in enumerate(groups):
+                    ax = axes[row_i][col_j]
+                    vals = test_data[test_data[group_col] == group][metric].dropna().values
+                    color = self._get_group_color(group, col_j)
+
+                    if len(vals) < 3:
+                        ax.text(0.5, 0.5, f'n={len(vals)}\n(insufficient)',
+                                ha='center', va='center', transform=ax.transAxes,
+                                fontsize=9)
+                        ax.set_title(f'{group}' if row_i == 0 else '', fontsize=11)
+                        ax.set_ylabel(ylabel if col_j == 0 else '', fontweight='bold',
+                                      fontsize=9)
+                        continue
+
+                    # Histogram
+                    ax.hist(vals, bins=min(20, max(5, len(vals) // 3)),
+                            color=color, alpha=0.45, density=True,
+                            edgecolor='white', linewidth=0.5)
+                    # KDE
+                    try:
+                        kde = stats.gaussian_kde(vals)
+                        x_min = min(vals.min(), null_val) - vals.std() * 0.4
+                        x_max = max(vals.max(), null_val) + vals.std() * 0.4
+                        xg = np.linspace(x_min, x_max, 200)
+                        ax.plot(xg, kde(xg), color=color, linewidth=2)
+                    except Exception:
+                        pass
+
+                    # Null reference line
+                    ax.axvline(null_val, color='black', linestyle='--', linewidth=2,
+                               alpha=0.85, zorder=5, label=f'Null={null_val}')
+                    # Median line
+                    med = np.median(vals)
+                    ax.axvline(med, color=color, linestyle='-', linewidth=1.8,
+                               alpha=0.9, zorder=4, label=f'Median={med:.3f}')
+
+                    # 1-sample t-test vs null
+                    try:
+                        _, p_t = stats.ttest_1samp(vals, null_val)
+                        stars = ('***' if p_t < 0.001 else '**' if p_t < 0.01
+                                 else '*' if p_t < 0.05 else 'ns')
+                        ax.text(0.97, 0.97,
+                                f'n={len(vals)}\np={p_t:.3f} {stars}',
+                                transform=ax.transAxes, ha='right', va='top',
+                                fontsize=8.5,
+                                bbox=dict(boxstyle='round', facecolor='white',
+                                          alpha=0.85))
+                    except Exception:
+                        ax.text(0.97, 0.97, f'n={len(vals)}',
+                                transform=ax.transAxes, ha='right', va='top',
+                                fontsize=8.5)
+
+                    # Top row: group name as column header
+                    if row_i == 0:
+                        ax.set_title(group, fontsize=11, fontweight='bold')
+                    # Left column: metric label as row header
+                    ax.set_ylabel(ylabel if col_j == 0 else '', fontweight='bold',
+                                  fontsize=9)
+                    ax.set_xlabel(dir_label, fontsize=7.5)
+                    ax.legend(fontsize=7, loc='upper left')
+
+            plt.suptitle(
+                f'Metrics vs Null ({ttype}) — {test_name}',
+                fontsize=13, fontweight='bold')
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'multi_metric_vs_null_{clean_name}.png'
+            plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+
+        print(f"      Saved multi-metric vs null plots to {self.plots_dir.name}/")
+
+    def plot_metric_correlations(self, per_tumor_df: pd.DataFrame):
+        """
+        Scatter plot matrix comparing clustering metrics to each other.
+
+        Shows: clark_evans_r vs z_score, morans_i vs z_score, morans_i vs clark_evans_r.
+        Points coloured by main_group (or group). Adds Pearson r and p-value.
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        metric_pairs = [
+            ('z_score', 'clark_evans_r', 'Mean NN z-score', 'Clark-Evans R'),
+            ('z_score', 'morans_i',      'Mean NN z-score', "Moran's I"),
+            ('clark_evans_r', 'morans_i', 'Clark-Evans R',  "Moran's I"),
+        ]
+        available_pairs = [(x, y, xl, yl) for x, y, xl, yl in metric_pairs
+                           if x in per_tumor_df.columns and y in per_tumor_df.columns]
+
+        if not available_pairs:
+            return
+
+        group_col = 'main_group' if 'main_group' in per_tumor_df.columns else 'group'
+        groups = sorted(per_tumor_df[group_col].dropna().unique())
+
+        print("    Generating metric correlation plots...")
+
+        for test_name in per_tumor_df['test_name'].unique():
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+            clean_name = test_name.replace('/', '_').replace(' ', '_')
+
+            n_pairs = len(available_pairs)
+            fig, axes = plt.subplots(1, n_pairs, figsize=(5.5 * n_pairs, 5))
+            if n_pairs == 1:
+                axes = [axes]
+
+            for ax, (x_col, y_col, x_label, y_label) in zip(axes, available_pairs):
+                # Drop NaN only on the two metric columns so that rows with
+                # missing group label don't silently empty the data
+                valid = test_data.dropna(subset=[x_col, y_col]).copy()
+                if len(valid) < 5:
+                    ax.set_visible(False)
+                    continue
+
+                for i, g in enumerate(groups):
+                    grp_mask = valid[group_col].fillna('').astype(str) == str(g)
+                    grp = valid[grp_mask]
+                    if len(grp) == 0:
+                        continue
+                    color = self._get_group_color(g, i)
+                    ax.scatter(grp[x_col], grp[y_col], color=color, alpha=0.6, s=30,
+                               label=g, edgecolors='white', linewidth=0.4)
+
+                # Overall Pearson r
+                x_vals = valid[x_col].values
+                y_vals = valid[y_col].values
+                try:
+                    r, p_r = stats.pearsonr(x_vals, y_vals)
+                    # Regression line
+                    m, b = np.polyfit(x_vals, y_vals, 1)
+                    x_line = np.linspace(x_vals.min(), x_vals.max(), 100)
+                    ax.plot(x_line, m * x_line + b, 'k--', linewidth=1.5, alpha=0.7)
+                    ax.text(0.97, 0.03, f'r={r:.2f}, p={p_r:.3f}',
+                            transform=ax.transAxes, ha='right', va='bottom', fontsize=9,
+                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.85))
+                except Exception:
+                    pass
+
+                ax.set_xlabel(x_label, fontweight='bold')
+                ax.set_ylabel(y_label, fontweight='bold')
+                ax.set_title(f'{x_label} vs {y_label}', fontweight='bold', fontsize=10)
+                if len(groups) > 1:
+                    ax.legend(fontsize=8, loc='upper left')
+
+            plt.suptitle(f'Metric Correlations: {test_name}', fontsize=13, fontweight='bold')
+            plt.tight_layout()
+
+            plot_path = self.plots_dir / f'metric_correlations_{clean_name}.png'
+            plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+            plt.close()
+
+        print(f"      Saved metric correlation plots to {self.plots_dir.name}/")
+
+    def plot_per_tumor_metrics_overview(self, per_tumor_df: pd.DataFrame):
+        """
+        Summary overview: one row per test, columns = each metric.
+        Shows distribution of all 4 metrics (z_score, clark_evans_r, morans_i,
+        nn_ratio_z_score) across all tumors, coloured by main_group.
+        """
+        if per_tumor_df is None or len(per_tumor_df) == 0:
+            return
+
+        group_col = 'main_group' if 'main_group' in per_tumor_df.columns else 'group'
+        groups = sorted(per_tumor_df[group_col].dropna().unique())
+
+        metrics = [
+            ('z_score',          'Mean NN z-score',  None),
+            ('clark_evans_r',    'Clark-Evans R',     1.0),
+            ('morans_i',         "Moran's I",         0.0),
+            ('nn_ratio_z_score', 'NN Ratio z-score',  None),
+        ]
+        avail = [(c, l, r) for c, l, r in metrics
+                 if c in per_tumor_df.columns and per_tumor_df[c].notna().any()]
+
+        if not avail:
+            return
+
+        print("    Generating per-tumor metrics overview...")
+
+        test_names = per_tumor_df['test_name'].unique()
+        n_tests = len(test_names)
+        n_metrics = len(avail)
+
+        fig, axes = plt.subplots(n_tests, n_metrics,
+                                 figsize=(4.5 * n_metrics, 4.5 * n_tests),
+                                 squeeze=False)
+
+        for row_i, test_name in enumerate(test_names):
+            test_data = per_tumor_df[per_tumor_df['test_name'] == test_name].copy()
+
+            for col_j, (metric, label, ref_line) in enumerate(avail):
+                ax = axes[row_i][col_j]
+
+                plot_data = []
+                valid_groups = []
+                for g in groups:
+                    vals = test_data[test_data[group_col] == g][metric].dropna().values
+                    if len(vals) >= 1:
+                        plot_data.append(vals)
+                        valid_groups.append(g)
+
+                if not plot_data:
+                    ax.set_visible(False)
+                    continue
+
+                colors = [self._get_group_color(g, i) for i, g in enumerate(valid_groups)]
+
+                if len(plot_data[0]) >= 3:
+                    try:
+                        vparts = ax.violinplot(plot_data, positions=range(len(valid_groups)),
+                                               showmeans=False, showextrema=True)
+                        for i, pc in enumerate(vparts['bodies']):
+                            pc.set_facecolor(colors[i])
+                            pc.set_alpha(0.6)
+                    except Exception:
+                        pass
+
+                bp = ax.boxplot(plot_data, positions=range(len(valid_groups)),
+                                widths=0.25, patch_artist=True, showfliers=True,
+                                flierprops=dict(marker='o', markersize=3, alpha=0.4))
+                for patch, color in zip(bp['boxes'], colors):
+                    patch.set_facecolor(color)
+                    patch.set_alpha(0.5)
+
+                if ref_line is not None:
+                    ax.axhline(ref_line, color='black', linestyle=':', linewidth=1.0,
+                               alpha=0.6)
+
+                ax.set_xticks(range(len(valid_groups)))
+                ax.set_xticklabels(valid_groups, fontsize=9)
+                if col_j == 0:
+                    short_name = test_name[:20] + '...' if len(test_name) > 20 else test_name
+                    ax.set_ylabel(f'{short_name}\n{label}', fontweight='bold', fontsize=9)
+                else:
+                    ax.set_ylabel(label, fontsize=9)
+                if row_i == 0:
+                    ax.set_title(label, fontweight='bold', fontsize=10)
+
+        plt.suptitle('Per-Tumor Metrics Overview (all tests × all metrics)',
+                     fontsize=13, fontweight='bold', y=1.01)
+        plt.tight_layout()
+
+        plot_path = self.plots_dir / 'per_tumor_metrics_overview.png'
+        plt.savefig(plot_path, dpi=self.dpi, bbox_inches='tight')
+        plt.close()
+
+        print(f"      Saved per-tumor metrics overview to {self.plots_dir.name}/")
 
     def generate_all_plots(self, results: Dict):
         """
@@ -962,5 +1714,29 @@ class PermutationPlotter:
         # 8. Aggregate null vs observed KDE
         if 'per_tumor_results' in results:
             self.plot_aggregate_null_vs_observed(results['per_tumor_results'])
+
+        # 9. Plots split by prevalence group (low/medium/high tertile)
+        if 'per_tumor_results' in results:
+            self.plot_by_prevalence_group(results['per_tumor_results'])
+
+        # 10. Multi-metric group comparison (z_score, clark_evans_r, morans_i, nn_ratio_z)
+        if 'per_tumor_results' in results:
+            self.plot_multi_metric_group_comparison(results['per_tumor_results'])
+
+        # 11. Metric correlation scatter plots
+        if 'per_tumor_results' in results:
+            self.plot_metric_correlations(results['per_tumor_results'])
+
+        # 12. Per-tumor metrics overview grid (tests × metrics)
+        if 'per_tumor_results' in results:
+            self.plot_per_tumor_metrics_overview(results['per_tumor_results'])
+
+        # 13. Null vs observed split by prevalence tertile (binned)
+        if 'per_tumor_results' in results:
+            self.plot_binned_null_vs_observed_by_prevalence(results['per_tumor_results'])
+
+        # 14. Colocalization: observed vs expected double-positive % per tumor
+        if 'per_tumor_results' in results:
+            self.plot_colocalization_double_positive(results['per_tumor_results'])
 
         print(f"  All permutation plots saved to {self.plots_dir}/")

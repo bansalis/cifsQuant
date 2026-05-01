@@ -16,16 +16,14 @@ python manual_gating.py --results_dir results --force_normalization --n_jobs 15
 import pandas as pd
 import numpy as np
 import anndata as ad
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import json
 import warnings
 warnings.filterwarnings('ignore')
-# Add at top after imports
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend, no GUI needed
-import matplotlib.pyplot as plt
 from sklearn.mixture import GaussianMixture
 import argparse
 from scipy.signal import argrelextrema
@@ -80,33 +78,6 @@ MARKER_HIERARCHY = {
 # ============================================================================
 # Based on expected frequencies in germinal center-containing lymphoid tissue
 # This informs validation and gating strategy
-
-OLD_MARKER_HIERARCHY = {
-    # COMMON markers (high abundance, 20-60% of cells)
-    'common': [
-        'CD3',    # T cells: ~30-50% of lymphoid tissue
-        'B220',   # B cells: ~40-60% of lymphoid follicles
-        'IgD',    # Naive B cells: ~40-60% of B cells in follicles
-    ],
-    
-    # INTERMEDIATE markers (5-20% of cells)
-    'intermediate': [
-        'CD4',    # T helper: ~20-40% of T cells (~10-20% total)
-        'CD8B',   # Cytotoxic T: ~15-30% of T cells (~8-15% total)
-        'CD21',   # Mature B cells + FDCs: ~10-20% (variable by zone)
-        'CD23',   # Follicular B cells + FDC networks: ~10-20%
-        'KI67',   # Proliferating cells: ~5-20% (higher in GC dark zone)
-        'GL7',    # GC B cells: ~5-15% of B cells, similar to BCL6
-    ],
-    
-    # RARE/FUNCTIONAL markers (1-10% of cells)
-    'rare': [
-        'BCL6',   # GC B cells: ~5-15% of B cells, ~2-8% total
-        'AID',    # GC B cells undergoing SHM: ~3-10% of B cells
-        'PD1',    # Tfh cells: ~2-10% of T cells in GC-rich tissue
-        'PNAD',   # High endothelial venules: <1% (structural, not cells)
-    ],
-}
 
 # ============================================================================
 # GATE VALUES (normalized 0-1 scale)
