@@ -1,5 +1,5 @@
 sample_id,group,treatment,timepoint
-JL216_Final, KPT trans, none, 10
-JL217_Final, KPT cis, none, 10
-JL218_Final, KPNT trans, none, 10
-JL219_Final, KPNT cis, none, 10
+SAMPLE1,GroupA,treated,10
+SAMPLE2,GroupA,untreated,10
+SAMPLE3,GroupB,treated,10
+SAMPLE4,GroupB,untreated,10

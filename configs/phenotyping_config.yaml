@@ -1,87 +1,42 @@
 # Phenotyping Configuration
-# Supports positive (+) and negative (-) marker definitions
+# Define cell type gates and thresholding settings for manual_gating.py
 
-# Thresholding methods (in order of preference)
 thresholding:
-  primary_method: "visual_gating"  # SCIMAP napari interface
-  validation_methods: ["otsu", "gmm"]  # Automatic validation
-  consensus_threshold: 0.7  # Agreement needed between methods
-  
-# Global thresholds (will be determined during phenotyping)
-# These are placeholders - actual values determined by algorithm
+  primary_method: "visual_gating"
+  validation_methods: ["otsu", "gmm"]
+  consensus_threshold: 0.7
+
+# Global intensity thresholds (set to null for auto-calculation)
 global_thresholds:
-  dapi: null
-  panck: null
-  cd3: null
-  cd8: null
-  perk: null
-  ninja: null
-  cd45: null
-  ki67: null
+  DAPI: null
+  STRUCTURE_MARKER: null     # primary structure marker
+  IMMUNE_MARKER: null        # pan-immune marker
+  T_CELL_MARKER: null        # T cell marker
+  # add additional markers as needed
 
-# Per-slide threshold overrides (when needed)
-slide_specific_overrides:
-  # Example:
-  # GUEST29:
-  #   perk: 150.0  # Override global threshold for this slide
-  
-# Phenotype definitions with positive/negative markers
+# Per-sample overrides (uncomment and fill in as needed)
+slide_specific_overrides: {}
+  # SAMPLE1:
+  #   STRUCTURE_MARKER: 150.0
+
+# Phenotype definitions
 phenotype_rules:
-  # Tumor populations
-  tumor_all:
-    positive: ["panck"]
+  primary_structure:
+    positive: ["STRUCTURE_MARKER"]
     negative: []
-    description: "All tumor cells (PanCK+)"
-    
-  tumor_perk_pos:
-    positive: ["panck", "perk"]
-    negative: []
-    description: "pERK+ tumor cells"
-    
-  tumor_perk_neg:
-    positive: ["panck"]
-    negative: ["perk"]
-    description: "pERK- tumor cells"
-    
-  tumor_ninja_pos:
-    positive: ["panck", "ninja"]
-    negative: []
-    description: "NINJA+ tumor cells"
-    
-  tumor_ninja_neg:
-    positive: ["panck"]
-    negative: ["ninja"]
-    description: "NINJA- tumor cells"
-    
-  # T cell populations
-  t_cells_all:
-    positive: ["cd3"]
-    negative: []
-    description: "All T cells (CD3+)"
-    
-  t_cells_cd8:
-    positive: ["cd3", "cd8"]
-    negative: []
-    description: "CD8+ T cells"
-    
-  t_cells_cd4:
-    positive: ["cd3"]
-    negative: ["cd8"]
-    description: "CD4+ T cells (CD3+ CD8-)"
-    
-  # Immune populations
-  immune_all:
-    positive: ["cd45"]
-    negative: []
-    description: "All immune cells (CD45+)"
-    
-  immune_non_t:
-    positive: ["cd45"]
-    negative: ["cd3"]
-    description: "Non-T immune cells (CD45+ CD3-)"
+    description: "Primary structure cells"
 
-# Validation settings
+  all_immune:
+    positive: ["IMMUNE_MARKER"]
+    negative: []
+    description: "All immune cells"
+
+  t_cells:
+    positive: ["T_CELL_MARKER"]
+    negative: []
+    description: "All T cells"
+
 validation:
-  min_positive_cells: 10  # Minimum cells required to validate phenotype
-  max_threshold_cv: 0.3   # Maximum coefficient of variation across slides
-  plot_distributions: true  # Generate threshold validation plots
+  min_positive_cells: 10
+  max_threshold_cv: 0.3
+  plot_distributions: true

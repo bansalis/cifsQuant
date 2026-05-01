@@ -107,6 +107,12 @@ class SpatialPermutationTesting:
             self._aggregate_to_sample_level()
             self._run_group_comparisons()
 
+        # Compute background immune clustering as reference distribution
+        try:
+            self._compute_background_immune_clustering()
+        except Exception as e:
+            print(f"  ⚠ Background immune clustering failed: {e}")
+
         self._save_results()
 
         print("\n" + "="*80)
@@ -231,6 +237,8 @@ class SpatialPermutationTesting:
             # Get metadata
             timepoint = sample_obs['timepoint'].iloc[0] if 'timepoint' in sample_obs.columns else np.nan
             group = sample_obs['group'].iloc[0] if 'group' in sample_obs.columns else ''
+            # main_group is the binary KPT/KPNT label (collapses cis/trans sub-categories)
+            main_group = sample_obs['main_group'].iloc[0] if 'main_group' in sample_obs.columns else group
 
             # Get tumor structure IDs for this sample
             struct_ids = sample_obs[self.structure_column].unique()
@@ -264,7 +272,7 @@ class SpatialPermutationTesting:
                 for test in self.tests:
                     result = self._run_single_test(
                         struct_obs, struct_coords, test,
-                        sample, struct_id, timepoint, group,
+                        sample, struct_id, timepoint, group, main_group,
                         sample_obs, sample_coords  # For enrichment tests
                     )
 
@@ -284,23 +292,23 @@ class SpatialPermutationTesting:
             self.results['per_tumor_results'] = pd.DataFrame()
 
     def _run_single_test(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
-                         test: Dict, sample: str, struct_id, timepoint, group,
+                         test: Dict, sample: str, struct_id, timepoint, group, main_group='',
                          sample_obs: pd.DataFrame = None, sample_coords: np.ndarray = None) -> Optional[Dict]:
         """Run a single permutation test on one structure."""
 
         test_type = test['type']
 
         if test_type == 'clustering':
-            return self._test_clustering(struct_obs, struct_coords, test, sample, struct_id, timepoint, group)
+            return self._test_clustering(struct_obs, struct_coords, test, sample, struct_id, timepoint, group, main_group)
         elif test_type == 'colocalization':
-            return self._test_colocalization(struct_obs, struct_coords, test, sample, struct_id, timepoint, group)
+            return self._test_colocalization(struct_obs, struct_coords, test, sample, struct_id, timepoint, group, main_group)
         elif test_type == 'enrichment':
-            return self._test_enrichment(struct_obs, struct_coords, test, sample, struct_id, timepoint, group,
+            return self._test_enrichment(struct_obs, struct_coords, test, sample, struct_id, timepoint, group, main_group,
                                         sample_obs, sample_coords)
         return None
 
     def _test_clustering(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
-                        test: Dict, sample: str, struct_id, timepoint, group) -> Optional[Dict]:
+                        test: Dict, sample: str, struct_id, timepoint, group, main_group='') -> Optional[Dict]:
         """
         Test if marker+ cells form spatial sub-clusters within a tumor structure.
 
@@ -365,6 +373,14 @@ class SpatialPermutationTesting:
             nn_ratio_z = (observed_ratio - null_mean_r) / null_std_r if null_std_r > 0 else 0
             nn_ratio_p = (null_ratio <= observed_ratio).sum() / len(null_ratio)
 
+        # Clark-Evans R statistic: R = observed_mean_NN / expected_mean_NN_under_CSR
+        # expected_mean_NN = 0.5 / sqrt(density), where density = n_positive / approx_area
+        # R < 1 = clustered, R > 1 = dispersed, R = 1 = random
+        clark_evans_r = self._clark_evans_r(struct_coords, marker_status)
+
+        # Moran's I for spatial autocorrelation of the binary marker (range -1 to +1)
+        morans_i = self._morans_i(struct_coords, marker_status)
+
         return {
             'sample_id': sample,
             'structure_id': struct_id,
@@ -382,8 +398,11 @@ class SpatialPermutationTesting:
             'p_value': p_value_nn,
             'nn_ratio_z_score': nn_ratio_z,
             'nn_ratio_p_value': nn_ratio_p,
+            'clark_evans_r': clark_evans_r,
+            'morans_i': morans_i,
             'timepoint': timepoint,
-            'group': group
+            'group': group,
+            'main_group': main_group if main_group else group
         }
 
     def _mean_nn_distance(self, coords: np.ndarray, positive_mask: np.ndarray) -> Optional[float]:
@@ -436,8 +455,102 @@ class SpatialPermutationTesting:
 
         return float(mean_pp / mean_pn)
 
+    def _clark_evans_r(self, coords: np.ndarray, positive_mask: np.ndarray) -> float:
+        """
+        Clark-Evans R statistic for the positive cells.
+
+        R = observed_mean_NN / expected_mean_NN_under_CSR
+        where expected_mean_NN = 0.5 / sqrt(density).
+
+        R < 1: clustered (cells closer together than random)
+        R = 1: complete spatial randomness
+        R > 1: dispersed (cells more evenly spaced than random)
+
+        Uses the convex hull area as the study area estimate.
+        """
+        pos_coords = coords[positive_mask]
+        n_pos = len(pos_coords)
+
+        if n_pos < 10:
+            return np.nan
+
+        tree = cKDTree(pos_coords)
+        dists, _ = tree.query(pos_coords, k=2)
+        observed_mean_nn = float(np.mean(dists[:, 1]))
+
+        # Estimate study area from convex hull
+        try:
+            from scipy.spatial import ConvexHull
+            hull = ConvexHull(pos_coords)
+            area = hull.volume  # In 2D, ConvexHull.volume is the area
+        except Exception:
+            # Fallback: bounding box area
+            area = (pos_coords[:, 0].max() - pos_coords[:, 0].min()) * \
+                   (pos_coords[:, 1].max() - pos_coords[:, 1].min())
+
+        if area <= 0:
+            return np.nan
+
+        density = n_pos / area
+        expected_mean_nn = 0.5 / np.sqrt(density)
+
+        if expected_mean_nn <= 0:
+            return np.nan
+
+        return float(observed_mean_nn / expected_mean_nn)
+
+    def _morans_i(self, coords: np.ndarray, positive_mask: np.ndarray,
+                  k_neighbors: int = 8) -> float:
+        """
+        Moran's I spatial autocorrelation for the binary marker.
+
+        Range: -1 (dispersed) to +1 (clustered), 0 = random.
+        Computed using inverse-distance weights from k-nearest neighbors.
+        """
+        n = len(coords)
+        if n < 20:
+            return np.nan
+
+        # Binary indicator as float
+        x = positive_mask.astype(float)
+        x_mean = np.mean(x)
+        x_dev = x - x_mean
+
+        # Build spatial weights: k-NN inverse distance
+        tree = cKDTree(coords)
+        k = min(k_neighbors, n - 1)
+        dists, indices = tree.query(coords, k=k + 1)  # +1 because self is included
+
+        # Exclude self (first neighbor at distance 0)
+        dists = dists[:, 1:]
+        indices = indices[:, 1:]
+
+        # Inverse distance weights
+        with np.errstate(divide='ignore'):
+            weights = np.where(dists > 0, 1.0 / dists, 0.0)
+
+        # Row-normalise
+        row_sums = weights.sum(axis=1, keepdims=True)
+        row_sums = np.where(row_sums > 0, row_sums, 1.0)
+        weights = weights / row_sums
+
+        # W_total = sum of all weights (after row normalisation = n)
+        W = float(n)
+
+        # Numerator: sum_i sum_j w_ij * (x_i - x_mean) * (x_j - x_mean)
+        numerator = 0.0
+        for i in range(n):
+            for j_idx, j in enumerate(indices[i]):
+                numerator += weights[i, j_idx] * x_dev[i] * x_dev[j]
+
+        denominator = np.sum(x_dev ** 2)
+        if denominator == 0:
+            return np.nan
+
+        return float((n / W) * (numerator / denominator))
+
     def _test_colocalization(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
-                            test: Dict, sample: str, struct_id, timepoint, group) -> Optional[Dict]:
+                            test: Dict, sample: str, struct_id, timepoint, group, main_group='') -> Optional[Dict]:
         """
         Test if two markers spatially co-localize using cross-K function.
 
@@ -484,23 +597,32 @@ class SpatialPermutationTesting:
         p_upper = (null_dist >= observed).sum() / len(null_dist)
         p_value = 2 * min(p_lower, p_upper)
 
+        n_total = len(struct_obs)
+        n_both = int((mask1 & mask2).sum())
+        observed_pct_both = n_both / n_total * 100 if n_total > 0 else 0.0
+        expected_pct_both = (n1 / n_total) * (n2 / n_total) * 100 if n_total > 0 else 0.0
+
         return {
             'sample_id': sample,
             'structure_id': struct_id,
             'test_type': 'colocalization',
             'test_name': test['name'],
             'marker': f'{marker1_col}_vs_{marker2_col}',
-            'n_cells': len(struct_obs),
+            'n_cells': n_total,
             'n_marker1': int(n1),
             'n_marker2': int(n2),
-            'prevalence': (n1 + n2) / (2 * len(struct_obs)),
+            'n_both': n_both,
+            'observed_pct_both': observed_pct_both,
+            'expected_pct_both': expected_pct_both,
+            'prevalence': (n1 + n2) / (2 * n_total),
             'observed': observed,
             'null_mean': null_mean,
             'null_std': null_std,
             'z_score': z_score,
             'p_value': p_value,
             'timepoint': timepoint,
-            'group': group
+            'group': group,
+            'main_group': main_group if main_group else group
         }
 
     def _cross_k(self, coords: np.ndarray, mask1: np.ndarray, mask2: np.ndarray, radius: float) -> Optional[float]:
@@ -517,8 +639,8 @@ class SpatialPermutationTesting:
         return np.mean(counts)
 
     def _test_enrichment(self, struct_obs: pd.DataFrame, struct_coords: np.ndarray,
-                        test: Dict, sample: str, struct_id, timepoint, group,
-                        sample_obs: pd.DataFrame, sample_coords: np.ndarray) -> Optional[Dict]:
+                        test: Dict, sample: str, struct_id, timepoint, group, main_group='',
+                        sample_obs: pd.DataFrame = None, sample_coords: np.ndarray = None) -> Optional[Dict]:
         """
         Test if immune cells are enriched near marker+ tumor cells.
 
@@ -581,7 +703,8 @@ class SpatialPermutationTesting:
             'z_score': z_score,
             'p_value': p_value,
             'timepoint': timepoint,
-            'group': group
+            'group': group,
+            'main_group': main_group if main_group else group
         }
 
     def _enrichment_score(self, tumor_coords: np.ndarray, marker_positive: np.ndarray,
@@ -630,7 +753,22 @@ class SpatialPermutationTesting:
             sample_df['significant'] = sample_df['p_adjusted'] < self.alpha
             corrected.append(sample_df)
 
-        self.results['per_tumor_results'] = pd.concat(corrected, ignore_index=True)
+        df_out = pd.concat(corrected, ignore_index=True)
+
+        # Add prevalence_group (tertile of % positive within each test)
+        if 'prevalence' in df_out.columns:
+            for test_name in df_out['test_name'].unique():
+                idx = df_out['test_name'] == test_name
+                prev = df_out.loc[idx, 'prevalence']
+                if prev.nunique() >= 3:
+                    labels = ['low', 'medium', 'high']
+                    df_out.loc[idx, 'prevalence_group'] = pd.qcut(
+                        prev, q=3, labels=labels, duplicates='drop'
+                    ).astype(str)
+                else:
+                    df_out.loc[idx, 'prevalence_group'] = 'medium'
+
+        self.results['per_tumor_results'] = df_out
 
     def _aggregate_to_sample_level(self):
         """Aggregate per-tumor results to sample level."""
@@ -641,15 +779,17 @@ class SpatialPermutationTesting:
             sample_df = df[df['sample_id'] == sample]
             timepoint = sample_df['timepoint'].iloc[0]
             group = sample_df['group'].iloc[0]
+            main_group = sample_df['main_group'].iloc[0] if 'main_group' in sample_df.columns else group
 
             for test_name in sample_df['test_name'].unique():
                 test_df = sample_df[sample_df['test_name'] == test_name]
                 n_tumors = len(test_df)
                 n_sig = test_df['significant'].sum()
 
-                summaries.append({
+                row = {
                     'sample_id': sample,
                     'group': group,
+                    'main_group': main_group,
                     'timepoint': timepoint,
                     'test_name': test_name,
                     'test_type': test_df['test_type'].iloc[0],
@@ -659,49 +799,181 @@ class SpatialPermutationTesting:
                     'pct_significant': 100 * n_sig / n_tumors if n_tumors > 0 else 0,
                     'mean_z_score': test_df['z_score'].mean(),
                     'median_p_value': test_df['p_value'].median()
-                })
+                }
+                # Aggregate additional metrics if present
+                for extra_col in ('clark_evans_r', 'morans_i', 'nn_ratio_z_score'):
+                    if extra_col in test_df.columns:
+                        row[f'mean_{extra_col}'] = test_df[extra_col].mean()
+                summaries.append(row)
 
         self.results['sample_summary'] = pd.DataFrame(summaries)
         print(f"\n  Aggregated to {len(summaries)} sample-level results")
 
     def _run_group_comparisons(self):
-        """Compare results between groups."""
+        """Compare results between groups using both group and main_group columns."""
         if 'sample_summary' not in self.results:
             return
 
         df = self.results['sample_summary']
-        groups = df['group'].unique()
 
-        if len(groups) < 2:
-            return
+        # Metrics to compare
+        metric_cols = ['mean_z_score']
+        for extra in ('mean_clark_evans_r', 'mean_morans_i', 'mean_nn_ratio_z_score'):
+            if extra in df.columns:
+                metric_cols.append(extra)
 
         comparisons = []
-        for test_name in df['test_name'].unique():
-            test_df = df[df['test_name'] == test_name]
 
-            for g1, g2 in combinations(groups, 2):
-                g1_z = test_df[test_df['group'] == g1]['mean_z_score'].dropna()
-                g2_z = test_df[test_df['group'] == g2]['mean_z_score'].dropna()
+        # Run comparisons on main_group (binary KPT/KPNT) and group (4-category)
+        for group_col in ('main_group', 'group'):
+            if group_col not in df.columns:
+                continue
+            groups = [g for g in df[group_col].dropna().unique() if str(g) != '']
+            if len(groups) < 2:
+                continue
 
-                if len(g1_z) < 2 or len(g2_z) < 2:
-                    continue
+            for test_name in df['test_name'].unique():
+                test_df = df[df['test_name'] == test_name]
 
-                try:
-                    _, p = stats.mannwhitneyu(g1_z, g2_z)
-                except:
-                    continue
-
-                comparisons.append({
-                    'test_name': test_name,
-                    'group1': g1,
-                    'group2': g2,
-                    'mean_z_g1': g1_z.mean(),
-                    'mean_z_g2': g2_z.mean(),
-                    'p_value': p
-                })
+                for g1, g2 in combinations(groups, 2):
+                    row = {
+                        'test_name': test_name,
+                        'comparison_level': group_col,
+                        'group1': g1,
+                        'group2': g2
+                    }
+                    for metric in metric_cols:
+                        if metric not in test_df.columns:
+                            continue
+                        g1_vals = test_df[test_df[group_col] == g1][metric].dropna()
+                        g2_vals = test_df[test_df[group_col] == g2][metric].dropna()
+                        if len(g1_vals) < 2 or len(g2_vals) < 2:
+                            continue
+                        try:
+                            _, p = stats.mannwhitneyu(g1_vals, g2_vals, alternative='two-sided')
+                        except Exception:
+                            continue
+                        row[f'{metric}_g1'] = g1_vals.mean()
+                        row[f'{metric}_g2'] = g2_vals.mean()
+                        row[f'{metric}_p'] = p
+                    if len(row) > 4:  # at least one metric was compared
+                        comparisons.append(row)
 
         if comparisons:
             self.results['group_comparisons'] = pd.DataFrame(comparisons)
+
+    def _compute_background_immune_clustering(self):
+        """
+        Compute clustering statistics for immune cells in background lung tissue
+        (cells where tumor_region_id is -1 or NaN, i.e., outside any tumor boundary).
+
+        Samples K random 500-µm-radius windows centred on background immune cells.
+        Runs the same mean-NN and Clark-Evans R statistics used in the main clustering tests.
+        Results are saved as a reference distribution to compare against intra-tumoral clustering.
+
+        Output: background_immune_clustering.csv
+        """
+        background_config = self.analysis_config.get('background_immune', {})
+        n_windows = background_config.get('n_windows', 20)
+        window_radius = background_config.get('window_radius', 500)
+
+        cd45_col = 'is_CD45_positive'
+        if cd45_col not in self.adata.obs.columns:
+            # Try to find any immune marker
+            immune_candidates = [c for c in self.adata.obs.columns
+                                  if c.startswith('is_') and 'CD45' in c]
+            if not immune_candidates:
+                print("  ⚠ No CD45 column found; skipping background immune clustering")
+                return
+            cd45_col = immune_candidates[0]
+
+        print(f"\n  Computing background immune clustering (using '{cd45_col}')...")
+
+        background_rows = []
+        rng = np.random.default_rng(self.random_seed)
+
+        for sample in self.adata.obs['sample_id'].unique():
+            sample_mask = self.adata.obs['sample_id'] == sample
+            sample_obs = self.adata.obs.loc[sample_mask]
+
+            if 'spatial' in self.adata.obsm:
+                sample_coords = self.adata.obsm['spatial'][sample_mask.values]
+            else:
+                sample_coords = sample_obs[['X_centroid', 'Y_centroid']].values
+
+            # Background = immune cells outside any tumor region
+            if self.structure_column in sample_obs.columns:
+                in_background = (sample_obs[self.structure_column].isna() |
+                                 (sample_obs[self.structure_column] == -1) |
+                                 (sample_obs[self.structure_column].astype(str) == '-1')).values
+            else:
+                in_background = np.ones(len(sample_obs), dtype=bool)
+
+            immune_mask = sample_obs[cd45_col].values.astype(bool) if cd45_col in sample_obs.columns else np.zeros(len(sample_obs), dtype=bool)
+            bg_immune_mask = immune_mask & in_background
+
+            bg_immune_coords = sample_coords[bg_immune_mask]
+
+            if len(bg_immune_coords) < 20:
+                continue
+
+            timepoint = sample_obs['timepoint'].iloc[0] if 'timepoint' in sample_obs.columns else np.nan
+            group = sample_obs['group'].iloc[0] if 'group' in sample_obs.columns else ''
+
+            # Sample K random centres from background immune cells
+            n_centres = min(n_windows, len(bg_immune_coords))
+            centre_indices = rng.choice(len(bg_immune_coords), size=n_centres, replace=False)
+            tree_all = cKDTree(bg_immune_coords)
+
+            for centre_idx in centre_indices:
+                centre = bg_immune_coords[centre_idx]
+
+                # Find all background immune cells within radius
+                within_idx = tree_all.query_ball_point(centre, r=window_radius)
+                window_coords = bg_immune_coords[within_idx]
+
+                n_w = len(window_coords)
+                if n_w < 10:
+                    continue
+
+                # Mean NN distance among cells in window
+                tree_w = cKDTree(window_coords)
+                dists, _ = tree_w.query(window_coords, k=2)
+                mean_nn = float(np.mean(dists[:, 1]))
+
+                # Clark-Evans R for window
+                try:
+                    from scipy.spatial import ConvexHull
+                    hull = ConvexHull(window_coords)
+                    area = hull.volume
+                except Exception:
+                    area = float(window_radius ** 2 * np.pi)
+
+                if area > 0:
+                    density = n_w / area
+                    expected_nn = 0.5 / np.sqrt(density) if density > 0 else np.nan
+                    ce_r = mean_nn / expected_nn if expected_nn and expected_nn > 0 else np.nan
+                else:
+                    ce_r = np.nan
+
+                background_rows.append({
+                    'sample_id': sample,
+                    'window_centre_x': centre[0],
+                    'window_centre_y': centre[1],
+                    'window_radius_um': window_radius,
+                    'n_immune_cells': n_w,
+                    'mean_nn_distance': mean_nn,
+                    'clark_evans_r': ce_r,
+                    'timepoint': timepoint,
+                    'group': group
+                })
+
+        if background_rows:
+            bg_df = pd.DataFrame(background_rows)
+            self.results['background_immune_clustering'] = bg_df
+            print(f"    ✓ Computed background immune clustering: {len(bg_df)} windows across {self.adata.obs['sample_id'].nunique()} samples")
+        else:
+            print("    ⚠ No background immune clustering windows computed")
 
     def _save_results(self):
         """Save all results."""

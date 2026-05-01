@@ -334,12 +334,19 @@ class EnhancedNeighborhoodAnalysis:
                     percent_near_pos = n_near_pos / total_immune * 100 if total_immune > 0 else 0
                     percent_near_neg = n_near_neg / total_immune * 100 if total_immune > 0 else 0
 
+                    # Differential distance: negative = source cells closer to positive zone
+                    if pd.notna(mean_dist_to_pos) and pd.notna(mean_dist_to_neg):
+                        differential = mean_dist_to_pos - mean_dist_to_neg
+                    else:
+                        differential = np.nan
+
                     result[f'{immune_pop}_in_pos_region_count'] = int(n_near_pos)
                     result[f'{immune_pop}_in_pos_region_percent'] = percent_near_pos
                     result[f'{immune_pop}_in_neg_region_count'] = int(n_near_neg)
                     result[f'{immune_pop}_in_neg_region_percent'] = percent_near_neg
                     result[f'{immune_pop}_mean_dist_to_pos'] = mean_dist_to_pos
                     result[f'{immune_pop}_mean_dist_to_neg'] = mean_dist_to_neg
+                    result[f'{immune_pop}_differential_distance'] = differential
 
                 infiltration_results.append(result)
 

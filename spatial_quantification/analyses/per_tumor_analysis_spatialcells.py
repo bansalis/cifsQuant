@@ -100,6 +100,10 @@ class PerTumorAnalysisSpatialCells:
         # Save results
         self._save_results()
 
+        # Generate clean CSV exports
+        print("\n8. Generating clean summary exports...")
+        self._generate_clean_exports()
+
         print("\n✓ Per-tumor analysis complete")
         print(f"  Results saved to: {self.output_dir}/")
         print("="*80 + "\n")
@@ -430,6 +434,81 @@ class PerTumorAnalysisSpatialCells:
             print(f"    ✓ Analyzed spatial heterogeneity for {len(heterogeneity_results)} tumors")
         else:
             print("    ⚠ No heterogeneity results generated")
+
+    def _generate_clean_exports(self):
+        """
+        Generate clean, filterable CSV exports joining per-tumor metrics.
+
+        Produces two outputs:
+          - clean_exports/cell_counts_per_tumor.csv : all tumors, all groups
+          - clean_exports/cell_counts_per_tumor_10wk.csv : KPT + KPNT at 10 weeks
+            (or whichever groups/timepoint are configured)
+
+        Columns include: sample_id, tumor_id, group, timepoint,
+        n_tumor_cells, plus n_<immune_pop>_within_tumor for configured immune pops,
+        plus n_<marker>_positive / percent_<marker>_positive for configured markers.
+        """
+        clean_dir = self.output_dir / 'clean_exports'
+        clean_dir.mkdir(exist_ok=True)
+
+        # Collect base metrics
+        if 'per_tumor_metrics' not in self.results:
+            print("    ⚠ No per_tumor_metrics available, skipping clean export")
+            return
+
+        base = self.results['per_tumor_metrics'].copy()
+
+        # Merge marker percentages
+        if 'per_tumor_marker_percentages' in self.results:
+            mp = self.results['per_tumor_marker_percentages']
+            key_cols = ['sample_id', 'tumor_id']
+            mp_extra = [c for c in mp.columns if c not in base.columns and c not in key_cols]
+            mp_cols = key_cols + mp_extra
+            base = base.merge(mp[mp_cols], on=key_cols, how='left')
+
+        # Merge infiltration counts
+        if 'per_tumor_infiltration' in self.results:
+            inf = self.results['per_tumor_infiltration']
+            key_cols = ['sample_id', 'tumor_id']
+            inf_extra = [c for c in inf.columns if c not in base.columns and c not in key_cols]
+            inf_cols = key_cols + inf_extra
+            base = base.merge(inf[inf_cols], on=key_cols, how='left')
+
+        # Add readable metadata columns from obs if missing.
+        # Priority: group (4-cat), main_group (binary KPT/KPNT), timepoint, treatment.
+        # Do NOT add 'genotype' — that duplicates the 4-category split and confuses exports.
+        for col in ['group', 'main_group', 'timepoint', 'treatment']:
+            if col not in base.columns and col in self.adata.obs.columns:
+                sample_meta = (self.adata.obs[['sample_id', col]]
+                               .drop_duplicates('sample_id')
+                               .reset_index(drop=True))
+                base = base.merge(sample_meta, on='sample_id', how='left')
+
+        # Save full export
+        full_path = clean_dir / 'cell_counts_per_tumor.csv'
+        base.to_csv(full_path, index=False)
+        print(f"    ✓ Saved cell_counts_per_tumor.csv ({len(base)} tumors)")
+
+        # Save filtered export: KPT + KPNT at timepoint 10
+        per_tumor_config = self.config.get('per_tumor_analysis', {})
+        export_groups = per_tumor_config.get('export_groups', ['KPT', 'KPNT'])
+        export_timepoint = per_tumor_config.get('export_timepoint', 10)
+
+        filtered = base.copy()
+        if export_groups:
+            # Use main_group (binary KPT/KPNT) if available, else fall back to group
+            filter_col = 'main_group' if 'main_group' in filtered.columns else 'group'
+            if filter_col in filtered.columns:
+                filtered = filtered[filtered[filter_col].isin(export_groups)]
+        if 'timepoint' in filtered.columns and export_timepoint is not None:
+            filtered = filtered[filtered['timepoint'] == export_timepoint]
+
+        if len(filtered) > 0:
+            filtered_path = clean_dir / 'cell_counts_per_tumor_10wk.csv'
+            filtered.to_csv(filtered_path, index=False)
+            print(f"    ✓ Saved cell_counts_per_tumor_10wk.csv ({len(filtered)} tumors, groups={export_groups})")
+        else:
+            print(f"    ⚠ No tumors matched filter (groups={export_groups}, timepoint={export_timepoint})")
 
     def _save_results(self):
         """Save all results to files."""
