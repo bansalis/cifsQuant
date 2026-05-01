@@ -40,13 +40,19 @@ Raw OME-TIFF images
 
 ## Requirements
 
-| Requirement | Version |
-|---|---|
-| Docker | ≥ 20.x |
-| Nextflow | ≥ 23.10 |
-| Python | ≥ 3.10 |
-| NVIDIA GPU | Recommended for Stage 1 |
-| RAM | ≥ 32 GB recommended |
+| Requirement | Version | Purpose |
+|---|---|---|
+| conda / mamba | any | Python environment management |
+| Docker | ≥ 20.x | Stage 1 segmentation containers |
+| Nextflow | ≥ 23.10 | Stage 1 pipeline orchestration |
+| NVIDIA GPU | any | Recommended for Stage 1 (CPU fallback available) |
+| RAM | ≥ 32 GB | Recommended for large datasets |
+
+**One-command setup** (after installing conda, Docker, Nextflow):
+```bash
+bash setup_environment.sh
+```
+This creates the `cifsquant` conda environment with all Python dependencies and verifies the installation. See `environment.yaml` for the full dependency list.
 
 ---
 
@@ -66,12 +72,19 @@ source activate_mcmicro.sh
 
 **3. Configure your experiment**
 
-Edit these three files:
-- `markers.csv` — list your imaging markers (cycle number + marker name)
-- `sample_metadata.csv` — one row per sample with group, timepoint, and optionally treatment
-- `spatial_quantification/config/spatial_config.yaml` — define phenotypes and enable analyses
+Copy an example and edit it for your study:
+```bash
+cp configs/examples/batch25_tumor_kp/project.yaml project.yaml
+```
 
-See `configs/examples/` for complete real-study examples.
+Edit `project.yaml` — this single file configures all three stages:
+- `markers:` — your imaging panel (channel names → display names)
+- `gating:` — gate thresholds and normalization settings
+- `spatial:` — phenotype definitions and which analyses to run
+
+Also edit `sample_metadata.csv` with your sample IDs, groups, timepoints, and (optionally) treatment.
+
+See `configs/examples/` for complete real-study configurations.
 
 **4. Place your raw images**
 ```
@@ -81,58 +94,68 @@ rawdata/
 └── ...
 ```
 
-**5. Run Stage 1 — Segmentation**
+**5. Run the full pipeline**
 ```bash
-bash run_pipeline.sh
+python run_cifsquant.py --project project.yaml
 ```
-This detects cells in each image and outputs per-cell marker intensities to `results/`.
 
-**6. Run Stage 2 — Cell Gating**
+Or run individual stages:
 ```bash
-python manual_gating.py --results_dir results --n_jobs 8
+python run_cifsquant.py --project project.yaml --stages segmentation  # Stage 1 only
+python run_cifsquant.py --project project.yaml --stages gating spatial # Stages 2+3
+python run_cifsquant.py --project project.yaml --dry-run               # Validate config
 ```
-Output: `manual_gating_output/gated_data.h5ad`
 
-**7. Run Stage 3 — Spatial Analysis**
-```bash
-python spatial_quantification/run_spatial_quantification.py \
-  --config spatial_quantification/config/spatial_config.yaml
-```
-Output: `spatial_quantification_results/`
+Outputs:
+- `manual_gating_output/gated_data.h5ad` — gated cell data
+- `spatial_quantification_results/` — all analysis tables and figures
 
 ---
 
 ## Configuration Guide
 
-### markers.csv
-Define your imaging panel. One row per channel:
-```csv
-cycle,marker_name
-1,DAPI
-2,CD45
-2,CD3
-3,TUMOR_MARKER
+All configuration lives in a single `project.yaml`. Key sections:
+
+### Panel definition
+```yaml
+markers:
+  Cy3_CD3: CD3        # channel_name: display_name
+  Cy5_CD8: CD8
+  DAPI: DAPI
 ```
+`markers.csv` is auto-generated from this — you do not edit it directly.
 
 ### sample_metadata.csv
-One row per sample. Required columns: `sample_id`, `group`. Optional: `timepoint`, `treatment`.
+One row per sample. Required: `sample_id`, `group`. Optional: `timepoint`, `treatment`.
 ```csv
 sample_id,group,treatment,timepoint
 SAMPLE1,GroupA,treated,10
 SAMPLE2,GroupB,untreated,10
 ```
 
-### spatial_config.yaml
-The main analysis configuration. Key sections:
+### Phenotype definitions (`spatial.phenotypes`)
+Define cell populations as marker combinations. The `base:` key restricts to a parent population:
+```yaml
+phenotypes:
+  T_cells:
+    positive: [CD3]
+  CD8_T_cells:
+    base: T_cells
+    positive: [CD8]
+```
 
-- **`phenotypes`** — define cell populations as combinations of positive/negative markers
-- **`per_tumor_analysis`** — detect spatial structures (tumors, follicles) and measure infiltration
+### Analyses (`spatial.*`)
+Each analysis has an `enabled: true/false` toggle. Key analyses:
+
+- **`per_tumor_analysis`** — detect spatial structures (tumors, follicles) and measure infiltration per structure
 - **`population_dynamics`** — compare cell frequencies across groups/timepoints
 - **`spatial_permutation`** — test if spatial patterns exceed chance (500 permutations)
 - **`distance_analysis`** — measure immune cell proximity to structure populations
 - **`cellular_neighborhoods`** — classify cells by their local neighborhood composition
+- **`temporal_analysis`** — longitudinal changes across timepoints
+- **`tumor_microenvironment`** — zonal analysis at contact/close/distal distances from structure boundary
 
-Each analysis has an `enabled: true/false` toggle. Start with the analyses you need and enable more as required.
+Start with `per_tumor_analysis` and `population_dynamics`, then enable more as needed.
 
 ---
 

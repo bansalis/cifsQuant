@@ -1,0 +1,399 @@
+# ============================================================================
+# cifsQuant Project Configuration
+# ============================================================================
+# This is the ONLY file you edit per study. It drives all three pipeline stages:
+#   Stage 1 (Segmentation): Nextflow reads top-level segmentation keys
+#   Stage 2 (Gating):       manual_gating.py reads the 'gating:' section
+#   Stage 3 (Spatial):      run_spatial_quantification.py reads 'spatial:'
+#
+# Usage:
+#   python run_cifsquant.py --project project.yaml              # full pipeline
+#   python run_cifsquant.py --project project.yaml --stages gating spatial
+#   python run_cifsquant.py --project project.yaml --dry-run    # validate only
+#
+# See configs/examples/ for real study configurations.
+# ============================================================================
+
+
+# ============================================================================
+# PANEL DEFINITION
+# ============================================================================
+# channel_name: display_name
+# Channel names must match your microscope output filenames exactly.
+# Display names are used throughout gating and spatial analysis.
+# Order determines cycle assignment in the auto-generated markers.csv.
+
+markers:
+  DAPI: DAPI                # Nuclear stain — not gated, used for orientation
+  Cy3_MARKER1: MARKER1
+  Cy5_MARKER2: MARKER2
+  FITC_MARKER3: MARKER3
+  Cy3_MARKER4: MARKER4
+  Cy5_MARKER5: MARKER5
+  FITC_MARKER6: MARKER6
+
+
+# ============================================================================
+# MARKER HIERARCHY
+# ============================================================================
+# Biological parent-child relationships enforced during gating.
+# Child populations cannot exceed their parent in cell count.
+# Format: child_display_name: parent_display_name
+# Use null if a marker has no biological parent constraint.
+
+marker_hierarchy:
+  MARKER4: MARKER3          # e.g. CD8+ T cells are subset of CD3+ T cells
+  MARKER5: MARKER3          # e.g. CD4+ T cells are subset of CD3+ T cells
+  MARKER1: null             # independent population
+
+
+# ============================================================================
+# STAGE 1: SEGMENTATION
+# ============================================================================
+# These keys are passed directly to Nextflow as params.* via -params-file.
+# Infrastructure settings (containers, compute) stay in nextflow.config.
+
+# Input
+input_image: null           # path to your OME-TIFF or multi-cycle image
+markers_csv: markers.csv    # auto-generated from 'markers:' above; or set path manually
+outdir: ./results
+sample_name: sample
+
+# Tiling
+tile_size: 4096
+overlap: 512
+pyramid_level: 1
+
+# Cellpose — nuclei segmentation
+dapi_channel: 0             # 0-indexed channel for DAPI
+nuc_model: nuclei
+nuc_diameter: 12            # expected nucleus diameter in pixels
+nuc_flow_threshold: 0.3
+nuc_cellprob_threshold: -1.0
+stitch_threshold: 0.0
+
+# Cellpose — cytoplasm segmentation
+cyto_model: cyto2
+cyto_diameter: 28           # expected cell diameter in pixels
+cyto_flow_threshold: 0.2
+cyto_cellprob_threshold: -2.0
+min_cell_size: 15
+cyto_batch_size: 8
+
+# Cytoplasm channel weights (per-channel composite for cytoplasm model)
+# Format: "channel_index:weight,channel_index:weight"
+# Example: "0:0.6,1:0.25,2:0.15" — leave empty for equal weighting
+custom_channel_weights: ''
+
+# Cell QC
+min_cell_area: 20
+max_cell_area: 5000
+max_eccentricity: 0.95
+
+
+# ============================================================================
+# STAGE 2: GATING
+# ============================================================================
+gating:
+
+  # Normalization strategy
+  use_shared_gates: true          # true = one gate per marker across all samples
+  normalization_method: percentile_99   # percentile_99 | zscore | minmax
+
+  # Per-marker gate thresholds (on 0–1 normalized scale)
+  # Set to null to auto-calculate from density estimation
+  # Set to a float (e.g. 0.25) to use a fixed manual gate
+  gates:
+    DAPI: null        # Not gated (nuclear stain)
+    MARKER1: null     # auto-calculate
+    MARKER2: null     # auto-calculate
+    MARKER3: null     # auto-calculate
+    MARKER4: null     # auto-calculate
+    MARKER5: null     # auto-calculate
+    MARKER6: null     # auto-calculate
+
+  # Tile artifact correction
+  # Corrects illumination gradients and tile-boundary intensity steps
+  tile_correction:
+    enabled: true
+    markers: [MARKER1, MARKER2]   # markers prone to tile-level variation (nuclear/dim)
+    bin_size: 400                 # spatial binning in pixels for heatmap
+    peak_distance: 10             # min distance between grid lines (bins)
+    peak_height_percentile: 60    # peak detection threshold
+    min_tiles: 4                  # minimum tiles to proceed with correction
+    min_tile_size: 500            # minimum cells per tile
+    outlier_threshold: 2.5        # MAD units to classify dim/bright tiles
+    n_quantiles: 75               # UniFORM quantile count
+    correction_strength: 1.0      # dim tile correction (0–1; 1.0 = full)
+    bright_correction_strength: 0.8
+    radial_correction: true       # correct within-tile vignetting
+    radial_bins: 5
+    radial_threshold: 0.12        # max deviation to trigger radial correction
+
+  # Liberal gating for rare/dim populations
+  # Increases sensitivity (lower gate) for biologically critical rare cells
+  liberal_gating:
+    enabled: false
+    liberal_markers: []           # list display names of markers to gate liberally
+    liberal_peak_multiplier: 1.75
+    liberal_valley_max_height: 0.3
+    liberal_min_percentile: 85
+    liberal_min_absolute_gate: 0.15
+
+
+# ============================================================================
+# STAGE 3: SPATIAL ANALYSIS
+# ============================================================================
+spatial:
+
+  # ------ INPUT / OUTPUT ------
+  input:
+    gated_data: manual_gating_output/gated_data.h5ad
+    metadata: sample_metadata.csv
+
+  output:
+    base_directory: spatial_quantification_results
+    save_intermediate: true
+    formats: [png]
+    dpi: 300
+
+  # ------ PLOT CUSTOMIZATION ------
+  plotting:
+    font_family: DejaVu Sans
+    font_size: 11
+    title_size: 14
+    show_stats: true
+    stat_method: mann_whitney
+    fdr_correction: true
+    significance_symbols:
+      0.001: '***'
+      0.01: '**'
+      0.05: '*'
+      1.0: ns
+    # One color per unique value in your group column
+    group_colors:
+      GroupA: '#E41A1C'
+      GroupB: '#377EB8'
+      treated: '#4DAF4A'
+      untreated: '#FF7F00'
+
+  # ------ PRIMARY STRUCTURE DEFINITION ------
+  # Define the primary spatial structure in your tissue
+  # (tumors, follicles, germinal centers, etc.)
+  tumor_definition:
+    base_phenotype: Primary_Structure
+    required_positive: [STRUCTURE_MARKER]
+    required_negative: []
+    structure_detection:
+      method: DBSCAN
+      eps: 1000             # µm radius for initial clustering
+      min_samples: 500      # minimum cells to form a cluster
+      min_cluster_size: 250 # minimum cells after pruning
+      boundary_buffer: 100  # µm expansion for boundary
+      use_expanded_boundary: true
+      alpha: 100            # alpha-shape concavity (lower = tighter boundary)
+      min_edges: 20
+      holes_min_edges: 200
+
+  # ------ METADATA ------
+  metadata:
+    sample_column: sample_id
+    group_column: group
+    timepoint_column: timepoint
+    treatment_column: treatment       # omit or leave blank if no treatment dimension
+    additional_groupings: []          # e.g. [genotype, main_group]
+
+  # ------ PHENOTYPE DEFINITIONS ------
+  # Marker names must match display names in the 'markers:' section above.
+  # 'base:' restricts to cells already positive for the parent phenotype.
+  phenotypes:
+
+    Primary_Structure:
+      description: Primary structure cells (tumor, follicle, etc.)
+      positive: [STRUCTURE_MARKER]
+      negative: []
+
+    Structure_Marker1_pos:
+      description: Structure cells positive for Marker1
+      base: Primary_Structure
+      positive: [MARKER1]
+
+    Structure_Marker1_neg:
+      description: Structure cells negative for Marker1
+      base: Primary_Structure
+      negative: [MARKER1]
+
+    All_Immune:
+      description: All immune cells
+      positive: [IMMUNE_MARKER]
+      negative: []
+
+    T_cells:
+      description: T cells
+      positive: [T_CELL_MARKER]
+      negative: []
+
+    CD8_T_cells:
+      description: CD8+ cytotoxic T cells
+      base: T_cells
+      positive: [CD8_MARKER]
+
+    CD4_T_cells:
+      description: CD4+ helper T cells
+      base: T_cells
+      positive: [CD4_MARKER]
+
+  # ------ ANALYSES ------
+  # Set enabled: true to activate each analysis.
+  # All analyses are disabled by default — enable only what you need.
+
+  per_tumor_analysis:
+    enabled: false
+    use_spatialcells: true
+    generate_plots: true
+    generate_spatial_plots: false
+    immune_populations: [All_Immune, T_cells, CD8_T_cells, CD4_T_cells]
+    export_groups: []
+    export_timepoint: null
+    markers:
+      - name: Marker1
+        phenotype: Structure_Marker1_pos
+
+  perk_mfi_analysis:
+    enabled: false
+    marker: MARKER1
+    t_cell_phenotype: CD8_T_cells
+    structure_phenotype: Primary_Structure
+
+  umap_visualization:
+    enabled: false
+    n_components: 2
+    n_neighbors: 15
+    min_dist: 0.1
+    markers_to_show: []
+
+  spatial_permutation:
+    enabled: false
+    generate_plots: true
+    n_permutations: 500
+    structure_column: tumor_structure_id
+    min_cells_per_structure: 50
+    tests:
+      clustering:
+        enabled: true
+        phenotypes: [Primary_Structure, All_Immune]
+      colocalization:
+        enabled: true
+        pairs:
+          - [Structure_Marker1_pos, CD8_T_cells]
+      immune_enrichment:
+        enabled: true
+        source_phenotype: Primary_Structure
+        target_phenotypes: [T_cells, CD8_T_cells]
+    comparisons:
+      - name: GroupA_vs_GroupB
+        column: group
+        groups: [GroupA, GroupB]
+
+  temporal_analysis:
+    enabled: false
+
+  cluster_composition_analysis:
+    enabled: false
+    immune_populations: [All_Immune, T_cells, CD8_T_cells, CD4_T_cells]
+
+  coexpression_analysis:
+    enabled: false
+
+  spatial_overlap_analysis:
+    enabled: false
+
+  population_dynamics:
+    enabled: false
+    populations: []
+    comparisons:
+      - name: GroupA_vs_GroupB
+        column: group
+        groups: [GroupA, GroupB]
+        test_per_timepoint: true
+
+  distance_analysis:
+    enabled: false
+    source_phenotypes: [T_cells, CD8_T_cells]
+    target_phenotypes: [Structure_Marker1_pos, Structure_Marker1_neg]
+
+  distance_permutation_testing:
+    enabled: false
+    generate_plots: true
+    n_permutations: 500
+
+  immune_infiltration:
+    enabled: false
+    use_spatialcells: true
+    immune_populations: [All_Immune, T_cells, CD8_T_cells]
+
+  cellular_neighborhoods:
+    enabled: false
+    k_neighbors: 15
+    n_neighborhoods: 10
+
+  neighborhood_permutation_testing:
+    enabled: false
+    generate_plots: true
+    n_permutations: 500
+
+  enhanced_neighborhoods:
+    enabled: false
+    generate_plots: true
+    marker_phenotypes: [Structure_Marker1_pos, Structure_Marker1_neg]
+
+  tumor_microenvironment:
+    enabled: false
+    generate_plots: true
+    distance_bins: [20, 100, 500]   # µm: contact, close, distal
+    immune_populations: [T_cells, CD8_T_cells]
+
+  pseudotime_analysis:
+    enabled: false
+    generate_plots: true
+
+  marker_region_analysis:
+    enabled: false
+    generate_plots: true
+    markers:
+      - name: Marker1
+        positive_phenotype: Structure_Marker1_pos
+        negative_phenotype: Structure_Marker1_neg
+
+  marker_clustering_analysis:
+    enabled: false
+    generate_plots: true
+
+  # ------ STATISTICS ------
+  statistics:
+    test: mann_whitney
+    fdr_method: benjamini-hochberg
+    alpha: 0.05
+    effect_size: true
+    confidence_intervals: true
+    ci_method: bootstrap
+    n_bootstrap: 1000
+
+  # ------ VISUALIZATION ------
+  visualization:
+    enabled: true
+    spatial_plots: false
+    phenotype_maps: false
+
+  spatial_visualization:
+    enabled: false
+    phenotypes_to_plot: []
+    point_size: 1
+    alpha: 0.6
+
+  # ------ PERFORMANCE ------
+  performance:
+    n_jobs: -1
+    use_kdtree: true
+    chunk_size: 10000
+    memory_efficient: true

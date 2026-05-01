@@ -1,0 +1,414 @@
+# ============================================================================
+# cifsQuant Project Config — Batch 6: KPT/KPNT T-cell Adoptive Transfer
+# ============================================================================
+# Treatment validation study: p14 CD8 adoptive transfer vs untreated controls.
+# Genotypes: KPT (no neoantigen), KPNT cis, KPNT trans.
+# Timepoints: 3 wk (early), 6 wk (KPNT trans only), 8 wk (established).
+# Treatment: p14 (NINJA-specific CD8 transfer) vs none.
+#
+# Panel is smaller than batch25 — no CD45, no NINJA, no F480, no KI67.
+# Unique markers: IFNy, MHC1 (MHC-I), Thy1 (marks transferred p14 cells).
+#
+# Key scientific question: Does p14 adoptive transfer change spatial
+# organization of pERK+ immune-escape zones and CD8 infiltration?
+#
+# Run:
+#   python run_cifsquant.py --project configs/examples/batch6_treatment_validation/project.yaml \
+#                           --stages spatial
+# ============================================================================
+
+
+# ============================================================================
+# PANEL DEFINITION
+# ============================================================================
+markers:
+  Cy3_TOM: TOM         # tdTomato — tumor cell marker (Cre reporter)
+  Cy5_CD3: CD3         # Pan-T cell marker
+  FITC_CC3: CC3        # Cleaved caspase-3 (apoptosis)
+  Cy3_B220: B220       # Pan-B cell marker
+  Cy5_Thy1: Thy1       # T cell marker; enriched in transferred p14 cells
+  FITC_pERK: pERK      # pERK — MAPK pathway activation (immune escape)
+  Cy3_CD8: CD8         # CD8+ cytotoxic T cells
+  Cy5_MHC1: MHC1       # MHC class I (antigen presentation)
+  FITC_ASMA: ASMA      # Alpha-SMA (stroma/fibroblasts)
+  Cy3_IFNy: IFNy       # IFN-gamma (effector cytokine)
+  Cy5_EPCAM: EPCAM     # Epithelial marker
+  FITC_CD4: CD4        # CD4+ helper T cells
+  DAPI: DAPI           # Nuclear stain
+
+
+# ============================================================================
+# MARKER HIERARCHY
+# ============================================================================
+marker_hierarchy:
+  CD8: CD3       # CD8+ T cells are subset of T cells
+  CD4: CD3       # CD4+ T cells are subset of T cells
+  Thy1: CD3      # Thy1+ T cells are subset of T cells
+  IFNy: null     # can be on any cell type
+  CC3: null      # apoptosis marker — any cell
+  pERK: null     # signaling — any cell
+
+
+# ============================================================================
+# STAGE 1: SEGMENTATION
+# ============================================================================
+input_image: null
+markers_csv: configs/examples/batch6_treatment_validation/markers.csv
+outdir: ./results
+sample_name: batch6
+
+tile_size: 4096
+overlap: 512
+pyramid_level: 1
+
+dapi_channel: 12    # DAPI is last channel (0-indexed)
+nuc_model: nuclei
+nuc_diameter: 12
+nuc_flow_threshold: 0.3
+nuc_cellprob_threshold: -1.0
+stitch_threshold: 0.0
+
+cyto_model: cyto2
+cyto_diameter: 28
+cyto_flow_threshold: 0.2
+cyto_cellprob_threshold: -2.0
+min_cell_size: 15
+cyto_batch_size: 8
+
+custom_channel_weights: ''
+
+min_cell_area: 20
+max_cell_area: 5000
+max_eccentricity: 0.95
+
+
+# ============================================================================
+# STAGE 2: GATING
+# ============================================================================
+gating:
+  use_shared_gates: true
+  normalization_method: percentile_99
+
+  gates:
+    TOM: null
+    CD3: null
+    CC3: null
+    B220: null
+    Thy1: null
+    pERK: null
+    CD8: null
+    MHC1: null
+    ASMA: null
+    IFNy: null
+    EPCAM: null
+    CD4: null
+    DAPI: null
+
+  tile_correction:
+    enabled: true
+    markers: [pERK, MHC1, CC3, IFNy]   # dim/nuclear markers most susceptible
+    bin_size: 400
+    peak_distance: 10
+    peak_height_percentile: 60
+    min_tiles: 4
+    min_tile_size: 500
+    outlier_threshold: 2.5
+    n_quantiles: 75
+    correction_strength: 1.0
+    bright_correction_strength: 0.8
+    radial_correction: true
+    radial_bins: 5
+    radial_threshold: 0.12
+
+  liberal_gating:
+    enabled: true
+    # IFNy and CC3 are rare/dim — prefer sensitivity to avoid false negatives
+    liberal_markers: [IFNy, CC3, pERK]
+    liberal_peak_multiplier: 1.75
+    liberal_valley_max_height: 0.3
+    liberal_min_percentile: 85
+    liberal_min_absolute_gate: 0.15
+
+
+# ============================================================================
+# STAGE 3: SPATIAL ANALYSIS
+# ============================================================================
+spatial:
+
+  input:
+    gated_data: manual_gating_output/gated_data.h5ad
+    metadata: configs/examples/batch6_treatment_validation/sample_metadata.csv
+
+  output:
+    base_directory: spatial_quantification_results_batch6
+    save_intermediate: true
+    formats: [png]
+    dpi: 300
+
+  plotting:
+    font_family: DejaVu Sans
+    font_size: 10
+    title_size: 12
+    show_stats: true
+    stat_method: mann_whitney
+    fdr_correction: true
+    significance_symbols:
+      0.001: '***'
+      0.01: '**'
+      0.05: '*'
+      1.0: ns
+    group_colors:
+      KPT: '#E41A1C'
+      KPNT: '#377EB8'
+      p14: '#4DAF4A'
+      none: '#FF7F00'
+
+  # Smaller eps/min_samples than batch25 to detect early (3wk) tumors
+  tumor_definition:
+    base_phenotype: Tumor
+    required_positive: [TOM]
+    required_negative: []
+    structure_detection:
+      method: DBSCAN
+      eps: 800
+      min_samples: 100
+      min_cluster_size: 100
+      boundary_buffer: 100
+      use_expanded_boundary: true
+      alpha: 100
+      min_edges: 20
+      holes_min_edges: 200
+
+  metadata:
+    sample_column: sample_id
+    group_column: group
+    timepoint_column: timepoint
+    treatment_column: treatment      # p14 vs none
+    additional_groupings: [main_group, genotype]
+
+  phenotypes:
+
+    Tumor:
+      description: All tumor cells (TOM+)
+      positive: [TOM]
+
+    pERK_positive_tumor:
+      description: pERK+ tumor cells (MAPK active, immune-escape phenotype)
+      base: Tumor
+      positive: [pERK]
+
+    pERK_negative_tumor:
+      description: pERK- tumor cells
+      base: Tumor
+      negative: [pERK]
+
+    MHC1_positive_tumor:
+      description: MHC-I+ tumor (antigen presentation capable)
+      base: Tumor
+      positive: [MHC1]
+
+    MHC1_negative_tumor:
+      description: MHC-I- tumor (antigen presentation lost — immune escape)
+      base: Tumor
+      negative: [MHC1]
+
+    pERK_MHC1_negative_tumor:
+      description: Dual immune-escape tumor (pERK+, MHC-I-)
+      base: Tumor
+      positive: [pERK]
+      negative: [MHC1]
+
+    EPCAM_positive_tumor:
+      description: Epithelial tumor cells
+      base: Tumor
+      positive: [EPCAM]
+
+    CC3_positive_tumor:
+      description: Apoptotic tumor cells (treatment-induced death)
+      base: Tumor
+      positive: [CC3]
+
+    T_cells:
+      description: All T cells (CD3+)
+      positive: [CD3]
+
+    CD8_T_cells:
+      description: CD8+ cytotoxic T cells
+      positive: [CD3, CD8]
+
+    CD4_T_cells:
+      description: CD4+ helper T cells
+      positive: [CD3, CD4]
+
+    Thy1_T_cells:
+      description: Thy1+ T cells (enriched in transferred p14 cells)
+      positive: [CD3, Thy1]
+
+    IFNy_CD8_T_cells:
+      description: IFNy-producing CD8 T cells (effector/activated)
+      positive: [CD3, CD8, IFNy]
+
+    IFNy_T_cells:
+      description: IFNy-producing T cells (all CD3+IFNy+)
+      positive: [CD3, IFNy]
+
+    B_cells:
+      description: B cells (B220+)
+      positive: [B220]
+
+  per_tumor_analysis:
+    enabled: true
+    use_spatialcells: true
+    generate_plots: true
+    generate_spatial_plots: false
+    immune_populations:
+      - T_cells
+      - CD8_T_cells
+      - CD4_T_cells
+      - Thy1_T_cells
+      - IFNy_CD8_T_cells
+      - IFNy_T_cells
+      - B_cells
+    export_groups: [KPT, KPNT]
+    export_timepoint: null   # export all timepoints
+    markers:
+      - {name: pERK, phenotype: pERK_positive_tumor}
+      - {name: MHC1, phenotype: MHC1_positive_tumor}
+      - {name: CC3, phenotype: CC3_positive_tumor}
+      - {name: EPCAM, phenotype: EPCAM_positive_tumor}
+      - {name: pERK_MHC1_neg, phenotype: pERK_MHC1_negative_tumor}
+
+  population_dynamics:
+    enabled: true
+    populations:
+      - Tumor
+      - pERK_positive_tumor
+      - pERK_negative_tumor
+      - MHC1_positive_tumor
+      - MHC1_negative_tumor
+      - pERK_MHC1_negative_tumor
+      - EPCAM_positive_tumor
+      - CC3_positive_tumor
+      - T_cells
+      - CD8_T_cells
+      - CD4_T_cells
+      - Thy1_T_cells
+      - IFNy_CD8_T_cells
+      - IFNy_T_cells
+      - B_cells
+    comparisons:
+      - name: KPT_vs_KPNT
+        column: main_group
+        groups: [KPT, KPNT]
+        test_per_timepoint: true
+      - name: treated_vs_untreated
+        column: treatment
+        groups: [p14, none]
+        test_per_timepoint: true
+
+  distance_analysis:
+    enabled: true
+    source_phenotypes: [CD8_T_cells, Thy1_T_cells, IFNy_CD8_T_cells]
+    target_phenotypes:
+      - Tumor
+      - pERK_positive_tumor
+      - pERK_negative_tumor
+      - MHC1_positive_tumor
+      - MHC1_negative_tumor
+
+  immune_infiltration:
+    enabled: true
+    use_spatialcells: true
+    immune_populations: [T_cells, CD8_T_cells, CD4_T_cells, Thy1_T_cells, IFNy_CD8_T_cells, B_cells]
+
+  spatial_permutation:
+    enabled: true
+    generate_plots: true
+    n_permutations: 500
+    structure_column: tumor_structure_id
+    min_cells_per_structure: 20
+    tests:
+      clustering:
+        enabled: true
+        phenotypes: [Tumor, T_cells]
+      colocalization:
+        enabled: true
+        pairs:
+          - [pERK_positive_tumor, CD8_T_cells]
+          - [MHC1_negative_tumor, CD8_T_cells]
+      immune_enrichment:
+        enabled: true
+        source_phenotype: pERK_positive_tumor
+        target_phenotypes: [CD8_T_cells, Thy1_T_cells, IFNy_CD8_T_cells]
+    comparisons:
+      - name: treated_vs_untreated
+        column: treatment
+        groups: [p14, none]
+
+  temporal_analysis:
+    enabled: true   # 3 wk, 6 wk, 8 wk timepoints
+
+  tumor_microenvironment:
+    enabled: true
+    generate_plots: true
+    distance_bins: [20, 100, 500]
+    immune_populations: [T_cells, CD8_T_cells, Thy1_T_cells, IFNy_CD8_T_cells]
+
+  marker_region_analysis:
+    enabled: true
+    generate_plots: true
+    markers:
+      - name: pERK
+        positive_phenotype: pERK_positive_tumor
+        negative_phenotype: pERK_negative_tumor
+      - name: MHC1
+        positive_phenotype: MHC1_positive_tumor
+        negative_phenotype: MHC1_negative_tumor
+
+  # No CD45 in panel, no macrophage markers, no proliferation marker
+  # These analyses are disabled because required markers are absent
+  coexpression_analysis:
+    enabled: false
+  umap_visualization:
+    enabled: false
+  pseudotime_analysis:
+    enabled: false
+  cellular_neighborhoods:
+    enabled: false
+  neighborhood_permutation_testing:
+    enabled: false
+  enhanced_neighborhoods:
+    enabled: false
+  distance_permutation_testing:
+    enabled: false
+  cluster_composition_analysis:
+    enabled: false
+  marker_clustering_analysis:
+    enabled: false
+  spatial_overlap_analysis:
+    enabled: false
+  perk_mfi_analysis:
+    enabled: false
+
+  statistics:
+    test: mann_whitney
+    fdr_method: benjamini-hochberg
+    alpha: 0.05
+    effect_size: true
+    confidence_intervals: true
+    ci_method: bootstrap
+    n_bootstrap: 1000
+
+  visualization:
+    enabled: true
+    spatial_plots: false
+    phenotype_maps: false
+
+  spatial_visualization:
+    enabled: false
+
+  performance:
+    n_jobs: -1
+    use_kdtree: true
+    chunk_size: 10000
+    memory_efficient: true

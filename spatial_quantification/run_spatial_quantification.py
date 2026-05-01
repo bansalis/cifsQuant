@@ -33,9 +33,16 @@ from spatial_quantification.visualization import PlotManager
 
 
 def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file and resolve paths."""
+    """
+    Load configuration from YAML and resolve paths.
+    Accepts either a standalone spatial_config.yaml or a project.yaml
+    (which has the spatial analysis config nested under a 'spatial:' key).
+    """
     with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+        raw = yaml.safe_load(f)
+
+    # project.yaml has spatial config under 'spatial:' key
+    config = raw.get('spatial', raw)
 
     project_root = Path(__file__).parent.parent
 

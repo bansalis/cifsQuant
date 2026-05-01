@@ -1,0 +1,457 @@
+# ============================================================================
+# cifsQuant Project Config — Batch 25: KPT/KPNT Lung Tumor (Single Timepoint)
+# ============================================================================
+# KP (Kras/p53) lung tumor model. 4 samples: KPT-cis, KPT-trans, KPNT-cis, KPNT-trans.
+# Single timepoint (week 10). TOM+ labels tumor cells. Full 23-marker cycIF panel.
+#
+# Run:
+#   python run_cifsquant.py --project configs/examples/batch25_tumor_kp/project.yaml \
+#                           --stages spatial
+# ============================================================================
+
+
+# ============================================================================
+# PANEL DEFINITION
+# ============================================================================
+markers:
+  R1.0.1_CY3: TOM              # tdTomato — marks KP tumor cells (Cre reporter)
+  R1.0.4_CY5_CD45: CD45        # Pan-immune marker
+  R1.0.4_CY7_AGFP: NINJA       # NINJA reporter (AGFP) — marks Ras-active cells
+  R1.0.4_DAPI: DAPI            # Nuclear stain
+  R2.0.4_CY3_PERK: PERK        # pERK — MAPK pathway activation
+  R2.0.4_CY5_CD4: CD4          # CD4+ helper T cells
+  R2.0.4_CY7_EPCAM: EPCAM      # Epithelial cell marker
+  R2.0.4_FITC_B220: B220       # Pan-B cell marker
+  R3.0.4_CY3_CD3E: CD3E        # Pan-T cell marker
+  R3.0.4_CY5_F480: F480        # Macrophage marker (F4/80)
+  R3.0.4_CY7_TTF1: TTF1        # Lung lineage transcription factor
+  R4.0.4_CY3_PD: PDL1          # PD-L1 checkpoint ligand
+  R4.0.4_CY5_CD8A: CD8A        # CD8+ cytotoxic T cells
+  R4.0.4_FITC_ASMA: ASMA       # Alpha-smooth muscle actin (fibroblasts/stroma)
+  R5.0.4_CY3_GZMB: GZMB        # Granzyme B — cytotoxic activity
+  R5.0.4_CY5_KLRG1: KLRG1      # NK/T cell terminal differentiation marker
+  R5.0.4_FITC_FOXP3: FOXP3     # Regulatory T cell marker
+  R6.0.4_CY3_PD1: PD1          # T cell exhaustion marker
+  R6.0.4_CY5_NAK: NAK          # IKKε kinase (innate immune signaling)
+  R6.0.4_CY7_KI67: KI67        # Proliferation marker
+  R6.0.4_FITC_MHCII: MHCII     # MHC class II (antigen presentation)
+  R7.0.4_CY3_BCL6: BCL6        # GC B cell transcription factor
+  R7.0.4_CY5_CC3: CC3          # Cleaved caspase-3 (apoptosis)
+  R7.0.4_FITC_CD103: CD103     # Tissue-resident T cells
+
+
+# ============================================================================
+# MARKER HIERARCHY
+# ============================================================================
+marker_hierarchy:
+  CD4: CD3E       # CD4+ T helpers are subset of T cells
+  CD8A: CD3E      # CD8+ cytotoxic T cells are subset of T cells
+  PD1: CD3E       # PD1+ T cells are subset of T cells
+  FOXP3: CD4      # Tregs are subset of CD4+ T cells
+  GZMB: CD8A      # Granzyme B marks cytotoxic CD8s
+  BCL6: B220      # GC B cells are subset of B cells
+  KI67: null      # proliferation — any cell type
+  CC3: null       # apoptosis — any cell type
+  PERK: null      # signaling — any cell type
+  NINJA: null     # reporter — any cell type
+
+
+# ============================================================================
+# STAGE 1: SEGMENTATION
+# ============================================================================
+input_image: null
+markers_csv: configs/examples/batch25_tumor_kp/markers.csv
+outdir: ./results
+sample_name: batch25
+
+tile_size: 4096
+overlap: 512
+pyramid_level: 1
+
+dapi_channel: 3     # DAPI is 4th channel in this panel (0-indexed)
+nuc_model: nuclei
+nuc_diameter: 12
+nuc_flow_threshold: 0.3
+nuc_cellprob_threshold: -1.0
+stitch_threshold: 0.0
+
+cyto_model: cyto2
+cyto_diameter: 28
+cyto_flow_threshold: 0.2
+cyto_cellprob_threshold: -2.0
+min_cell_size: 15
+cyto_batch_size: 8
+
+# TOM channel weighted heavily for cytoplasm (tumor cell identification)
+custom_channel_weights: '0:0.7,1:0.15,4:0.15'
+
+min_cell_area: 20
+max_cell_area: 5000
+max_eccentricity: 0.95
+
+
+# ============================================================================
+# STAGE 2: GATING
+# ============================================================================
+gating:
+  use_shared_gates: true
+  normalization_method: percentile_99
+
+  gates:
+    TOM: null      # auto — robust bimodal distribution
+    CD45: null
+    NINJA: null
+    DAPI: null
+    PERK: null
+    CD4: null
+    EPCAM: null
+    B220: null
+    CD3E: null
+    F480: null
+    TTF1: null
+    PDL1: null
+    CD8A: null
+    ASMA: null
+    GZMB: null
+    KLRG1: null
+    FOXP3: null
+    PD1: null
+    NAK: null
+    KI67: null
+    MHCII: null
+    BCL6: null
+    CC3: null
+    CD103: null
+
+  tile_correction:
+    enabled: true
+    markers: [PERK, NINJA, KI67, BCL6, CC3, MHCII, FOXP3]
+    bin_size: 400
+    peak_distance: 10
+    peak_height_percentile: 60
+    min_tiles: 4
+    min_tile_size: 500
+    outlier_threshold: 2.5
+    n_quantiles: 75
+    correction_strength: 1.0
+    bright_correction_strength: 0.8
+    radial_correction: true
+    radial_bins: 5
+    radial_threshold: 0.12
+
+  liberal_gating:
+    enabled: false
+    liberal_markers: []
+
+
+# ============================================================================
+# STAGE 3: SPATIAL ANALYSIS
+# ============================================================================
+spatial:
+
+  input:
+    gated_data: manual_gating_output/gated_data.h5ad
+    metadata: configs/examples/batch25_tumor_kp/sample_metadata.csv
+
+  output:
+    base_directory: spatial_quantification_results_batch25
+    save_intermediate: true
+    formats: [png]
+    dpi: 300
+
+  plotting:
+    font_family: DejaVu Sans
+    font_size: 11
+    title_size: 14
+    show_stats: true
+    stat_method: mann_whitney
+    fdr_correction: true
+    significance_symbols:
+      0.001: '***'
+      0.01: '**'
+      0.05: '*'
+      1.0: ns
+    group_colors:
+      KPT: '#E41A1C'
+      KPNT: '#377EB8'
+      cis: '#4DAF4A'
+      trans: '#FF7F00'
+
+  tumor_definition:
+    base_phenotype: Tumor
+    required_positive: [TOM]
+    required_negative: []
+    structure_detection:
+      method: DBSCAN
+      eps: 1000
+      min_samples: 500
+      min_cluster_size: 250
+      boundary_buffer: 100
+      use_expanded_boundary: true
+      alpha: 100
+      min_edges: 20
+      holes_min_edges: 200
+
+  metadata:
+    sample_column: sample_id
+    group_column: group
+    timepoint_column: timepoint
+    additional_groupings: [genotype, main_group]
+
+  phenotypes:
+
+    Tumor:
+      description: All tumor cells (TOM+)
+      positive: [TOM]
+
+    pERK_positive_tumor:
+      description: pERK+ tumor cells (MAPK active)
+      base: Tumor
+      positive: [PERK]
+
+    pERK_negative_tumor:
+      description: pERK- tumor cells
+      base: Tumor
+      negative: [PERK]
+
+    NINJA_positive_tumor:
+      description: NINJA+ (Ras-active) tumor
+      base: Tumor
+      positive: [NINJA]
+
+    NINJA_negative_tumor:
+      description: NINJA- tumor
+      base: Tumor
+      negative: [NINJA]
+
+    Ki67_positive_tumor:
+      description: Proliferating tumor cells
+      base: Tumor
+      positive: [KI67]
+
+    PDL1_positive_tumor:
+      description: PD-L1+ tumor (checkpoint)
+      base: Tumor
+      positive: [PDL1]
+
+    EPCAM_positive_tumor:
+      description: Epithelial tumor cells
+      base: Tumor
+      positive: [EPCAM]
+
+    TTF1_positive_tumor:
+      description: TTF1+ lung lineage tumor
+      base: Tumor
+      positive: [TTF1]
+
+    CC3_positive_tumor:
+      description: Apoptotic tumor cells
+      base: Tumor
+      positive: [CC3]
+
+    MHCII_positive_tumor:
+      description: MHCII+ tumor (antigen presenting)
+      base: Tumor
+      positive: [MHCII]
+
+    pERK_NINJA_positive_tumor:
+      description: Double-positive pERK+/NINJA+ tumor
+      base: Tumor
+      positive: [PERK, NINJA]
+
+    CD45_positive:
+      description: All immune cells
+      positive: [CD45]
+
+    T_cells:
+      description: All T cells
+      positive: [CD3E]
+
+    CD8_T_cells:
+      description: CD8+ cytotoxic T cells
+      positive: [CD3E, CD8A]
+
+    CD4_T_cells:
+      description: CD4+ helper T cells
+      positive: [CD3E, CD4]
+
+    CD4_Tregs:
+      description: Regulatory T cells
+      positive: [CD3E, CD4, FOXP3]
+
+    PD1_positive_CD8:
+      description: Exhausted/activated CD8+ T cells
+      positive: [CD3E, CD8A, PD1]
+
+    Macrophages:
+      description: All macrophages
+      positive: [F480]
+
+    MHCII_pos_macrophages:
+      description: M1-like anti-tumor macrophages
+      positive: [F480, MHCII]
+
+    MHCII_neg_macrophages:
+      description: M2-like pro-tumor macrophages
+      positive: [F480]
+      negative: [MHCII]
+
+    B_cells:
+      description: B cells
+      positive: [B220]
+
+  per_tumor_analysis:
+    enabled: true
+    use_spatialcells: true
+    generate_plots: true
+    generate_spatial_plots: false
+    immune_populations:
+      - CD45_positive
+      - T_cells
+      - CD8_T_cells
+      - CD4_T_cells
+      - CD4_Tregs
+      - PD1_positive_CD8
+      - Macrophages
+      - MHCII_pos_macrophages
+      - MHCII_neg_macrophages
+      - B_cells
+    export_groups: [KPT, KPNT]
+    export_timepoint: 10
+    markers:
+      - {name: pERK, phenotype: pERK_positive_tumor}
+      - {name: NINJA, phenotype: NINJA_positive_tumor}
+      - {name: Ki67, phenotype: Ki67_positive_tumor}
+      - {name: EPCAM, phenotype: EPCAM_positive_tumor}
+      - {name: TTF1, phenotype: TTF1_positive_tumor}
+      - {name: PDL1, phenotype: PDL1_positive_tumor}
+      - {name: CC3, phenotype: CC3_positive_tumor}
+      - {name: MHCII, phenotype: MHCII_positive_tumor}
+
+  perk_mfi_analysis:
+    enabled: true
+    marker: PERK
+    t_cell_phenotype: CD8_T_cells
+    structure_phenotype: Tumor
+
+  population_dynamics:
+    enabled: true
+    populations:
+      - Tumor
+      - pERK_positive_tumor
+      - pERK_negative_tumor
+      - NINJA_positive_tumor
+      - NINJA_negative_tumor
+      - Ki67_positive_tumor
+      - PDL1_positive_tumor
+      - EPCAM_positive_tumor
+      - TTF1_positive_tumor
+      - CC3_positive_tumor
+      - MHCII_positive_tumor
+      - CD45_positive
+      - T_cells
+      - CD8_T_cells
+      - CD4_T_cells
+      - CD4_Tregs
+      - PD1_positive_CD8
+      - Macrophages
+      - MHCII_pos_macrophages
+      - MHCII_neg_macrophages
+      - B_cells
+    comparisons:
+      - name: KPT_vs_KPNT
+        column: main_group
+        groups: [KPT, KPNT]
+        test_per_timepoint: false
+
+  distance_analysis:
+    enabled: true
+    within_tumor_only: true
+    k_neighbors: 5
+    max_distance: 500
+    source_phenotypes: [CD8_T_cells, T_cells]
+    target_phenotypes:
+      - Tumor
+      - pERK_positive_tumor
+      - pERK_negative_tumor
+      - NINJA_positive_tumor
+      - NINJA_negative_tumor
+
+  immune_infiltration:
+    enabled: true
+    use_spatialcells: true
+    immune_populations: [CD45_positive, T_cells, CD8_T_cells, CD4_T_cells, Macrophages]
+
+  spatial_permutation:
+    enabled: false
+    generate_plots: true
+    n_permutations: 500
+    structure_column: tumor_structure_id
+    min_cells_per_structure: 50
+    tests:
+      clustering:
+        enabled: true
+        phenotypes: [Tumor, CD45_positive]
+      colocalization:
+        enabled: true
+        pairs:
+          - [pERK_positive_tumor, CD8_T_cells]
+      immune_enrichment:
+        enabled: true
+        source_phenotype: Tumor
+        target_phenotypes: [T_cells, CD8_T_cells]
+    comparisons:
+      - name: KPT_vs_KPNT
+        column: main_group
+        groups: [KPT, KPNT]
+
+  temporal_analysis:
+    enabled: false   # single timepoint study
+
+  coexpression_analysis:
+    enabled: false
+  spatial_overlap_analysis:
+    enabled: false
+  cellular_neighborhoods:
+    enabled: false
+  neighborhood_permutation_testing:
+    enabled: false
+  enhanced_neighborhoods:
+    enabled: false
+  tumor_microenvironment:
+    enabled: false
+  pseudotime_analysis:
+    enabled: false
+  marker_region_analysis:
+    enabled: false
+  marker_clustering_analysis:
+    enabled: false
+  umap_visualization:
+    enabled: false
+  distance_permutation_testing:
+    enabled: false
+  cluster_composition_analysis:
+    enabled: false
+
+  statistics:
+    test: mann_whitney
+    fdr_method: benjamini-hochberg
+    alpha: 0.05
+    effect_size: true
+    confidence_intervals: true
+    ci_method: bootstrap
+    n_bootstrap: 1000
+
+  visualization:
+    enabled: true
+    spatial_plots: false
+    phenotype_maps: false
+
+  spatial_visualization:
+    enabled: false
+
+  performance:
+    n_jobs: -1
+    use_kdtree: true
+    chunk_size: 10000
+    memory_efficient: true

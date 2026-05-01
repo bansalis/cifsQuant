@@ -3,14 +3,15 @@
 Manual Gating Pipeline with Config-Based Gates
 Percentile normalization enables shared gates across samples
 
-slow complete
-python manual_gating.py --results_dir results --n_jobs 16
+standalone:
+  python manual_gating.py --results_dir results --n_jobs 16
 
-Or explicitly skip normalization
-python manual_gating.py --results_dir results --skip_normalization
+via orchestrator (recommended):
+  python run_cifsquant.py --stages gating --project project.yaml
 
-rerun all
-python manual_gating.py --results_dir results --force_normalization --n_jobs 15
+load from checkpoint:
+  python manual_gating.py --results_dir results --skip_normalization
+  python manual_gating.py --results_dir results --force_normalization --n_jobs 15
 """
 
 import pandas as pd
@@ -26,6 +27,7 @@ import warnings
 warnings.filterwarnings('ignore')
 from sklearn.mixture import GaussianMixture
 import argparse
+import yaml
 from scipy.signal import argrelextrema
 
 # ============================================================================
@@ -167,6 +169,60 @@ LIBERAL_GATING_CONFIG = {
     'liberal_min_absolute_gate': 0.15,   # Reduced from 0.15 (allow lower absolute gates)
 }
 # ============================================================================
+
+
+def load_project_config(project_yaml_path: str):
+    """
+    Load gating configuration from a project.yaml and override module-level globals.
+    Called by main() when --project flag is provided.
+    """
+    global MARKERS, MARKER_HIERARCHY, GATES, TILE_CORRECTION_CONFIG, \
+           LIBERAL_GATING_CONFIG, USE_SHARED_GATES, NORMALIZATION_METHOD
+
+    with open(project_yaml_path) as f:
+        project = yaml.safe_load(f)
+
+    print(f"\nLoading configuration from: {project_yaml_path}")
+
+    # Panel definition
+    if 'markers' in project:
+        MARKERS = {k: v for k, v in project['markers'].items()}
+        print(f"  Panel: {len(MARKERS)} markers")
+
+    if 'marker_hierarchy' in project:
+        MARKER_HIERARCHY = {k: v for k, v in project['marker_hierarchy'].items()}
+
+    gating = project.get('gating', {})
+
+    if 'use_shared_gates' in gating:
+        USE_SHARED_GATES = gating['use_shared_gates']
+
+    if 'normalization_method' in gating:
+        NORMALIZATION_METHOD = gating['normalization_method']
+
+    if 'gates' in gating:
+        GATES = {k: v for k, v in gating['gates'].items()}
+
+    if 'tile_correction' in gating:
+        tc = gating['tile_correction']
+        TILE_CORRECTION_CONFIG.update(tc)
+        if 'enabled' in tc:
+            TILE_CORRECTION_CONFIG['enabled'] = tc['enabled']
+
+    if 'liberal_gating' in gating:
+        lg = gating['liberal_gating']
+        LIBERAL_GATING_CONFIG.update(lg)
+        if 'enabled' in lg:
+            LIBERAL_GATING_CONFIG['enabled'] = lg['enabled']
+
+    print(f"  Gates: {len(GATES)} markers configured")
+    print(f"  Shared gates: {USE_SHARED_GATES}")
+    print(f"  Normalization: {NORMALIZATION_METHOD}")
+    if TILE_CORRECTION_CONFIG.get('enabled'):
+        print(f"  Tile correction: enabled ({len(TILE_CORRECTION_CONFIG.get('markers', []))} markers)")
+    if LIBERAL_GATING_CONFIG.get('enabled'):
+        print(f"  Liberal gating: {LIBERAL_GATING_CONFIG.get('liberal_markers', [])}")
+
 
 def load_and_combine(results_dir):
     """Load all samples into single AnnData"""
@@ -3119,6 +3175,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--results_dir', required=True)
     parser.add_argument('--output_dir', default='manual_gating_output')
+    parser.add_argument('--project', default=None,
+                        help='Path to project.yaml to load panel/gating config from')
     parser.add_argument('--n_jobs', type=int, default=8)
     parser.add_argument('--tile_config', default='tile_config.json')
     parser.add_argument('--redetect_tiles', action='store_true')
@@ -3129,6 +3187,9 @@ def main():
     parser.add_argument('--skip_cross_sample', action='store_true',
                    help='Skip cross-sample normalization (preserve biological differences)')
     args = parser.parse_args()
+
+    if args.project:
+        load_project_config(args.project)
     
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)

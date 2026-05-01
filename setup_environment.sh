@@ -1,160 +1,217 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ============================================================================
+# cifsQuant Environment Setup
+# ============================================================================
+# Sets up everything needed to run cifsQuant on a fresh workstation.
+# Run once after cloning the repository:
+#
+#   bash setup_environment.sh
+#
+# Prerequisites (install these before running this script):
+#   - conda or mamba  (https://docs.conda.io/en/latest/miniconda.html)
+#   - Docker          (https://docs.docker.com/engine/install/)
+#   - Nextflow        (https://nextflow.io — for Stage 1 segmentation only)
+#   - NVIDIA drivers  (recommended for GPU-accelerated segmentation)
+#
+# What this script does:
+#   1. Checks prerequisites
+#   2. Creates the 'cifsquant' conda environment from environment.yaml
+#   3. Installs SpatialCells from source
+#   4. Verifies all imports work
+# ============================================================================
 
-# MCMICRO Tiled Processor - Environment Setup
-# ===========================================
+set -e
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Setting up Python environment for MCMICRO Tiled Processor..."
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+
+ok()   { echo -e "${GREEN}  ✓${NC} $1"; }
+warn() { echo -e "${YELLOW}  ⚠${NC} $1"; }
+err()  { echo -e "${RED}  ✗${NC} $1"; }
+
+echo ""
+echo "=============================================="
+echo " cifsQuant Environment Setup"
+echo "=============================================="
 echo ""
 
-# Check if we're in the right directory
-if [[ ! -f "requirements.txt" ]]; then
-    echo "Error: requirements.txt not found in current directory"
-    echo "Make sure you're in the directory with the MCMICRO tiled processor files"
+
+# ─────────────────────────────────────────────────────────
+# 1. CHECK PREREQUISITES
+# ─────────────────────────────────────────────────────────
+echo "[1/4] Checking prerequisites..."
+
+if command -v mamba &>/dev/null; then
+    CONDA_CMD=mamba; ok "mamba found (faster installs)"
+elif command -v conda &>/dev/null; then
+    CONDA_CMD=conda; ok "conda found"
+else
+    err "conda not found. Install Miniconda: https://docs.conda.io/en/latest/miniconda.html"
     exit 1
 fi
 
-# Install system dependencies first
-echo "1. Installing system dependencies..."
-echo "   (You may be prompted for sudo password)"
-
-# Update package list
-sudo apt update
-
-# Install Python 3 and venv if not already installed
-sudo apt install -y python3-full python3-pip python3-venv
-
-# Install system-level packages that are often needed
-sudo apt install -y python3-dev build-essential libhdf5-dev pkg-config
-
-echo "✓ System dependencies installed"
-echo ""
-
-# Create virtual environment
-echo "2. Creating Python virtual environment..."
-python3 -m venv mcmicro_env
-
-echo "✓ Virtual environment created: mcmicro_env/"
-echo ""
-
-# Activate virtual environment and install packages
-echo "3. Activating environment and installing Python packages..."
-source mcmicro_env/bin/activate
-
-# Upgrade pip in the virtual environment
-pip install --upgrade pip setuptools wheel
-
-# Install core scientific packages first (these often have conflicts)
-echo "   Installing core scientific packages..."
-pip install numpy pandas
-
-# Install image processing packages
-echo "   Installing image processing packages..."
-pip install tifffile scikit-image scipy matplotlib seaborn tqdm
-
-# Install machine learning packages
-echo "   Installing machine learning packages..."
-pip install scikit-learn joblib
-
-# Try to install spatial analysis packages (these might fail on some systems)
-echo "   Installing spatial analysis packages..."
-pip install anndata || echo "   Warning: anndata installation failed - you may need to install manually"
-
-# Try to install SCIMAP (this often has dependency issues)
-echo "   Attempting SCIMAP installation..."
-pip install scimap || echo "   Warning: scimap installation failed - see alternative installation below"
-
-# Install scanpy as backup for spatial analysis
-pip install scanpy || echo "   Warning: scanpy installation failed"
-
-echo "✓ Python packages installed"
-echo ""
-
-# Test the installation
-echo "4. Testing installation..."
-python3 -c "
-import numpy as np
-import pandas as pd
-import tifffile
-import matplotlib.pyplot as plt
-from skimage import segmentation
-import scipy
-print('✓ Core packages working')
-
-try:
-    import anndata
-    print('✓ anndata working')
-except ImportError:
-    print('⚠ anndata not available')
-
-try:
-    import scimap
-    print('✓ scimap working')
-except ImportError:
-    print('⚠ scimap not available - see installation notes below')
-
-try:
-    import scanpy
-    print('✓ scanpy working')  
-except ImportError:
-    print('⚠ scanpy not available')
-"
-
-echo ""
-echo "5. Environment setup complete!"
-echo ""
-echo "To use this environment:"
-echo "========================"
-echo "# Activate the environment:"
-echo "source mcmicro_env/bin/activate"
-echo ""
-echo "# Run your pipeline:"
-echo "python mcmicro_tiled_processor.py --input your_image.tiff --output results"
-echo ""
-echo "# Deactivate when done:"
-echo "deactivate"
-echo ""
-
-# Create activation script for convenience
-cat > activate_mcmicro.sh << 'EOF'
-#!/bin/bash
-echo "Activating MCMICRO environment..."
-source mcmicro_env/bin/activate
-echo "Environment activated. You can now run:"
-echo "  python mcmicro_tiled_processor.py --help"
-echo ""
-echo "To deactivate, simply run: deactivate"
-EOF
-
-chmod +x activate_mcmicro.sh
-
-echo "Convenience script created: ./activate_mcmicro.sh"
-echo ""
-
-# Check if SCIMAP installation failed and provide alternatives
-if ! python3 -c "import scimap" 2>/dev/null; then
-    echo "SCIMAP Installation Troubleshooting:"
-    echo "===================================="
-    echo "If SCIMAP failed to install, try these alternatives:"
-    echo ""
-    echo "Option 1: Install from conda-forge (if you have conda):"
-    echo "  conda install -c conda-forge scimap"
-    echo ""
-    echo "Option 2: Install development version:"
-    echo "  pip install git+https://github.com/labsyspharm/scimap.git"
-    echo ""
-    echo "Option 3: Install without SCIMAP (basic spatial analysis only):"
-    echo "  The pipeline will still work for segmentation and quantification"
-    echo "  You can do spatial analysis separately with other tools"
-    echo ""
-fi
-
-# Check if we're still in the virtual environment
-if [[ "$VIRTUAL_ENV" != "" ]]; then
-    echo "Environment is currently active. Type 'deactivate' to exit."
+if command -v docker &>/dev/null; then
+    ok "Docker: $(docker --version | head -1)"
 else
-    echo "Remember to activate the environment before running the pipeline:"
-    echo "  source mcmicro_env/bin/activate"
+    warn "Docker not found — Stage 1 segmentation will not work."
+    warn "Install: https://docs.docker.com/engine/install/"
 fi
 
+if command -v nextflow &>/dev/null; then
+    ok "Nextflow: $(nextflow -version 2>&1 | grep -o 'version .*' | head -1)"
+else
+    warn "Nextflow not found — Stage 1 segmentation will not work."
+    warn "Install: curl -s https://get.nextflow.io | bash && sudo mv nextflow /usr/local/bin/"
+fi
+
+if command -v nvidia-smi &>/dev/null; then
+    GPU_INFO=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+    ok "GPU: ${GPU_INFO}"
+else
+    warn "No NVIDIA GPU — CPU fallback will be used for normalization."
+fi
 echo ""
-echo "Setup complete! 🎉"
+
+
+# ─────────────────────────────────────────────────────────
+# 2. CREATE CONDA ENVIRONMENT
+# ─────────────────────────────────────────────────────────
+echo "[2/4] Setting up 'cifsquant' conda environment..."
+
+if $CONDA_CMD env list 2>/dev/null | grep -q "^cifsquant "; then
+    warn "Environment 'cifsquant' already exists — updating..."
+    $CONDA_CMD env update -n cifsquant -f "${REPO_DIR}/environment.yaml" --prune
+else
+    echo "  Creating environment from environment.yaml (takes 5–10 min)..."
+    $CONDA_CMD env create -f "${REPO_DIR}/environment.yaml"
+fi
+
+ok "Conda environment 'cifsquant' ready"
+
+# Activate for remaining steps
+CONDA_BASE="$(conda info --base)"
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+conda activate cifsquant
+echo ""
+
+
+# ─────────────────────────────────────────────────────────
+# 3. INSTALL SPATIALCELLS
+# ─────────────────────────────────────────────────────────
+echo "[3/4] Installing SpatialCells..."
+
+# SpatialCells is not on PyPI.
+# Auto-detect source directory in common locations:
+SPATIALCELLS_DIR=""
+SEARCH_PATHS=(
+    "${REPO_DIR}/../SpatialCells"
+    "${HOME}/SpatialCells"
+    "/opt/SpatialCells"
+    "${REPO_DIR}/vendor/SpatialCells"
+)
+
+for p in "${SEARCH_PATHS[@]}"; do
+    if [[ -d "$p" ]] && ([[ -f "$p/setup.py" ]] || [[ -f "$p/pyproject.toml" ]]); then
+        SPATIALCELLS_DIR="$(cd "$p" && pwd)"
+        break
+    fi
+done
+
+if python -c "import spatialcells" &>/dev/null 2>&1; then
+    SC_VER=$(python -c "import spatialcells; print(getattr(spatialcells,'__version__','?'))" 2>/dev/null)
+    ok "SpatialCells already installed (v${SC_VER})"
+elif [[ -n "$SPATIALCELLS_DIR" ]]; then
+    ok "Found SpatialCells source: $SPATIALCELLS_DIR"
+    pip install -e "$SPATIALCELLS_DIR"
+    ok "SpatialCells installed"
+else
+    warn "SpatialCells not found. Spatial structure analyses (per_tumor_analysis,"
+    warn "immune_infiltration, marker_region_analysis) require this library."
+    warn ""
+    warn "To install, get the SpatialCells package from the MGH Systems Biology lab"
+    warn "or your collaborator, then run:"
+    warn "   conda activate cifsquant && pip install -e /path/to/SpatialCells"
+    warn ""
+    warn "Place the SpatialCells directory next to this repo for auto-detection:"
+    warn "   /path/to/SpatialCells/      ← SpatialCells source"
+    warn "   /path/to/cifsQuant/         ← this repo"
+fi
+echo ""
+
+
+# ─────────────────────────────────────────────────────────
+# 4. VERIFY INSTALLATION
+# ─────────────────────────────────────────────────────────
+echo "[4/4] Verifying package imports..."
+
+python - <<'PYEOF'
+import sys
+
+failures = []
+
+def check(label, name, optional=False):
+    try:
+        m = __import__(name)
+        ver = getattr(m, '__version__', '?')
+        print(f"  ✓  {label:<25} {ver}")
+    except ImportError:
+        if optional:
+            print(f"  ⚠  {label:<25} not installed (optional)")
+        else:
+            print(f"  ✗  {label:<25} MISSING")
+            failures.append(label)
+
+print("\n  Core:")
+check("numpy",         "numpy")
+check("pandas",        "pandas")
+check("scipy",         "scipy")
+check("matplotlib",    "matplotlib")
+check("seaborn",       "seaborn")
+check("scikit-learn",  "sklearn")
+check("scikit-image",  "skimage")
+check("statsmodels",   "statsmodels")
+check("pyyaml",        "yaml")
+check("joblib",        "joblib")
+check("tifffile",      "tifffile")
+
+print("\n  Single-cell / spatial:")
+check("anndata",       "anndata")
+check("scanpy",        "scanpy")
+check("scimap",        "scimap")
+check("umap-learn",    "umap")
+check("shapely",       "shapely")
+check("igraph",        "igraph")
+check("leidenalg",     "leidenalg")
+check("networkx",      "networkx")
+
+print("\n  Optional:")
+check("spatialcells",  "spatialcells", optional=True)
+check("cupy (GPU)",    "cupy",         optional=True)
+check("torch",         "torch",        optional=True)
+
+if failures:
+    print(f"\n  FAILED: {failures}")
+    print("  Try: pip install " + " ".join(failures))
+    sys.exit(1)
+else:
+    print("\n  All required packages OK.")
+PYEOF
+
+echo ""
+echo "=============================================="
+echo " Setup complete!"
+echo "=============================================="
+echo ""
+echo "  Activate environment:"
+echo "    conda activate cifsquant"
+echo ""
+echo "  Copy an example config and start a project:"
+echo "    cp configs/examples/batch25_tumor_kp/project.yaml project.yaml"
+echo "    # edit project.yaml for your study"
+echo ""
+echo "  Validate config:"
+echo "    python run_cifsquant.py --project project.yaml --dry-run"
+echo ""
+echo "  Run pipeline:"
+echo "    python run_cifsquant.py --project project.yaml"
+echo ""
