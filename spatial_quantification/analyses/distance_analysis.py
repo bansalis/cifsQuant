@@ -21,6 +21,8 @@ class DistanceAnalysis:
     - Distance distributions
     - Per-sample and per-structure analysis
     - Temporal and group comparisons
+    - Within-tumor filtering to avoid background lung bias
+    - Differential distances (dist_to_pos - dist_to_neg) to cancel density effects
     """
 
     def __init__(self, adata, config: Dict, output_dir: Path):
@@ -41,6 +43,21 @@ class DistanceAnalysis:
         self.config = config['distance_analysis']
         self.output_dir = Path(output_dir) / 'distance_analysis'
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Within-tumor-only filtering: restricts source cells to those inside a tumor boundary
+        # (tumor_region_id != -1 and not NaN). This prevents background lung immune cells
+        # from inflating mean distances to tumor-expressed markers.
+        self.within_tumor_only = self.config.get('within_tumor_only', False)
+
+        # k-nearest neighbors for distance computation.
+        # k=1 is noisy and biased when target populations differ in density.
+        # k=5 computes mean distance to the 5 nearest targets — more robust.
+        self.k_neighbors = int(self.config.get('k_neighbors', 5))
+
+        # Maximum distance cap (µm). Source cells further than this from ALL target
+        # cells are excluded as non-adjacent. Prevents very distal immune cells
+        # from dominating mean distance statistics.
+        self.max_distance = self.config.get('max_distance', None)
 
         # Storage
         self.results = {}
@@ -98,14 +115,32 @@ class DistanceAnalysis:
             sample_coords = self.adata.obsm['spatial'][sample_mask.values]
 
             # Get source and target cells
-            source_mask = sample_data[source_col].values
-            target_mask = sample_data[target_col].values
+            source_mask = sample_data[source_col].values.astype(bool)
+            target_mask = sample_data[target_col].values.astype(bool)
+
+            # Apply within-tumor-only filter to source cells
+            # This restricts to immune cells inside a tumor boundary, avoiding
+            # background lung immune cells that inflate mean distances to tumor markers.
+            if self.within_tumor_only and 'tumor_region_id' in sample_data.columns:
+                valid_tumor = (sample_data['tumor_region_id'].notna() &
+                               (sample_data['tumor_region_id'] != -1)).values
+                source_mask = source_mask & valid_tumor
 
             if source_mask.sum() == 0 or target_mask.sum() == 0:
                 continue
 
             source_coords = sample_coords[source_mask]
             target_coords = sample_coords[target_mask]
+
+            # Apply max_distance cap: exclude source cells with no target within cap.
+            # This removes very distal immune cells not adjacent to the tumor.
+            if self.max_distance is not None and len(target_coords) > 0:
+                cap_tree = cKDTree(target_coords)
+                nn1, _ = cap_tree.query(source_coords, k=1)
+                within_cap = nn1 <= self.max_distance
+                source_coords = source_coords[within_cap]
+                if len(source_coords) == 0:
+                    continue
 
             # Calculate distances
             distances_dict = self._calculate_distances(source_coords, target_coords)
@@ -116,6 +151,7 @@ class DistanceAnalysis:
             distances_dict['target_population'] = target_pop
             distances_dict['n_source_cells'] = int(source_mask.sum())
             distances_dict['n_target_cells'] = int(target_mask.sum())
+            distances_dict['within_tumor_only'] = self.within_tumor_only
 
             # Add sample metadata
             for col in ['timepoint', 'group', 'genotype', 'treatment']:
@@ -135,6 +171,13 @@ class DistanceAnalysis:
         """
         Calculate distance metrics from source to target.
 
+        Uses k-nearest neighbours (k=self.k_neighbors) and returns the mean
+        distance to the k nearest targets per source cell.  Using k>1 reduces
+        noise when target populations differ in abundance: with k=1, a dense
+        NINJA- field will always appear closer than sparse NINJA+ cells simply
+        because the very nearest cell is more likely to be NINJA-.  Averaging
+        over the k nearest targets gives a fairer density-corrected estimate.
+
         Parameters
         ----------
         source_coords : np.ndarray
@@ -147,21 +190,27 @@ class DistanceAnalysis:
         dict
             Distance metrics
         """
-        # Build KDTree for fast nearest neighbor search
         tree = cKDTree(target_coords)
 
-        # Find nearest neighbor for each source cell
-        distances, indices = tree.query(source_coords, k=1)
+        k = min(self.k_neighbors, len(target_coords))
+        raw_dists, _ = tree.query(source_coords, k=k)
 
-        # Calculate metrics
+        # For k=1 the result is 1-D; for k>1 average across the k neighbours.
+        if raw_dists.ndim == 1:
+            distances = raw_dists
+        else:
+            distances = raw_dists.mean(axis=1)
+
         metrics = {
-            'mean_distance': np.mean(distances),
-            'median_distance': np.median(distances),
-            'std_distance': np.std(distances),
-            'min_distance': np.min(distances),
-            'max_distance': np.max(distances),
-            'q25_distance': np.percentile(distances, 25),
-            'q75_distance': np.percentile(distances, 75)
+            'mean_distance': float(np.mean(distances)),
+            'median_distance': float(np.median(distances)),
+            'std_distance': float(np.std(distances)),
+            'min_distance': float(np.min(distances)),
+            'max_distance': float(np.max(distances)),
+            'q25_distance': float(np.percentile(distances, 25)),
+            'q75_distance': float(np.percentile(distances, 75)),
+            'n_source_used': int(len(distances)),
+            'k_neighbors_used': int(k),
         }
 
         return metrics
@@ -193,6 +242,92 @@ class DistanceAnalysis:
 
         return hist
 
+    def _compute_paired_differentials(self) -> pd.DataFrame:
+        """
+        Compute differential distances for paired positive/negative targets.
+
+        For each source population and marker, if both {marker}_positive_tumor and
+        {marker}_negative_tumor targets exist, compute:
+            differential_distance = mean_dist_to_pos - mean_dist_to_neg
+
+        Negative differential = source cells are closer to marker+ zone (biologically meaningful).
+        Cancels pERK+ cell density effects because both targets are from the same tumor.
+
+        Returns
+        -------
+        pd.DataFrame
+            Differential distance table with one row per sample per source/marker pair.
+        """
+        paired_rows = []
+
+        # Find all (source, marker) pairs where both _positive_tumor and _negative_tumor exist
+        sources = set()
+        for name in self.results:
+            parts = name.split('_to_')
+            if len(parts) == 2:
+                sources.add(parts[0])
+
+        for source in sources:
+            # Collect targets for this source
+            targets = {}
+            for name, df in self.results.items():
+                parts = name.split('_to_')
+                if len(parts) == 2 and parts[0] == source:
+                    targets[parts[1]] = df
+
+            # Identify complete pos/neg pairs
+            markers_found: Dict[str, Dict] = {}
+            for target_name in targets:
+                if target_name.endswith('_positive_tumor'):
+                    marker = target_name[:-len('_positive_tumor')]
+                    markers_found.setdefault(marker, {})['pos'] = target_name
+                elif target_name.endswith('_negative_tumor'):
+                    marker = target_name[:-len('_negative_tumor')]
+                    markers_found.setdefault(marker, {})['neg'] = target_name
+
+            for marker, pair_info in markers_found.items():
+                if 'pos' not in pair_info or 'neg' not in pair_info:
+                    continue
+
+                pos_df = targets[pair_info['pos']]
+                neg_df = targets[pair_info['neg']]
+
+                # Merge on sample_id
+                merge_on = ['sample_id']
+                merged = pos_df.merge(neg_df, on=merge_on, suffixes=('_pos', '_neg'))
+
+                if len(merged) == 0:
+                    continue
+
+                for _, row in merged.iterrows():
+                    entry = {
+                        'sample_id': row['sample_id'],
+                        'source_population': source,
+                        'marker': marker,
+                        'mean_dist_to_pos': row.get('mean_distance_pos', np.nan),
+                        'mean_dist_to_neg': row.get('mean_distance_neg', np.nan),
+                        'n_source_cells': row.get('n_source_cells_pos', np.nan),
+                        'n_pos_cells': row.get('n_target_cells_pos', np.nan),
+                        'n_neg_cells': row.get('n_target_cells_neg', np.nan),
+                        'within_tumor_only': self.within_tumor_only,
+                    }
+                    # Differential: negative means closer to positive zone
+                    entry['differential_distance'] = entry['mean_dist_to_pos'] - entry['mean_dist_to_neg']
+
+                    # Carry over metadata
+                    for col in ['timepoint', 'group', 'genotype', 'treatment']:
+                        for suffix in ['_pos', '_neg', '']:
+                            cname = col + suffix
+                            if cname in row.index and pd.notna(row[cname]):
+                                entry[col] = row[cname]
+                                break
+
+                    paired_rows.append(entry)
+
+        if paired_rows:
+            return pd.DataFrame(paired_rows)
+        return pd.DataFrame()
+
     def _save_results(self):
         """Save all results to files."""
         # Save each pairing's data
@@ -200,9 +335,19 @@ class DistanceAnalysis:
             output_path = self.output_dir / f'{name}_distances.csv'
             df.to_csv(output_path, index=False)
 
+        # Compute and save differential distances
+        diff_df = self._compute_paired_differentials()
+        if len(diff_df) > 0:
+            diff_path = self.output_dir / 'differential_distances.csv'
+            diff_df.to_csv(diff_path, index=False)
+            self.results['differential_distances'] = diff_df
+            print(f"\n  ✓ Saved differential_distances.csv ({len(diff_df)} rows)")
+
         # Create summary table
         summary_rows = []
         for name, df in self.results.items():
+            if 'mean_distance' not in df.columns:
+                continue
             summary_rows.append({
                 'pairing': name,
                 'n_samples': len(df),
@@ -243,6 +388,12 @@ class DistanceAnalysis:
 
         # Generate heatmap of all pairings
         plotter.plot_all_distances_heatmap(self.results, group_col)
+
+        # Plot differential distances if available
+        if 'differential_distances' in self.results:
+            plotter.plot_differential_distances(
+                self.results['differential_distances'], group_col, groups
+            )
 
         print(f"  ✓ Generated plots for {len(self.results)} pairings")
 

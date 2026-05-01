@@ -42,6 +42,7 @@ class MetadataManager:
         sample_col = self.meta_config['sample_column']
         group_col = self.meta_config['group_column']
         timepoint_col = self.meta_config['timepoint_column']
+        treatment_col = self.meta_config.get('treatment_column', 'treatment')
 
         # Ensure sample_id is uppercase
         self.metadata[sample_col] = self.metadata[sample_col].str.upper()
@@ -61,6 +62,12 @@ class MetadataManager:
             self.metadata[timepoint_col],
             errors='coerce'
         )
+
+        # Convert treatment column to string category if present
+        if treatment_col in self.metadata.columns:
+            self.metadata[treatment_col] = self.metadata[treatment_col].astype(str)
+            print(f"  ✓ Treatment column '{treatment_col}' detected: "
+                  f"{sorted(self.metadata[treatment_col].unique())}")
 
         # Validate
         self._validate()
@@ -139,6 +146,7 @@ class MetadataManager:
         sample_col = self.meta_config['sample_column']
         group_col = self.meta_config['group_column']
         timepoint_col = self.meta_config['timepoint_column']
+        treatment_col = self.meta_config.get('treatment_column', 'treatment')
 
         print("\n" + "="*80)
         print("METADATA SUMMARY")
@@ -156,6 +164,11 @@ class MetadataManager:
         print(f"\nTimepoints ({timepoint_col}):")
         timepoints = sorted(self.metadata[timepoint_col].dropna().unique())
         print(f"  - {timepoints}")
+
+        if treatment_col in self.metadata.columns:
+            print(f"\nTreatment ({treatment_col}):")
+            for treatment, count in self.metadata[treatment_col].value_counts().items():
+                print(f"  - {treatment}: {count} samples")
 
         print("\nAvailable grouping columns:")
         grouping_cols = [col for col in self.metadata.columns

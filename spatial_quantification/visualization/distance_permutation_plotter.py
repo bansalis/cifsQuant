@@ -38,7 +38,6 @@ class DistancePermutationPlotter:
                 self.plot_observed_vs_null(df, key)
                 self.plot_volcano(df, key)
                 self.plot_group_comparison(df, key)
-                self.plot_temporal_trend(df, key)
         print("  Done.")
 
     def plot_observed_vs_null(self, df: pd.DataFrame, test_key: str):
@@ -115,54 +114,4 @@ class DistancePermutationPlotter:
             ax.set_ylabel('Z-score')
             plt.tight_layout()
             plt.savefig(self.plots_dir / f'{test_name}_group_comparison.png', dpi=self.dpi, bbox_inches='tight')
-            plt.close()
-
-    def plot_temporal_trend(self, df: pd.DataFrame, test_key: str):
-        """Plot z-scores over timepoints per group."""
-        if 'timepoint' not in df.columns or 'group' not in df.columns:
-            return
-        timepoints = sorted(df['timepoint'].dropna().unique())
-        if len(timepoints) < 2:
-            return
-
-        for test_name in df['test_name'].unique():
-            tdf = df[df['test_name'] == test_name].copy()
-            groups = [g for g in tdf['group'].unique() if pd.notna(g) and g != '']
-            if not groups:
-                continue
-
-            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-            # Left: mean z-score over time
-            ax = axes[0]
-            for i, group in enumerate(groups):
-                gdf = tdf[tdf['group'] == group]
-                summary = gdf.groupby('timepoint')['z_score'].agg(['mean', 'sem']).reindex(timepoints)
-                color = self._get_group_color(group, i)
-                ax.plot(summary.index, summary['mean'], '-o', color=color, label=group, linewidth=2)
-                ax.fill_between(summary.index,
-                               summary['mean'] - summary['sem'],
-                               summary['mean'] + summary['sem'],
-                               alpha=0.2, color=color)
-            ax.axhline(0, color='gray', linestyle='--', alpha=0.5)
-            ax.set_xlabel('Timepoint')
-            ax.set_ylabel('Mean Z-score')
-            ax.set_title(f'{test_name} - Effect Size Over Time')
-            ax.legend()
-
-            # Right: sample size (n_source or n_target) over time
-            ax2 = axes[1]
-            size_col = 'n_source' if 'n_source' in tdf.columns else 'n_target'
-            for i, group in enumerate(groups):
-                gdf = tdf[tdf['group'] == group]
-                summary = gdf.groupby('timepoint')[size_col].agg(['mean', 'sem']).reindex(timepoints)
-                color = self._get_group_color(group, i)
-                ax2.plot(summary.index, summary['mean'], '-s', color=color, label=group, linewidth=2)
-            ax2.set_xlabel('Timepoint')
-            ax2.set_ylabel(f'Mean {size_col}')
-            ax2.set_title(f'{test_name} - Sample Size Over Time')
-            ax2.legend()
-
-            plt.tight_layout()
-            plt.savefig(self.plots_dir / f'{test_name}_temporal.png', dpi=self.dpi, bbox_inches='tight')
             plt.close()

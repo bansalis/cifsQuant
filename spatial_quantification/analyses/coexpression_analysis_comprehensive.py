@@ -186,12 +186,25 @@ class CoexpressionAnalysisComprehensive:
                     # Jaccard index (similarity coefficient)
                     jaccard = both_pos / either_pos if either_pos > 0 else 0
 
+                    # Expected coexpression under independence: P(pheno1+) * P(pheno2+) * 100
+                    pheno1_pct = pheno1_pos / n_total_cells * 100 if n_total_cells > 0 else 0
+                    pheno2_pct = pheno2_pos / n_total_cells * 100 if n_total_cells > 0 else 0
+                    expected_pct = (pheno1_pct / 100) * (pheno2_pct / 100) * 100
+
+                    # Fold enrichment: observed / expected
+                    epsilon = 1e-6
+                    fold_enrichment = percent_both / (expected_pct + epsilon)
+                    log2_fold_enrichment = np.log2(fold_enrichment + epsilon)
+
                     # Store results
                     result[f'{pheno1}_AND_{pheno2}_count'] = int(both_pos)
                     result[f'{pheno1}_AND_{pheno2}_percent_of_total'] = percent_both
                     result[f'{pheno1}_AND_{pheno2}_percent_of_{pheno1}'] = percent_of_pheno1
                     result[f'{pheno1}_AND_{pheno2}_percent_of_{pheno2}'] = percent_of_pheno2
                     result[f'{pheno1}_AND_{pheno2}_jaccard'] = jaccard
+                    result[f'{pheno1}_AND_{pheno2}_expected_pct'] = expected_pct
+                    result[f'{pheno1}_AND_{pheno2}_fold_enrichment'] = fold_enrichment
+                    result[f'{pheno1}_AND_{pheno2}_log2_fold_enrichment'] = log2_fold_enrichment
 
             results.append(result)
 

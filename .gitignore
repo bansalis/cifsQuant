@@ -1,41 +1,46 @@
-archive/*
-*.log
-*.tmp
-.DS_Store
-quick_test_*/
-results/*
-unmicst*/
-rawdata/*
-mcmicro_env/*
-.nextflow*
-phenotype_analysis/*
-spatial_analysis/outputs/*
-scripts/minerva_author.exe
-manual_gating_output/*
-phenotyping_output/*
-scimap_analysis/*
-spatial_analysis_output/*
-subtype_analysis_output/*
-work/*
-test.ipynb
-run_cellprofiler_analyst.sh
-run_complete_spatial_analysis.sh
-run_enhanced_spatial.sh
-archive_manual_gating_output/*
-cellpose_models/*
-manual_gating_output_v2/*
-manual_gating_output_v3/*
-tumor_spatial_analysis/*
+# Python
 __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
 *.pyd
-efficient_spatial_analysis/*
-comprehensive_spatial_analysis/*
-markers.csv
-sample_metadata.csv
-channel_names.txt
-11_11_archive_manual_gating_output/*
-11_11_archive_spatial_quantification_results/*
-models_cache/*
+
+# Nextflow runtime
+work/
+.nextflow/
+.nextflow.log*
+*.log
+
+# Pipeline outputs (user-generated at runtime)
+results/
+manual_gating_output/
+spatial_quantification_results*/
+spatial_analysis*/
+phenotyping_output/
+scimap_analysis/
+subtype_analysis_output/
+tumor_spatial_analysis/
+efficient_spatial_analysis/
+comprehensive_spatial_analysis/
+
+# Large data files
+*.h5ad
+rawdata/
+
+# Archives and compressed outputs
+*.zip
+*.tar.gz
+archive/
+*archive*/
+
+# Environment and model caches
+models_cache/
+cellpose_models/
+mcmicro_env/
+venv/
+.venv/
+
+# OS
+.DS_Store
+*.tmp
+Thumbs.db

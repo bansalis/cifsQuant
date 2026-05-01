@@ -1,5 +1,0 @@
-# Requirements for sample partitioning preprocessor
-tifffile>=2023.7.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-scikit-image>=0.21.0
