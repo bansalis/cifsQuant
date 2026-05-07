@@ -11,6 +11,7 @@ sys.path.insert(0, str(REPO_ROOT / 'gui'))
 from components.config_io import load_project, save_project, get_display_names, get_analysis_list
 from components.gating_plots import plot_phenotype_scatter
 from components.spatial_viewer import load_adata, find_h5ad, get_samples, get_spatial_coords
+from components.pipeline_runner import run_stage_inline
 
 
 def _render_analysis_params(key: str, spatial: dict, display_names: list, phenotype_names: list):
@@ -87,8 +88,22 @@ config = st.session_state.get('project_config') or load_project(yaml_path)
 spatial = config.setdefault('spatial', {})
 display_names = get_display_names(config)
 
-# Load gated data for live previews (optional)
+# ── Prerequisite checks ───────────────────────────────────────────────────────
+if not display_names:
+    st.error('**Step 1 incomplete.** No markers defined. Complete Panel Setup first.')
+    st.page_link('pages/1_Panel_Setup.py', label='Go to Panel Setup')
+    st.stop()
+
 gated_path = find_h5ad(project_dir, 'gated_data.h5ad')
+if gated_path is None:
+    st.error('**Step 2 incomplete.** `gated_data.h5ad` not found.')
+    st.markdown(
+        'You need to run **Stage 2 · Gating** first (either from this GUI or via the CLI). '
+        'Once gating is complete, come back here to define phenotypes and configure analyses.'
+    )
+    st.page_link('pages/2_Gating.py', label='Go to Interactive Gating')
+    st.page_link('pages/4_Run_Pipeline.py', label='Go to Run Pipeline')
+    st.stop()
 adata = None
 if gated_path:
     try:
@@ -317,11 +332,28 @@ with tab_structure:
                                        value=int(sd.get('alpha', 100)),
                                        help='Concavity of alpha-shape boundary. Smaller = tighter fit.')
 
-# ── Save ─────────────────────────────────────────────────────────────────────
+# ── Save + Run ────────────────────────────────────────────────────────────────
 st.divider()
-if st.button('💾 Save to project.yaml', type='primary'):
-    config['spatial'] = spatial
-    from components.config_io import save_project
-    save_project(config, yaml_path)
-    st.session_state.project_config = config
-    st.success('Saved. Proceed to **4 · Run Pipeline**.')
+col_save, col_run = st.columns(2)
+with col_save:
+    if st.button('💾 Save to project.yaml', type='primary'):
+        config['spatial'] = spatial
+        save_project(config, yaml_path)
+        st.session_state.project_config = config
+        st.success('Saved.')
+
+with col_run:
+    st.markdown('**Run Stage 3 · Spatial Analysis**')
+    n_enabled = sum(
+        1 for a in get_analysis_list()
+        if spatial.get(a['key'], {}).get('enabled', False)
+    )
+    st.caption(f'{n_enabled} analysis modules enabled')
+    if st.button('▶ Run Spatial Analysis', type='secondary',
+                 help='Saves config then runs all enabled spatial analysis modules'):
+        config['spatial'] = spatial
+        save_project(config, yaml_path)
+        st.session_state.project_config = config
+        run_stage_inline('spatial', project_dir, yaml_path)
+        st.info('Done. Browse outputs in **5 · Results Browser**.')
+        st.page_link('pages/5_Results.py', label='Go to Results Browser')

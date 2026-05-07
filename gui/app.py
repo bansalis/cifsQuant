@@ -69,13 +69,38 @@ with st.sidebar:
                 st.session_state.project_config = load_project(yaml_path)
                 st.rerun()
 
+    # ── Pipeline progress ──────────────────────────────────────────────────
     st.divider()
-    st.caption('Navigation')
-    st.page_link('pages/1_Panel_Setup.py',    label='1 · Panel Setup',       icon='🧬')
+    _cfg = st.session_state.get('project_config', {})
+    _results_dir = project_dir / 'results'
+    _norm_h5ad   = project_dir / 'manual_gating_output' / 'normalized_data.h5ad'
+    _gated_h5ad  = project_dir / 'manual_gating_output' / 'gated_data.h5ad'
+    _spatial_dir = project_dir / 'spatial_quantification_results'
+
+    _panel_ok   = bool(_cfg.get('markers'))
+    _seg_ok     = _results_dir.exists() and any(_results_dir.glob('*/final/combined_quantification.csv'))
+    _gating_ok  = _gated_h5ad.exists()
+    _spatial_ok = _spatial_dir.exists() and any(_spatial_dir.iterdir())
+
+    def _step(label, done, active):
+        icon = '✅' if done else ('▶' if active else '○')
+        st.markdown(f'{icon} {label}')
+
+    st.caption('**Progress**')
+    _step('Panel Setup', _panel_ok, not _panel_ok)
+    _step('Segmentation', _seg_ok, _panel_ok and not _seg_ok)
+    _step('Gating', _gating_ok, _seg_ok and not _gating_ok)
+    _step('Spatial Config', _gating_ok, _gating_ok)
+    _step('Spatial Analysis', _spatial_ok, _gating_ok and not _spatial_ok)
+
+    st.divider()
+    st.caption('**Steps**')
+    st.page_link('pages/1_Panel_Setup.py',    label='1 · Panel Setup',        icon='🧬')
+    st.page_link('pages/4_Run_Pipeline.py',   label='  Run segmentation',     icon='▶️')
     st.page_link('pages/2_Gating.py',         label='2 · Interactive Gating', icon='🎚️')
-    st.page_link('pages/3_Spatial_Config.py', label='3 · Spatial Config',    icon='⚙️')
-    st.page_link('pages/4_Run_Pipeline.py',   label='4 · Run Pipeline',      icon='▶️')
-    st.page_link('pages/5_Results.py',        label='5 · Results Browser',   icon='📊')
+    st.page_link('pages/3_Spatial_Config.py', label='3 · Spatial Config',     icon='⚙️')
+    st.page_link('pages/4_Run_Pipeline.py',   label='4 · Run Pipeline',       icon='▶️')
+    st.page_link('pages/5_Results.py',        label='5 · Results Browser',    icon='📊')
     st.divider()
     st.caption('**CLI usage** (no GUI required):')
     st.code('python run_cifsquant.py \\\n  --project project.yaml', language='bash')

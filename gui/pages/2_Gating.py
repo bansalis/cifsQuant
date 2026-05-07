@@ -16,6 +16,7 @@ from components.spatial_viewer import (
     load_normalized, get_samples, get_marker_values, get_spatial_coords,
     get_gate_mask, find_h5ad
 )
+from components.pipeline_runner import run_stage_inline
 
 st.set_page_config(page_title='Gating · cifsQuant', layout='wide')
 st.title('2 · Interactive Gating')
@@ -33,16 +34,34 @@ gating = config.setdefault('gating', {})
 gates_config = gating.setdefault('gates', {})
 display_names = get_display_names(config)
 
-# ── Load normalized data ─────────────────────────────────────────────────────
+# ── Prerequisite checks ───────────────────────────────────────────────────────
+if not display_names:
+    st.error('**Step 1 incomplete.** No markers are defined in your project.yaml.')
+    st.markdown('Go to **1 · Panel Setup**, define your imaging panel, and save before coming here.')
+    st.page_link('pages/1_Panel_Setup.py', label='Go to Panel Setup')
+    st.stop()
+
+results_dir = project_dir / 'results'
+has_seg_results = results_dir.exists() and any(results_dir.glob('*/final/combined_quantification.csv'))
 norm_path = find_h5ad(project_dir, 'normalized_data.h5ad')
 gated_path = find_h5ad(project_dir, 'gated_data.h5ad')
 
-if norm_path is None:
-    st.warning(
-        '`normalized_data.h5ad` not found. Run Stage 2 gating first to generate the normalization checkpoint:\n\n'
-        '```bash\npython run_cifsquant.py --project project.yaml --stages gating\n```\n\n'
-        'The GUI will use the checkpoint to enable fast threshold tuning without re-normalizing.'
+if not has_seg_results and norm_path is None:
+    st.error('**Segmentation not run yet.** No results found.')
+    st.markdown(
+        'Go to **4 · Run Pipeline**, enable **Stage 1 · Segmentation**, and run it first. '
+        'Once segmentation is complete, come back here.'
     )
+    st.page_link('pages/4_Run_Pipeline.py', label='Go to Run Pipeline')
+    st.stop()
+
+if norm_path is None:
+    st.info(
+        'Segmentation results found but normalization checkpoint not yet generated. '
+        'Go to **4 · Run Pipeline** and run **Stage 2 · Gating** to build the normalization checkpoint, '
+        'which enables fast interactive threshold adjustment here.'
+    )
+    st.page_link('pages/4_Run_Pipeline.py', label='Go to Run Pipeline')
     st.stop()
 
 adata = load_normalized(str(norm_path))
@@ -149,12 +168,18 @@ for marker in gateable:
 import pandas as pd
 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
-# ── Apply Gates ──────────────────────────────────────────────────────────────
+# ── Apply Gates / Re-run Gating ──────────────────────────────────────────────
 st.divider()
-col_apply, col_note = st.columns([1, 3])
+col_apply, col_rerun, col_note = st.columns([1, 1, 2])
 with col_apply:
     apply = st.button('Apply Gates & Save gated_data.h5ad', type='primary',
-                      help='Writes threshold values to project.yaml and runs apply_gates() to produce gated_data.h5ad')
+                      help='Saves current thresholds and re-gates using the normalization checkpoint (fast — no re-normalization)')
+with col_rerun:
+    if st.button('Re-run full gating stage', help='Re-normalizes from scratch and re-applies gates. Use if panel or samples changed.'):
+        save_project(config, yaml_path)
+        run_stage_inline('gating', project_dir, yaml_path)
+        load_normalized.clear()
+        st.rerun()
 with col_note:
     st.caption(
         'This applies the thresholds set above and writes `manual_gating_output/gated_data.h5ad`. '
