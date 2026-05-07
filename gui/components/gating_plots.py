@@ -43,16 +43,17 @@ def plot_marker_histogram(
     if gmm_params:
         from scipy.stats import norm
         x = np.linspace(values.min(), values.max(), 300)
+        _line_colors = ['#6EE7B7', '#FCA5A5']
+        _fill_colors = ['rgba(110,231,183,0.15)', 'rgba(252,165,165,0.15)']
         for i, (mean, std, weight) in enumerate(zip(
             gmm_params['means'], gmm_params['stds'], gmm_params['weights']
         )):
             y = weight * norm.pdf(x, mean, std)
-            color = '#6EE7B7' if i == 0 else '#FCA5A5'
             fig.add_trace(go.Scatter(
                 x=x, y=y, mode='lines',
                 name=f'GMM component {i+1}',
-                line=dict(color=color, width=1.5, dash='dot'),
-                fill='tozeroy', fillcolor=color.replace(')', ',0.15)').replace('rgb', 'rgba') if 'rgb' in color else color + '26',
+                line=dict(color=_line_colors[i % 2], width=1.5, dash='dot'),
+                fill='tozeroy', fillcolor=_fill_colors[i % 2],
             ))
 
     # Threshold line

@@ -4,8 +4,11 @@ from pathlib import Path
 
 
 def load_project(path: str | Path) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return {}
 
 
 def save_project(config: dict, path: str | Path):

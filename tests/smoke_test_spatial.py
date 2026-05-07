@@ -78,14 +78,19 @@ class TestMetadataManager:
         })
         meta_df.to_csv(meta_csv, index=False)
 
+        # MetadataManager requires timepoint_column in config['metadata']
+        meta_df['timepoint'] = [0, 4]
+        meta_df.to_csv(meta_csv, index=False)
+
         config = {
             'input': {'metadata': str(meta_csv)},
             'metadata': {
                 'sample_column': 'sample_id',
                 'group_column': 'group',
+                'timepoint_column': 'timepoint',
             },
         }
-        manager = MetadataManager(config)
+        manager = MetadataManager(meta_df, config)
         manager.process()
         manager.merge_with_adata(minimal_adata)
 

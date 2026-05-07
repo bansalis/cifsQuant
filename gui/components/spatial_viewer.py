@@ -1,16 +1,25 @@
 """Load and cache AnnData for the GUI. Provides data access helpers."""
 import numpy as np
-import streamlit as st
 from pathlib import Path
 
+try:
+    import streamlit as st
+    _cache = st.cache_data
+except ImportError:
+    # Allow importing outside Streamlit (e.g. in tests)
+    def _cache(func=None, **kwargs):
+        if func is not None:
+            return func
+        return lambda f: f
 
-@st.cache_data(show_spinner='Loading gated data…', ttl=300)
+
+@_cache(show_spinner='Loading gated data…', ttl=300)
 def load_adata(h5ad_path: str):
     import anndata
     return anndata.read_h5ad(h5ad_path)
 
 
-@st.cache_data(show_spinner='Loading checkpoint…', ttl=300)
+@_cache(show_spinner='Loading checkpoint…', ttl=300)
 def load_normalized(h5ad_path: str):
     import anndata
     return anndata.read_h5ad(h5ad_path)
@@ -37,7 +46,7 @@ def get_marker_values(adata, marker: str, sample_id: str | None = None) -> np.nd
         idx = list(adata.var_names).index(marker)
         vals = np.asarray(layer[mask, idx]).flatten()
     else:
-        vals = np.zeros(adata.n_obs)
+        return np.array([])
     return vals
 
 
