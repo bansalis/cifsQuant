@@ -55,7 +55,7 @@ st.subheader('Configuration validation')
 col_validate, col_dryrun = st.columns(2)
 with col_validate:
     if st.button('Validate config', help='Check for missing or inconsistent settings'):
-        checks = validate_project(config)
+        checks = validate_project(config, stages=selected_stages or ['segmentation', 'gating', 'spatial'])
         for check in checks:
             icon = '✓' if check['status'] == 'ok' else ('⚠' if check['status'] == 'warn' else '✗')
             fn = st.success if check['status'] == 'ok' else (st.warning if check['status'] == 'warn' else st.error)

@@ -16,84 +16,96 @@ def save_project(config: dict, path: str | Path):
         yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
 
-def validate_project(config: dict) -> list[dict]:
-    """Return list of {check, status, message} dicts."""
+def validate_project(config: dict, stages: list | None = None) -> list[dict]:
+    """Return list of {check, status, message} dicts.
+
+    stages: which pipeline stages to validate for. Defaults to all three.
+    Segmentation-only runs skip gating/spatial section checks.
+    """
+    if stages is None:
+        stages = ['segmentation', 'gating', 'spatial']
+
     results = []
 
     def ok(check, msg=''):
         results.append({'check': check, 'status': 'ok', 'message': msg})
 
     def fail(check, msg):
-        results.append({'check': check, 'status': 'fail', 'message': msg})
+        results.append({'check': check, 'status': 'error', 'message': msg})
 
     def warn(check, msg):
         results.append({'check': check, 'status': 'warn', 'message': msg})
 
-    # markers present
     markers = config.get('markers', {})
+    display_names = set(markers.values())
+
     if not markers:
-        fail('Panel defined', 'No markers found in config')
+        fail('Panel defined', 'No markers found. Define your panel on Page 1.')
     else:
         ok('Panel defined', f'{len(markers)} channels mapped')
 
-    # gating section
-    gating = config.get('gating', {})
-    if not gating:
-        fail('Gating section', 'Missing gating: block')
-    else:
-        gates = gating.get('gates', {})
-        display_names = set(markers.values())
-        bad_gates = [k for k in gates if k not in display_names]
-        if bad_gates:
-            fail('Gate keys match panel', f'Unknown markers: {bad_gates}')
+    # Gating checks — only relevant when gating or spatial stages run
+    if 'gating' in stages or 'spatial' in stages:
+        gating = config.get('gating', {})
+        if not gating:
+            warn('Gating section', 'No gating: block — will use auto-calculated gates')
         else:
-            ok('Gate keys match panel', f'{len(gates)} gates defined')
-
-        tc = gating.get('tile_correction', {})
-        if tc.get('enabled'):
-            bad_tc = [m for m in tc.get('markers', []) if m not in display_names]
-            if bad_tc:
-                fail('Tile correction markers', f'Unknown markers: {bad_tc}')
+            gates = gating.get('gates', {})
+            bad_gates = [k for k in gates if k not in display_names]
+            if bad_gates:
+                fail('Gate keys match panel', f'Unknown markers in gates: {bad_gates}. Update on Page 1 or Page 2.')
             else:
-                ok('Tile correction markers')
+                ok('Gate keys match panel', f'{len(gates)} gates configured')
 
-        lg = gating.get('liberal_gating', {})
-        if lg.get('enabled'):
-            bad_lg = [m for m in lg.get('liberal_markers', []) if m not in display_names]
-            if bad_lg:
-                fail('Liberal gating markers', f'Unknown markers: {bad_lg}')
-            else:
-                ok('Liberal gating markers')
+            tc = gating.get('tile_correction', {})
+            if tc.get('enabled'):
+                bad_tc = [m for m in tc.get('markers', []) if m not in display_names]
+                if bad_tc:
+                    fail('Tile correction markers', f'Unknown: {bad_tc}')
+                else:
+                    ok('Tile correction markers')
 
-    # hierarchy
-    hierarchy = config.get('marker_hierarchy', {})
-    display_names = set(markers.values())
-    for child, parent in hierarchy.items():
-        if child not in display_names:
-            fail('Marker hierarchy', f"Child '{child}' not in panel")
-        if parent is not None and parent not in display_names:
-            fail('Marker hierarchy', f"Parent '{parent}' not in panel")
-    if hierarchy:
-        ok('Marker hierarchy', f'{len(hierarchy)} constraints')
+            lg = gating.get('liberal_gating', {})
+            if lg.get('enabled'):
+                bad_lg = [m for m in lg.get('liberal_markers', []) if m not in display_names]
+                if bad_lg:
+                    fail('Liberal gating markers', f'Unknown: {bad_lg}')
+                else:
+                    ok('Liberal gating markers')
 
-    # spatial phenotypes
-    spatial = config.get('spatial', {})
-    phenotypes = spatial.get('phenotypes', {})
-    for name, defn in phenotypes.items():
-        for key in ('positive', 'negative', 'anypos'):
-            for m in defn.get(key, []):
-                if m not in display_names:
-                    fail('Phenotype markers', f"'{name}.{key}' references unknown marker '{m}'")
-        if 'base' in defn and defn['base'] not in phenotypes:
-            fail('Phenotype base', f"'{name}.base' references unknown phenotype '{defn['base']}'")
-    if phenotypes:
-        ok('Phenotypes', f'{len(phenotypes)} defined')
+        hierarchy = config.get('marker_hierarchy', {})
+        bad_hier = []
+        for child, parent in hierarchy.items():
+            if child not in display_names:
+                bad_hier.append(f"child '{child}' not in panel")
+            if parent is not None and parent not in display_names:
+                bad_hier.append(f"parent '{parent}' not in panel")
+        if bad_hier:
+            fail('Marker hierarchy', '; '.join(bad_hier))
+        elif hierarchy:
+            ok('Marker hierarchy', f'{len(hierarchy)} constraints')
 
-    # dependency check: infiltration / TME require per_tumor_analysis
-    per_tumor = spatial.get('per_tumor_analysis', {}).get('enabled', False)
-    for dep in ('immune_infiltration', 'tumor_microenvironment', 'cluster_composition_analysis', 'enhanced_neighborhoods'):
-        if spatial.get(dep, {}).get('enabled', False) and not per_tumor:
-            warn('Analysis dependencies', f"'{dep}' enabled but 'per_tumor_analysis' is disabled — run per_tumor_analysis first")
+    # Spatial checks — only when running spatial analysis
+    if 'spatial' in stages:
+        spatial = config.get('spatial', {})
+        phenotypes = spatial.get('phenotypes', {})
+        bad_pheno = []
+        for name, defn in phenotypes.items():
+            for key in ('positive', 'negative', 'anypos'):
+                for m in defn.get(key, []):
+                    if m not in display_names:
+                        bad_pheno.append(f"'{name}.{key}': unknown marker '{m}'")
+            if 'base' in defn and defn['base'] not in phenotypes:
+                bad_pheno.append(f"'{name}.base': unknown phenotype '{defn['base']}'")
+        if bad_pheno:
+            fail('Phenotype markers', '; '.join(bad_pheno[:3]) + ('…' if len(bad_pheno) > 3 else ''))
+        elif phenotypes:
+            ok('Phenotypes', f'{len(phenotypes)} defined')
+
+        per_tumor = spatial.get('per_tumor_analysis', {}).get('enabled', False)
+        for dep in ('immune_infiltration', 'tumor_microenvironment', 'cluster_composition_analysis', 'enhanced_neighborhoods'):
+            if spatial.get(dep, {}).get('enabled', False) and not per_tumor:
+                warn('Analysis dependencies', f"'{dep}' requires per_tumor_analysis — enable it first")
 
     return results
 
