@@ -1,0 +1,507 @@
+# ============================================================================
+# cifsQuant Project Config — Melanoma Validation (Nirmal et al. 2022)
+# ============================================================================
+# Reproduces spatial analyses from: Nirmal et al., Cancer Discovery 2022
+# "The Spatial Landscape of Progression and Immunoediting in Primary Melanoma"
+# 8 patients, 6 disease stages (IA → IV), primary melanoma tissue
+# Panel: 41-marker CyCIF melanoma panel (Panel 2 deep phenotyping)
+# Structure: Tumor cell regions (DBSCAN on SOX10+ cells, eps=1000)
+# Key analyses: LDA-RCN (Fig 2D/E), Spatial Lag TCC (Fig 5), Shift Plots (Fig 3F)
+# ============================================================================
+
+# ============================================================================
+# PANEL DEFINITION
+# ============================================================================
+markers:
+  DNA_1: DAPI
+  pERK: pERK
+  CD207: CD207
+  SOX10: SOX10
+  CD45RO: CD45RO
+  SOX2: SOX2
+  CD25: CD25
+  CD4: CD4
+  pan-CK: panCK
+  CD8a: CD8a
+  CD163: CD163
+  FOXP3: FOXP3
+  CD3d: CD3d
+  pS6: pS6
+  CD11c: CD11c
+  PDL1: PDL1
+  MCAM: MCAM
+  CD68: CD68
+  PD1: PD1
+  S100a: S100a
+  ICOS: ICOS
+  OX40: OX40
+  CD40L: CD40L
+  HLADR: HLADR
+  HLAA: HLAA
+  NCAD: NCAD
+  LAG3: LAG3
+  CD31: CD31
+  CD73: CD73
+  CD90: CD90
+  TIM3: TIM3
+  C-Kit: CKit
+  CD40: CD40
+  Granz.B: GranzB
+  HLADRB1: HLADRB1
+  GITR: GITR
+  HLADPB1: HLADPB1
+  MART1: MART1
+  CCND1: CCND1
+  MYC: MYC
+
+# ============================================================================
+# MARKER HIERARCHY
+# ============================================================================
+marker_hierarchy:
+  CD8a: CD3d
+  FOXP3: CD3d
+  PD1: CD3d
+  CD163: CD68
+  CD11c: CD68
+
+# ============================================================================
+# STAGE 1: SEGMENTATION
+# ============================================================================
+dapi_channel: 0
+nuc_diameter: 10
+cyto_diameter: 20
+custom_channel_weights: ''
+cellpose_model: 'cyto2'
+use_gpu: true
+
+# ============================================================================
+# STAGE 2: GATING
+# ============================================================================
+gating:
+  use_shared_gates: true
+  normalization_method: percentile_99
+
+  gates:
+    DAPI: null
+    pERK: null
+    CD207: null
+    SOX10: null
+    CD45RO: null
+    SOX2: null
+    CD25: null
+    CD4: null
+    panCK: null
+    CD8a: null
+    CD163: null
+    FOXP3: null
+    CD3d: null
+    pS6: null
+    CD11c: null
+    PDL1: null
+    MCAM: null
+    CD68: null
+    PD1: null
+    S100a: null
+    ICOS: null
+    OX40: null
+    CD40L: null
+    HLADR: null
+    HLAA: null
+    NCAD: null
+    LAG3: null
+    CD31: null
+    CD73: null
+    CD90: null
+    TIM3: null
+    CKit: null
+    CD40: null
+    GranzB: null
+    HLADRB1: null
+    GITR: null
+    HLADPB1: null
+    MART1: null
+    CCND1: null
+    MYC: null
+
+  tile_correction:
+    enabled: true
+    markers: [pERK, GranzB, FOXP3, TIM3, LAG3, MYC, CCND1]
+    method: quantile
+    quantile: 0.95
+
+  liberal_gating:
+    enabled: true
+    liberal_markers: [GranzB, TIM3, LAG3, CCND1]
+
+# ============================================================================
+# STAGE 3: SPATIAL ANALYSIS
+# Reproduces Nirmal et al. 2022 Cancer Discovery analysis pipeline
+# ============================================================================
+spatial:
+
+  input:
+    gated_data: manual_gating_output/gated_data.h5ad
+    metadata: sample_metadata.csv
+
+  output:
+    base_directory: spatial_quantification_results
+    save_intermediate: true
+    formats: [png]
+    dpi: 300
+
+  metadata:
+    sample_column: sample_id
+    group_column: stage_group      # Early / Intermediate / Advanced / Recurrence / Tumor_free
+    additional_groupings:
+      - outcome                    # Tumor_free / Recurrence
+      - morphology_simplified      # SSM / Metastatic / Nodular
+      - stage_numeric              # Ordinal 1–6 for Spearman correlation
+
+  tumor_definition:
+    base_phenotype: Melanocytes
+    required_positive: [SOX10]
+    required_negative: []
+    structure_detection:
+      method: DBSCAN
+      eps: 1000
+      min_samples: 500
+      min_cluster_size: 250
+      boundary_buffer: 100
+      use_expanded_boundary: true
+      alpha: 100
+      min_edges: 20
+      holes_min_edges: 200
+
+  phenotypes:
+    Melanocytes:
+      positive: [SOX10]
+
+    Tumor_cells:
+      base: Melanocytes
+      positive: [MART1]
+
+    Keratinocytes:
+      positive: [panCK]
+
+    Endothelial_cells:
+      positive: [CD31]
+
+    Langerhans_cells:
+      positive: [CD207]
+
+    Mast_cells:
+      positive: [CKit, CD90]
+
+    T_cells:
+      positive: [CD3d]
+
+    Myeloid_Lineage:
+      anypos: [CD163, CD11c]
+
+    Cytotoxic_T_cells:
+      base: T_cells
+      positive: [CD8a]
+
+    Regulatory_T_cells:
+      base: T_cells
+      positive: [FOXP3]
+
+    Partially_Exhausted_T_cells:
+      base: Cytotoxic_T_cells
+      positive: [PD1]
+
+    Terminally_Exhausted_T_cells:
+      base: Partially_Exhausted_T_cells
+      anypos: [TIM3, LAG3]
+
+    Terminally_Exhausted_Dual_T_cells:
+      base: Partially_Exhausted_T_cells
+      positive: [TIM3, LAG3]
+
+    Macrophages:
+      base: Myeloid_Lineage
+      positive: [CD163]
+
+    DC_like_cells:
+      base: Myeloid_Lineage
+      positive: [CD11c]
+      negative: [CD163]
+
+    DC_like_PDL1_pos:
+      base: DC_like_cells
+      positive: [PDL1]
+
+    Langerhans_in_Myeloid:
+      base: Myeloid_Lineage
+      positive: [CD207]
+
+    CD163_CD11C_pos_Macrophages:
+      base: Macrophages
+      positive: [CD11c]
+
+    CD163_CD11C_neg_Macrophages:
+      base: Macrophages
+      negative: [CD11c]
+
+    CD163_CD11C_pos_PDL1_pos_Macrophages:
+      base: CD163_CD11C_pos_Macrophages
+      positive: [PDL1]
+
+    GranzB_pos_Cytotoxic_T_cells:
+      base: Cytotoxic_T_cells
+      positive: [GranzB]
+
+    PDL1_pos_Melanocytes:
+      base: Melanocytes
+      positive: [PDL1]
+
+    pERK_pos_Melanocytes:
+      base: Melanocytes
+      positive: [pERK]
+
+    pERK_neg_Melanocytes:
+      base: Melanocytes
+      negative: [pERK]
+
+    HLADPB1_pos_Melanocytes:
+      base: Melanocytes
+      positive: [HLADPB1]
+
+    HLADPB1_neg_Melanocytes:
+      base: Melanocytes
+      negative: [HLADPB1]
+
+    pERK_pos_HLADPB1_neg_Melanocytes:
+      base: Melanocytes
+      positive: [pERK]
+      negative: [HLADPB1]
+
+    pERK_neg_HLADPB1_pos_Melanocytes:
+      base: Melanocytes
+      positive: [HLADPB1]
+      negative: [pERK]
+
+    CCND1_pos_Melanocytes:
+      base: Melanocytes
+      positive: [CCND1]
+
+    MYC_pos_Melanocytes:
+      base: Melanocytes
+      positive: [MYC]
+
+    PDL1_pos_DC:
+      base: DC_like_cells
+      positive: [PDL1]
+
+    PDL1_pos_Myeloid:
+      base: Myeloid_Lineage
+      positive: [PDL1]
+
+  # ── Core analyses enabled ──────────────────────────────────────────────────
+
+  population_dynamics:
+    enabled: true
+    populations:
+      - Melanocytes
+      - Tumor_cells
+      - Keratinocytes
+      - Endothelial_cells
+      - Langerhans_cells
+      - Mast_cells
+      - T_cells
+      - Cytotoxic_T_cells
+      - Regulatory_T_cells
+      - Partially_Exhausted_T_cells
+      - Terminally_Exhausted_T_cells
+      - Myeloid_Lineage
+      - Macrophages
+      - DC_like_cells
+      - DC_like_PDL1_pos
+      - Langerhans_in_Myeloid
+      - CD163_CD11C_pos_Macrophages
+      - CD163_CD11C_neg_Macrophages
+      - CD163_CD11C_pos_PDL1_pos_Macrophages
+      - PDL1_pos_Melanocytes
+      - PDL1_pos_DC
+      - PDL1_pos_Myeloid
+    fractional_populations:
+      Cytotoxic_T_cells: T_cells
+      Regulatory_T_cells: T_cells
+      Partially_Exhausted_T_cells: Cytotoxic_T_cells
+      Terminally_Exhausted_T_cells: Partially_Exhausted_T_cells
+      Macrophages: Myeloid_Lineage
+      DC_like_cells: Myeloid_Lineage
+      Langerhans_in_Myeloid: Myeloid_Lineage
+      CD163_CD11C_pos_Macrophages: Macrophages
+      CD163_CD11C_neg_Macrophages: Macrophages
+      CD163_CD11C_pos_PDL1_pos_Macrophages: CD163_CD11C_pos_Macrophages
+      PDL1_pos_Melanocytes: Melanocytes
+      PDL1_pos_DC: DC_like_cells
+      PDL1_pos_Myeloid: Myeloid_Lineage
+      Tumor_cells: Melanocytes
+    comparisons:
+      - {name: Stage_comparison,    groups: [Early, Intermediate, Advanced]}
+      - {name: Outcome_comparison,  groups: [Tumor_free, Recurrence]}
+    correlation_column: stage_numeric
+    metrics: [count, density, fraction]
+    statistics:
+      test_method: mannwhitneyu
+      alpha: 0.05
+      fdr_correction: benjamini_hochberg
+
+  # Nirmal et al. Fig 2D/E — LDA Recurrent Cellular Neighborhoods
+  lda_neighborhood_analysis:
+    enabled: true
+    proximity_radius: 20
+    n_lda_topics: 10
+    n_lda_clusters: 30
+    n_rcns: 10
+    random_seed: 42
+    min_neighborhood_cells: 3
+    cell_types:
+      - Melanocytes
+      - Tumor_cells
+      - Keratinocytes
+      - Endothelial_cells
+      - Langerhans_cells
+      - Mast_cells
+      - T_cells
+      - Cytotoxic_T_cells
+      - Regulatory_T_cells
+      - Partially_Exhausted_T_cells
+      - Terminally_Exhausted_T_cells
+      - Myeloid_Lineage
+      - Macrophages
+      - DC_like_cells
+      - DC_like_PDL1_pos
+      - Langerhans_in_Myeloid
+      - CD163_CD11C_pos_Macrophages
+      - CD163_CD11C_neg_Macrophages
+      - CD163_CD11C_pos_PDL1_pos_Macrophages
+    stage_column: stage_group
+    group_column: sample_id
+    correlation_column: stage_numeric
+    max_cells_per_sample: null
+    learning_method: online
+
+  # Nirmal et al. Fig 5C-F — Spatial Lag Tumor Cell Communities
+  spatial_lag_analysis:
+    enabled: true
+    lag_radius: 20
+    n_tccs: 10
+    n_pcs: 20
+    random_seed: 42
+    tumor_phenotypes: [Melanocytes, Tumor_cells]
+    markers:
+      - S100a
+      - MART1
+      - SOX10
+      - HLADPB1
+      - panCK
+      - CD163
+      - CD11c
+      - CD3d
+      - CD8a
+      - FOXP3
+      - PD1
+      - PDL1
+      - TIM3
+      - LAG3
+      - pERK
+      - CCND1
+      - MYC
+      - NCAD
+    stage_column: stage_group
+
+  # Nirmal et al. Fig 3F — Harrell-Davis shift plots
+  shift_plot_analysis:
+    enabled: true
+    proximity_radius: 2000
+    percentiles: [10, 20, 30, 40, 50, 60, 70, 80, 90]
+    n_bootstrap: 500
+    alpha: 0.05
+    comparisons:
+      - {group1: Early, group2: Advanced,      label: Early_vs_Advanced}
+      - {group1: Early, group2: Intermediate,  label: Early_vs_Intermediate}
+      - {group1: Intermediate, group2: Advanced, label: Intermediate_vs_Advanced}
+    pairs:
+      - {source: Melanocytes, target: Cytotoxic_T_cells,             name: Melanocyte_to_CTL}
+      - {source: Melanocytes, target: DC_like_PDL1_pos,              name: Melanocyte_to_PDL1_DC}
+      - {source: Melanocytes, target: CD163_CD11C_pos_PDL1_pos_Macrophages, name: Melanocyte_to_PDL1_Mac}
+      - {source: Melanocytes, target: Regulatory_T_cells,            name: Melanocyte_to_Treg}
+      - {source: Melanocytes, target: Partially_Exhausted_T_cells,   name: Melanocyte_to_PD1_CTL}
+      - {source: pERK_pos_Melanocytes, target: Cytotoxic_T_cells,    name: pERK_pos_to_CTL}
+      - {source: pERK_neg_Melanocytes, target: Cytotoxic_T_cells,    name: pERK_neg_to_CTL}
+      - {source: HLADPB1_pos_Melanocytes, target: Cytotoxic_T_cells, name: HLADPB1_pos_to_CTL}
+      - {source: pERK_pos_HLADPB1_neg_Melanocytes, target: Cytotoxic_T_cells, name: ExclusionArchetype_to_CTL}
+      - {source: pERK_neg_HLADPB1_pos_Melanocytes, target: Cytotoxic_T_cells, name: EngagementArchetype_to_CTL}
+    stage_column: stage_group
+
+  marker_region_analysis:
+    enabled: true
+    generate_plots: true
+    analyze_holes: false
+    markers:
+      - {name: pERK,            positive_col: is_pERK_pos_Melanocytes,           negative_col: is_pERK_neg_Melanocytes}
+      - {name: HLADPB1,         positive_col: is_HLADPB1_pos_Melanocytes,        negative_col: is_HLADPB1_neg_Melanocytes}
+      - {name: ExclusionArchetype, positive_col: is_pERK_pos_HLADPB1_neg_Melanocytes, negative_col: is_pERK_neg_HLADPB1_pos_Melanocytes}
+    immune_populations:
+      - Cytotoxic_T_cells
+      - GranzB_pos_Cytotoxic_T_cells
+      - Regulatory_T_cells
+      - Partially_Exhausted_T_cells
+      - Terminally_Exhausted_T_cells
+      - Macrophages
+      - DC_like_cells
+    region_detection:
+      eps: 80
+      min_samples: 5
+      alpha: 40
+      core_only: true
+      min_area: 0
+      min_edges: 15
+      holes_min_area: 10000
+      holes_min_edges: 10
+
+  per_tumor_analysis:
+    enabled: false   # requires TOM reporter; not present in melanoma panel
+
+  # Disabled — not applicable to this study design
+  spatial_permutation:         {enabled: false}
+  distance_analysis:           {enabled: false}
+  distance_permutation_testing: {enabled: false}
+  neighborhood_permutation_testing: {enabled: false}
+  immune_infiltration:         {enabled: false}
+  cellular_neighborhoods:      {enabled: false}
+  enhanced_neighborhoods:      {enabled: false}
+  tumor_microenvironment:      {enabled: false}
+  temporal_analysis:           {enabled: false}
+  cluster_composition_analysis: {enabled: false}
+  kpnt_correlation_analysis:   {enabled: false}
+  perk_mfi_analysis:           {enabled: false}
+  pseudotime_analysis:         {enabled: false}
+  coexpression_analysis:       {enabled: false}
+  spatial_overlap_analysis:    {enabled: false}
+
+  statistics:
+    test: mann_whitney
+    fdr_method: benjamini-hochberg
+    alpha: 0.05
+    report_effect_sizes: true
+    n_bootstrap: 1000
+
+  visualization:
+    enabled: true
+    style: publication
+    font_family: Arial
+    font_size: 12
+
+  performance:
+    n_jobs: -1
+    use_kdtree: true
+    memory_efficient: true
+    max_cells_per_sample: 50000
+
+  advanced:
+    random_seed: 42
+    verbose: true

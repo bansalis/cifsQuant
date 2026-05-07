@@ -161,10 +161,16 @@ Start with `per_tumor_analysis` and `population_dynamics`, then enable more as n
 
 ## Example Configs
 
-See `configs/examples/` for two complete working configurations:
+See `configs/examples/` for complete working configurations:
 
-- **`batch25_tumor_kp/`** — single-timepoint lung tumor with 23-marker panel
-- **`batch6_treatment_validation/`** — longitudinal study with treated/untreated comparison
+| Example | Study type | Key features |
+|---|---|---|
+| `batch25_tumor_kp/` | Lung tumor, single timepoint | 24-marker panel, TOM+ tumor detection, pERK/NINJA |
+| `batch6_treatment_validation/` | Lung tumor, longitudinal + treatment | T cell transfer, temporal + treatment comparisons |
+| `flutls_balt_tls/` | Flu lung BALT/TLS | B cell cluster analysis, GC B cell hierarchy, FDCs |
+| `mel_val_nirmal2022/` | Melanoma (Nirmal 2022) | LDA-RCN, Spatial Lag TCC, Shift plots, 41-marker panel |
+
+See `configs/examples/README.md` for study-by-study details.
 
 ---
 
@@ -194,6 +200,27 @@ spatial_quantification_results/
 | `scripts/tile_from_channels.py` | Generate per-channel TIFF tiles |
 | `scripts/plot_spatial_phenotypes.py` | Generate high-resolution spatial phenotype maps |
 | `archive_cleanup.sh` | Compress intermediate segmentation files to save disk space |
+
+---
+
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| `docs/config_reference.md` | Every parameter in `project.yaml` — type, valid values, defaults, examples |
+| `docs/analysis_guide.md` | Per-analysis: what it measures, when to enable, key parameters, outputs |
+| `docs/quickstart_new_study.md` | Step-by-step setup guide for a new experiment |
+
+---
+
+## Tests
+
+```bash
+conda activate cifsquant
+pytest tests/ -v
+```
+
+Smoke tests validate config logic, gating functions, and spatial analysis module instantiation on synthetic data. No real images required. See `tests/README.md`.
 
 ---
 

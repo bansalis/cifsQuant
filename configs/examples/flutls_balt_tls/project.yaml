@@ -1,0 +1,422 @@
+# ============================================================================
+# cifsQuant Project Config — Flu-induced BALT / TLS (Tertiary Lymphoid Structure)
+# ============================================================================
+# Influenza lung: B cell aggregate / TLS kinetics across 4 timepoints
+# Timepoints: 2, 4, 8, 16 weeks post-infection
+# Panel: 14-marker germinal center panel (B cells, T cells, FDCs, HEVs)
+# Structure: B cell clusters (DBSCAN on B220+ cells, eps=250)
+# Key biology: GC B cell maturation, Tfh-GC interaction, FDC network formation
+# ============================================================================
+
+# ============================================================================
+# PANEL DEFINITION
+# channel_name: display_name (used throughout pipeline)
+# ============================================================================
+markers:
+  DAPI: DAPI
+  Cy3_CD4: CD4
+  Cy5_CD21: CD21
+  FITC_B220: B220
+  Cy3_BCL6: BCL6
+  Cy5_GL7: GL7
+  FITC_IgD: IgD
+  Cy3_CD8b: CD8B
+  Cy5_CD23: CD23
+  FITC_PNAD: PNAD
+  Cy3_Ki67: KI67
+  Cy5_AID: AID
+  FITC_CD3: CD3
+  Cy5_PD1: PD1
+
+# ============================================================================
+# MARKER HIERARCHY
+# child: parent — child gate enforced as subset of parent
+# ============================================================================
+marker_hierarchy:
+  BCL6: B220
+  GL7: B220
+  AID: B220
+  IgD: B220
+  CD23: B220
+  CD21: B220
+  CD4: CD3
+  CD8B: CD3
+  PD1: CD3
+
+# ============================================================================
+# STAGE 1: SEGMENTATION (Nextflow params — flat keys only)
+# ============================================================================
+dapi_channel: 0
+nuc_diameter: 12
+cyto_diameter: 24
+custom_channel_weights: ''
+cellpose_model: 'cyto2'
+use_gpu: true
+
+# ============================================================================
+# STAGE 2: GATING
+# ============================================================================
+gating:
+  use_shared_gates: true
+  normalization_method: percentile_99
+
+  gates:
+    DAPI: null
+    CD4: null
+    CD21: null
+    B220: null
+    BCL6: null
+    GL7: null
+    IgD: null
+    CD8B: null
+    CD23: null
+    PNAD: null
+    KI67: null
+    AID: null
+    CD3: null
+    PD1: null
+
+  tile_correction:
+    enabled: true
+    markers:
+      - KI67
+      - BCL6
+      - AID
+    method: quantile
+    quantile: 0.95
+
+  liberal_gating:
+    enabled: false
+    liberal_markers: []
+
+# ============================================================================
+# STAGE 3: SPATIAL ANALYSIS
+# ============================================================================
+spatial:
+
+  input:
+    gated_data: manual_gating_output/gated_data.h5ad
+    metadata: sample_metadata.csv
+
+  output:
+    base_directory: b_cell_cluster_analysis
+    save_intermediate: true
+    formats: [png]
+    dpi: 300
+
+  metadata:
+    sample_column: sample_id
+    group_column: group
+    timepoint_column: timepoint
+
+  # B cell clusters serve as the spatial "structure" (equivalent to tumor)
+  tumor_definition:
+    base_phenotype: B_cells
+    required_positive: [B220]
+    required_negative: []
+    structure_detection:
+      method: DBSCAN
+      eps: 250
+      min_samples: 100
+      min_cluster_size: 100
+      boundary_buffer: 75
+      use_expanded_boundary: true
+      alpha: 100
+      min_edges: 30
+      holes_min_edges: 100
+
+  phenotypes:
+    B_cells:
+      positive: [B220]
+
+    Naive_B_cells:
+      positive: [B220, IgD]
+      negative: [GL7, BCL6]
+
+    Follicular_B_cells:
+      positive: [B220, CD21, CD23, IgD]
+      negative: [GL7]
+
+    GC_B_cells:
+      positive: [B220, GL7, BCL6]
+      negative: [IgD]
+
+    Proliferating_GC_B:
+      base: GC_B_cells
+      positive: [KI67]
+
+    Non_proliferating_GC_B:
+      base: GC_B_cells
+      negative: [KI67]
+
+    GL7_positive_B_cells:
+      positive: [B220, GL7]
+
+    T_cells:
+      positive: [CD3]
+
+    CD4_T_cells:
+      positive: [CD4]
+
+    CD8_T_cells:
+      positive: [CD8B]
+
+    Tfh_cells:
+      positive: [CD4, PD1, BCL6]
+      negative: [B220]
+
+    PD1_positive_CD4:
+      positive: [CD4, PD1]
+      negative: [BCL6]
+
+    Mature_FDCs:
+      positive: [CD21, CD23]
+      negative: [B220, CD4, CD8B]
+
+    FDCs:
+      positive: [CD21]
+      negative: [B220, CD4, CD8B]
+
+    HEV_positive:
+      positive: [PNAD]
+
+    All_proliferating:
+      positive: [KI67]
+
+  per_tumor_analysis:
+    enabled: true
+    use_spatialcells: true
+    generate_plots: true
+    markers:
+      - {name: GL7,          phenotype: GL7_positive_B_cells}
+      - {name: GC_B,         phenotype: GC_B_cells}
+      - {name: Tfh,          phenotype: Tfh_cells}
+      - {name: FDC,          phenotype: FDCs}
+      - {name: Mature_FDC,   phenotype: Mature_FDCs}
+      - {name: Proliferating, phenotype: All_proliferating}
+    spatial_heterogeneity:
+      enabled: true
+      window_size: 300
+      step_size: 300
+      min_cells: 10
+      phenotype_col: is_GC_B_cells
+
+  population_dynamics:
+    enabled: true
+    populations:
+      - B_cells
+      - Naive_B_cells
+      - Follicular_B_cells
+      - GC_B_cells
+      - Proliferating_GC_B
+      - Non_proliferating_GC_B
+      - T_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - Tfh_cells
+      - PD1_positive_CD4
+      - FDCs
+      - Mature_FDCs
+      - HEV_positive
+      - All_proliferating
+    fractional_populations:
+      Naive_B_cells: B_cells
+      Follicular_B_cells: B_cells
+      GC_B_cells: B_cells
+      Proliferating_GC_B: GC_B_cells
+      Non_proliferating_GC_B: GC_B_cells
+      CD4_T_cells: T_cells
+      CD8_T_cells: T_cells
+      Tfh_cells: CD4_T_cells
+      PD1_positive_CD4: CD4_T_cells
+    comparisons:
+      - {name: Timepoint_comparison, groups: [flu]}
+    metrics: [count, density, fraction]
+    statistics:
+      test_per_timepoint: true
+      test_method: kruskal
+      alpha: 0.05
+      fdr_correction: benjamini_hochberg
+      pairwise_comparisons: true
+
+  distance_analysis:
+    enabled: true
+    pairings:
+      - source: Tfh_cells
+        targets: [GC_B_cells, Proliferating_GC_B, Non_proliferating_GC_B]
+      - source: FDCs
+        targets: [B_cells, GC_B_cells, Naive_B_cells, Follicular_B_cells]
+      - source: Mature_FDCs
+        targets: [B_cells, GC_B_cells, Naive_B_cells, Follicular_B_cells]
+      - source: CD4_T_cells
+        targets: [B_cells, GC_B_cells, Naive_B_cells]
+      - source: CD8_T_cells
+        targets: [B_cells, GC_B_cells, Follicular_B_cells]
+    metrics: [mean_nearest_neighbor, median_nearest_neighbor, distance_distribution]
+    levels: [per_sample, per_structure]
+    comparisons:
+      - {name: Timepoint_comparison, groups: [flu]}
+    max_distance_plot: 500
+
+  immune_infiltration:
+    enabled: true
+    use_spatialcells: true
+    immune_populations:
+      - T_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - Tfh_cells
+      - PD1_positive_CD4
+      - FDCs
+      - Mature_FDCs
+    boundaries: [0, 50, 100, 150]
+    per_structure: true
+
+  marker_region_analysis:
+    enabled: true
+    generate_plots: true
+    markers:
+      - name: GL7
+        positive_col: is_GL7_positive_B_cells
+        negative_col: is_Naive_B_cells
+    phenotype_columns:
+      - is_B_cells
+      - is_GC_B_cells
+      - is_Naive_B_cells
+      - is_Follicular_B_cells
+      - is_T_cells
+      - is_CD4_T_cells
+      - is_CD8_T_cells
+      - is_Tfh_cells
+      - is_FDCs
+      - is_Mature_FDCs
+    immune_populations:
+      - is_Tfh_cells
+      - is_CD4_T_cells
+      - is_CD8_T_cells
+      - is_PD1_positive_CD4
+      - is_FDCs
+      - is_Mature_FDCs
+    region_detection:
+      eps: 50
+      min_samples: 100
+      alpha: 50
+      core_only: true
+      min_area: 1000
+    analyze_holes: false
+
+  cellular_neighborhoods:
+    enabled: true
+    populations:
+      - B_cells
+      - Naive_B_cells
+      - Follicular_B_cells
+      - GC_B_cells
+      - Proliferating_GC_B
+      - T_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - Tfh_cells
+      - PD1_positive_CD4
+      - FDCs
+      - Mature_FDCs
+    window_size: 100
+    k_neighbors: 30
+    cells_per_sample: 100000
+    n_clusters: 8
+    clustering_method: kmeans
+    define_globally: true
+
+  cluster_composition_analysis:
+    enabled: true
+    populations:
+      - Naive_B_cells
+      - Follicular_B_cells
+      - GC_B_cells
+      - Proliferating_GC_B
+      - Tfh_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - FDCs
+      - Mature_FDCs
+
+  temporal_analysis:
+    enabled: true
+    cluster_metrics:
+      - cluster_count
+      - cluster_size
+      - total_b_cells
+      - cluster_area
+      - cluster_density
+
+  enhanced_neighborhoods:
+    enabled: true
+    neighborhood_radius: 50
+    markers:
+      - {name: GL7, pos_col: is_GL7_positive_B_cells, neg_col: is_Naive_B_cells}
+      - {name: GC, pos_col: is_GC_B_cells, neg_col: is_Non_GC_B_cells}
+    cell_types:
+      - B_cells
+      - Naive_B_cells
+      - Follicular_B_cells
+      - GC_B_cells
+      - T_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - Tfh_cells
+      - FDCs
+      - Mature_FDCs
+    immune_cells:
+      - T_cells
+      - CD4_T_cells
+      - CD8_T_cells
+      - Tfh_cells
+      - PD1_positive_CD4
+
+  # Disabled — not applicable to lymphoid tissue study
+  spatial_permutation:
+    enabled: false
+  distance_permutation_testing:
+    enabled: false
+  neighborhood_permutation_testing:
+    enabled: false
+  kpnt_correlation_analysis:
+    enabled: false
+  perk_mfi_analysis:
+    enabled: false
+  tumor_microenvironment:
+    enabled: false
+  pseudotime_analysis:
+    enabled: false
+  lda_neighborhood_analysis:
+    enabled: false
+  spatial_lag_analysis:
+    enabled: false
+  shift_plot_analysis:
+    enabled: false
+  coexpression_analysis:
+    enabled: false
+  spatial_overlap_analysis:
+    enabled: false
+
+  statistics:
+    test: mann_whitney
+    fdr_method: benjamini-hochberg
+    alpha: 0.05
+    report_effect_sizes: true
+    n_bootstrap: 1000
+
+  visualization:
+    enabled: true
+    style: publication
+    font_family: Arial
+    font_size: 12
+
+  performance:
+    n_jobs: -1
+    use_kdtree: true
+    memory_efficient: true
+
+  advanced:
+    random_seed: 42
+    verbose: true

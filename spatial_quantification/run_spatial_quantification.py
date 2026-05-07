@@ -253,7 +253,7 @@ def main():
             print(f"     {traceback.format_exc()}")
 
     # Comprehensive Coexpression Analysis
-    if config.get('coexpression_analysis', {}).get('enabled', True):
+    if config.get('coexpression_analysis', {}).get('enabled', False):
         print("\n  Running comprehensive coexpression analysis...")
         try:
             coexpression = CoexpressionAnalysisComprehensive(adata, config, output_dir)
@@ -264,7 +264,7 @@ def main():
             print(f"     {traceback.format_exc()}")
 
     # Spatial Overlap Analysis
-    if config.get('spatial_overlap_analysis', {}).get('enabled', True):
+    if config.get('spatial_overlap_analysis', {}).get('enabled', False):
         print("\n  Running spatial overlap analysis...")
         try:
             from spatial_quantification.analyses.spatial_overlap_analysis import SpatialOverlapAnalysis
@@ -470,6 +470,42 @@ def main():
         except Exception as e:
             import traceback
             print(f"  ⚠ Could not run marker clustering analysis: {e}")
+            traceback.print_exc()
+
+    # LDA Recurrent Cellular Neighborhoods (Nirmal et al. 2022 methodology)
+    if config.get('lda_neighborhood_analysis', {}).get('enabled', False):
+        print("\n  Running LDA recurrent cellular neighborhood analysis...")
+        try:
+            from spatial_quantification.analyses.lda_neighborhood_analysis import LDANeighborhoodAnalysis
+            lda_analysis = LDANeighborhoodAnalysis(adata, config, output_dir)
+            all_results['lda_neighborhood_analysis'] = lda_analysis.run()
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Could not run LDA neighborhood analysis: {e}")
+            traceback.print_exc()
+
+    # Spatial Lag / Tumor Cell Communities (Nirmal et al. 2022 methodology)
+    if config.get('spatial_lag_analysis', {}).get('enabled', False):
+        print("\n  Running spatial lag / tumor cell community analysis...")
+        try:
+            from spatial_quantification.analyses.spatial_lag_analysis import SpatialLagAnalysis
+            spatial_lag = SpatialLagAnalysis(adata, config, output_dir)
+            all_results['spatial_lag_analysis'] = spatial_lag.run()
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Could not run spatial lag analysis: {e}")
+            traceback.print_exc()
+
+    # Harrell-Davis Shift Plot Analysis (distance distribution comparisons)
+    if config.get('shift_plot_analysis', {}).get('enabled', False):
+        print("\n  Running shift plot analysis...")
+        try:
+            from spatial_quantification.analyses.shift_plot_analysis import ShiftPlotAnalysis
+            shift_analysis = ShiftPlotAnalysis(adata, config, output_dir)
+            all_results['shift_plot_analysis'] = shift_analysis.run()
+        except Exception as e:
+            import traceback
+            print(f"  ⚠ Could not run shift plot analysis: {e}")
             traceback.print_exc()
 
     # =========================================================================

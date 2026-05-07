@@ -8,6 +8,27 @@ Each example now ships with a `project.yaml` — the recommended single-config f
 
 ## Available Examples
 
+### `flutls_balt_tls/`
+**Study:** Flu-induced BALT / tertiary lymphoid structure (TLS) kinetics
+**Samples:** Longitudinal lung tissue, 2, 4, 8, 16 weeks post-infection
+**Panel:** 14 markers (B220, BCL6, GL7, IgD, CD21, CD23, AID, KI67, CD3, CD4, CD8B, PD1, PNAD + DAPI)
+**Key features:**
+- B cell clusters as the primary spatial structure (eps=250µm, vs tumor eps=1000µm)
+- Full GC B cell hierarchy: Naive → Follicular → GL7+GC → Proliferating/Non-proliferating
+- Tfh, FDC, HEV populations with per-structure distance and infiltration analysis
+- GL7+ marker region analysis for GC zone quantification
+- Temporal analysis for structure kinetics across timepoints
+
+### `mel_val_nirmal2022/`
+**Study:** Melanoma validation reproducing Nirmal et al. 2022 (Cancer Discovery)
+**Samples:** 8 patients, 6 AJCC disease stages (Stage IA → IV), primary melanoma
+**Panel:** 41 markers (full melanoma CyCIF panel including pERK, SOX10, MART1, HLADPB1, CD3d, CD8a, CD163, CD11c, TIM3, LAG3, FOXP3, GranzB, etc.)
+**Key features:**
+- LDA-based Recurrent Cellular Neighborhoods (Fig 2D/E, 3A-D from paper)
+- Spatial Lag Tumor Cell Communities / TCC analysis (Fig 5C-F)
+- Harrell-Davis shift plot distance comparisons (Fig 3F)
+- pERK+/HLADPB1+ tumor state spatial zones and immune exclusion/engagement hypotheses
+
 ### `batch25_tumor_kp/`
 **Study:** Single-timepoint lung tumor microenvironment (KP mouse model)
 **Samples:** 4 samples — KPT cis/trans, KPNT cis/trans (JL216–219), week 10
@@ -55,12 +76,15 @@ python spatial_quantification/run_spatial_quantification.py
 
 ## Key Differences Between Examples
 
-| Feature | batch25 | batch6 |
-|---|---|---|
-| Timepoints | 1 (week 10) | 3 (3, 6, 8 wk) |
-| Treatment dimension | No | Yes (p14 vs none) |
-| Temporal analysis | `enabled: false` | `enabled: true` |
-| `test_per_timepoint` | false | true |
-| Macrophages | Yes (F480) | No (not in panel) |
-| Proliferation | Yes (KI67) | No |
-| Tumor size at detection | Large (eps=1000µm) | Small-medium (eps=800µm) |
+| Feature | batch25 | batch6 | flutls | mel_val |
+|---|---|---|---|---|
+| Tissue | Lung tumor | Lung tumor | Lung BALT/TLS | Skin melanoma |
+| Structure type | Tumor (TOM+) | Tumor (TOM+) | B cell cluster (B220+) | Melanoma (SOX10+) |
+| Timepoints | 1 (wk 10) | 3 (3,6,8 wk) | 4 (2,4,8,16 wk) | N/A (stage) |
+| Treatment dim | No | Yes (p14) | No | No |
+| Temporal analysis | No | Yes | Yes | No |
+| Panel size | 24 markers | 13 markers | 14 markers | 41 markers |
+| Structure eps | 1000µm | 800µm | 250µm | 1000µm |
+| LDA/RCN analysis | No | No | No | Yes |
+| Shift plot analysis | No | No | No | Yes |
+| Spatial lag TCC | No | No | No | Yes |
