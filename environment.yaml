@@ -59,3 +59,7 @@ dependencies:
     # SpatialCells: structure boundary detection (alpha shapes, region assignment)
     # ⚠  This package is NOT on PyPI. Install from source — see setup_environment.sh.
     # - spatialcells>=1.0   # uncomment if installing separately
+
+    # ── GUI (optional — required only for `streamlit run gui/app.py`) ──────────
+    - streamlit>=1.35
+    - plotly>=5.20

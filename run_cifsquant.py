@@ -30,11 +30,17 @@ def load_project(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def validate_project(project: dict, path: Path = Path('project.yaml')) -> bool:
-    """Check for common configuration errors before wasting a run.
+def validate_project(project: dict, path: Path = Path('project.yaml'),
+                     stages: list | None = None) -> bool:
+    """Check for configuration errors relevant to the stages being run.
 
-    Returns True if the config is valid, False otherwise (errors are printed).
+    Only gating/spatial sections are validated when those stages are included;
+    segmentation only requires markers to be defined. Returns True if the
+    config is valid, False otherwise (errors are printed).
     """
+    if stages is None:
+        stages = list(STAGES)
+
     errors = []
 
     if 'markers' not in project:
@@ -42,41 +48,48 @@ def validate_project(project: dict, path: Path = Path('project.yaml')) -> bool:
 
     marker_display_names = set(project.get('markers', {}).values())
 
-    # Validate gate keys match panel
-    gating = project.get('gating', {})
-    gate_keys = set(gating.get('gates', {}).keys())
-    unknown_gates = gate_keys - marker_display_names
-    if unknown_gates:
-        errors.append(f"Gate keys not in marker panel: {sorted(unknown_gates)}")
+    # Gating and hierarchy checks are only relevant when those stages run
+    if 'gating' in stages or 'spatial' in stages:
+        gating = project.get('gating', {})
 
-    # Validate tile correction marker names
-    tc_markers = set(gating.get('tile_correction', {}).get('markers', []))
-    unknown_tc = tc_markers - marker_display_names
-    if unknown_tc:
-        errors.append(f"Tile correction markers not in panel: {sorted(unknown_tc)}")
+        # Gate keys must map to panel display names
+        gate_keys = set(gating.get('gates', {}).keys())
+        if gate_keys:
+            unknown_gates = gate_keys - marker_display_names
+            if unknown_gates:
+                errors.append(f"Gate keys not in marker panel: {sorted(unknown_gates)}")
 
-    # Validate liberal gating marker names
-    lib_markers = set(gating.get('liberal_gating', {}).get('liberal_markers', []))
-    unknown_lib = lib_markers - marker_display_names
-    if unknown_lib:
-        errors.append(f"Liberal gating markers not in panel: {sorted(unknown_lib)}")
+        # Tile correction markers
+        tc_markers = set(gating.get('tile_correction', {}).get('markers', []))
+        unknown_tc = tc_markers - marker_display_names
+        if unknown_tc:
+            errors.append(f"Tile correction markers not in panel: {sorted(unknown_tc)}")
 
-    # Validate hierarchy references exist
-    hierarchy = project.get('marker_hierarchy', {})
-    for child, parent in hierarchy.items():
-        if child not in marker_display_names:
-            errors.append(f"marker_hierarchy child '{child}' not in panel")
-        if parent is not None and parent not in marker_display_names:
-            errors.append(f"marker_hierarchy parent '{parent}' not in panel")
+        # Liberal gating markers
+        lib_markers = set(gating.get('liberal_gating', {}).get('liberal_markers', []))
+        unknown_lib = lib_markers - marker_display_names
+        if unknown_lib:
+            errors.append(f"Liberal gating markers not in panel: {sorted(unknown_lib)}")
 
-    # Validate spatial phenotype marker references
-    spatial = project.get('spatial', {})
-    for pheno_name, pheno_def in spatial.get('phenotypes', {}).items():
-        if not isinstance(pheno_def, dict):
-            continue
-        for marker in pheno_def.get('positive', []) + pheno_def.get('negative', []):
-            if marker not in marker_display_names and marker not in ('STRUCTURE_MARKER', 'IMMUNE_MARKER', 'T_CELL_MARKER', 'CD8_MARKER', 'CD4_MARKER'):
-                errors.append(f"Phenotype '{pheno_name}' references unknown marker '{marker}'")
+        # Marker hierarchy
+        hierarchy = project.get('marker_hierarchy', {})
+        for child, parent in hierarchy.items():
+            if child not in marker_display_names:
+                errors.append(f"marker_hierarchy child '{child}' not in panel")
+            if parent is not None and parent not in marker_display_names:
+                errors.append(f"marker_hierarchy parent '{parent}' not in panel")
+
+    # Spatial phenotype checks only when running spatial analysis
+    if 'spatial' in stages:
+        spatial = project.get('spatial', {})
+        for pheno_name, pheno_def in spatial.get('phenotypes', {}).items():
+            if not isinstance(pheno_def, dict):
+                continue
+            for marker in pheno_def.get('positive', []) + pheno_def.get('negative', []):
+                # Template placeholders stay valid so --dry-run works on a fresh clone
+                if marker not in marker_display_names and marker not in (
+                        'STRUCTURE_MARKER', 'IMMUNE_MARKER', 'T_CELL_MARKER', 'CD8_MARKER', 'CD4_MARKER'):
+                    errors.append(f"Phenotype '{pheno_name}' references unknown marker '{marker}'")
 
     if errors:
         print(f"\n  Validation errors in {path}:")
@@ -84,7 +97,7 @@ def validate_project(project: dict, path: Path = Path('project.yaml')) -> bool:
             print(f"    - {e}")
         return False
 
-    print(f"  Validated: {path}")
+    print(f"  Validated: {path} (stages: {', '.join(stages)})")
     return True
 
 
@@ -184,7 +197,7 @@ Examples:
         print("Mode:           DRY RUN (validate only)")
 
     project = load_project(project_path)
-    if not validate_project(project, project_path):
+    if not validate_project(project, project_path, stages=args.stages):
         sys.exit(1)
     generate_markers_csv(project)
 

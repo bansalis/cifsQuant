@@ -1,27 +1,30 @@
-version: '3.8'
+# cifsQuant containers — Stages 2/3 and the GUI.
+# Stage 1 (Nextflow + Cellpose) runs on the host because it spawns its own
+# Docker containers; run it with `python run_cifsquant.py --stages segmentation`.
+#
+#   docker compose up gui           # Streamlit GUI at http://localhost:8501
+#   docker compose run --rm cli     # interactive shell in the pipeline env
+#
+# The repo is bind-mounted over /app so configs edited in the GUI, gating
+# outputs, and spatial results all land in your working copy.
 
 services:
-  spatial-analysis:
+  gui:
     build: .
-    container_name: spatial_analysis
+    container_name: cifsquant_gui
+    ports:
+      - "8501:8501"
     volumes:
-      - ./spatial_pipeline:/app/spatial_pipeline:ro
-      - ./spatial_analysis:/app/spatial_analysis
-      - ./configs:/app/configs:ro
+      - ./:/app
     working_dir: /app
     environment:
       - PYTHONPATH=/app
-    profiles:
-      - spatial
 
-  # Interactive session for development/debugging
-  spatial-dev:
+  cli:
     build: .
-    container_name: spatial_dev
+    container_name: cifsquant_cli
     volumes:
-      - ./spatial_pipeline:/app/spatial_pipeline:ro
-      - ./spatial_analysis:/app/spatial_analysis
-      - ./configs:/app/configs
+      - ./:/app
     working_dir: /app
     environment:
       - PYTHONPATH=/app
@@ -29,4 +32,4 @@ services:
     stdin_open: true
     tty: true
     profiles:
-      - dev
+      - cli

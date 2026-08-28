@@ -203,6 +203,21 @@ spatial_quantification_results/
 
 ---
 
+## Graphical Interface
+
+A Streamlit GUI covers panel setup, gating review, spatial configuration, and pipeline runs — see `gui/README.md`.
+
+```bash
+# Local (inside the cifsquant conda env)
+streamlit run gui/app.py
+
+# Or containerized (Stages 2/3 + GUI; Stage 1 still runs on the host)
+docker compose up gui            # → http://localhost:8501
+docker compose run --rm cli      # interactive shell in the pipeline environment
+```
+
+---
+
 ## Documentation
 
 | Doc | Contents |

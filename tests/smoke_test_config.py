@@ -101,21 +101,40 @@ def test_load_config_accepts_standalone_spatial_config(tmp_path):
 
 
 def test_validate_project_passes_on_valid_config(minimal_project_yaml, tmp_path):
-    """run_cifsquant.py validate_project() should return True for valid config."""
+    """validate_project() should return True for a valid config."""
+    import yaml
     from run_cifsquant import validate_project
-    # validate_project may print warnings but should not raise on valid config
-    result = validate_project(minimal_project_yaml)
-    assert result is True or result is None  # may return True or None on success
+
+    config_file = tmp_path / 'project.yaml'
+    with open(config_file, 'w') as f:
+        yaml.dump(minimal_project_yaml, f)
+
+    assert validate_project(minimal_project_yaml, config_file) is True
 
 
-def test_validate_project_catches_bad_gate_key(minimal_project_yaml):
-    """validate_project() should detect a gate key not in the panel."""
+def test_validate_project_catches_bad_gate_key(minimal_project_yaml, tmp_path):
+    """validate_project() should return False on a gate key not in the panel."""
+    import copy
+    import yaml
+    from run_cifsquant import validate_project
+
+    bad_config = copy.deepcopy(minimal_project_yaml)
+    bad_config['gating']['gates']['NONEXISTENT_MARKER'] = None
+
+    config_file = tmp_path / 'project.yaml'
+    with open(config_file, 'w') as f:
+        yaml.dump(bad_config, f)
+
+    assert validate_project(bad_config, config_file) is False
+
+
+def test_validate_project_segmentation_only_skips_gating_checks(minimal_project_yaml):
+    """Segmentation-only runs should not fail on gating/spatial config errors."""
     import copy
     from run_cifsquant import validate_project
 
     bad_config = copy.deepcopy(minimal_project_yaml)
     bad_config['gating']['gates']['NONEXISTENT_MARKER'] = None
 
-    # Should return False or raise — not silently pass
-    result = validate_project(bad_config)
-    assert result is False
+    assert validate_project(bad_config, stages=['segmentation']) is True
+    assert validate_project(bad_config, stages=['gating']) is False
