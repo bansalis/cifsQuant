@@ -488,6 +488,50 @@ def landmark_quantile_normalization(adata):
     
     return adata
 
+def normalize_column(values, method='percentile_99'):
+    """
+    Normalize a single marker's intensity values (Series or array).
+
+    Column-level counterpart of normalize_data(): 'percentile_99' mirrors the
+    production per-marker scaling (divide by 99th percentile of positive
+    values, clip to [0, 1]).
+    """
+    values = pd.Series(values).astype(float)
+
+    if method == 'percentile_99':
+        pos_vals = values[values > 0]
+        ref = pos_vals if len(pos_vals) > 0 else values
+        p99 = np.percentile(ref, 99)
+        if p99 <= 0:
+            return values.clip(lower=0.0)
+        return (values / p99).clip(0.0, 1.0)
+
+    if method == 'zscore':
+        std = values.std()
+        if std == 0 or np.isnan(std):
+            return values - values.mean()
+        return (values - values.mean()) / std
+
+    if method == 'minmax':
+        span = values.max() - values.min()
+        if span == 0:
+            return values - values.min()
+        return (values - values.min()) / span
+
+    raise ValueError(f"Unknown normalization method: {method}")
+
+
+def apply_gate(values, threshold):
+    """
+    Gate a single marker column against a threshold.
+
+    Returns a boolean Series: strictly greater than the gate, matching the
+    production semantics in apply_gates() (cells exactly at the gate value
+    are negative).
+    """
+    return pd.Series(values).astype(float) > threshold
+
+
 def normalize_data(adata, method='percentile_99'):
     """
     Per-marker 99th percentile normalization across ALL samples.

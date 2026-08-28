@@ -57,11 +57,12 @@ class TestGateApplication:
         assert list(result) == [False, False, True, True, True]
 
     def test_gate_at_zero_threshold(self):
-        """threshold=0 should gate all positive."""
+        """threshold=0 gates all strictly-positive values; zero-intensity cells
+        stay negative (production gating in apply_gates() is strictly >)."""
         from manual_gating import apply_gate
         values = pd.Series([0.0, 0.1, 0.5])
         result = apply_gate(values, threshold=0.0)
-        assert result.all()
+        assert list(result) == [False, True, True]
 
     def test_gate_at_one_threshold(self):
         """threshold=1.0 should gate none positive (all values <= 1.0 in normalized scale)."""

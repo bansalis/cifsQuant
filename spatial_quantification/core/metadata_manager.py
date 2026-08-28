@@ -12,17 +12,27 @@ import warnings
 class MetadataManager:
     """Manage and process metadata with flexible groupings."""
 
-    def __init__(self, metadata: pd.DataFrame, config: Dict):
+    def __init__(self, metadata=None, config: Optional[Dict] = None):
         """
         Initialize metadata manager.
 
+        Accepts either (metadata, config) or just (config); with config only,
+        the metadata CSV is loaded from config['input']['metadata'].
+
         Parameters
         ----------
-        metadata : pd.DataFrame
+        metadata : pd.DataFrame, optional
             Sample metadata
         config : dict
             Configuration dictionary
         """
+        if config is None and isinstance(metadata, dict):
+            config = metadata
+            metadata = None
+        if config is None:
+            raise TypeError("MetadataManager requires a config dict")
+        if metadata is None:
+            metadata = pd.read_csv(config['input']['metadata'])
         self.metadata = metadata.copy()
         self.config = config
         self.meta_config = config['metadata']
@@ -41,7 +51,7 @@ class MetadataManager:
         # Standardize column names
         sample_col = self.meta_config['sample_column']
         group_col = self.meta_config['group_column']
-        timepoint_col = self.meta_config['timepoint_column']
+        timepoint_col = self.meta_config.get('timepoint_column')
         treatment_col = self.meta_config.get('treatment_column', 'treatment')
 
         # Ensure sample_id is uppercase
@@ -57,11 +67,12 @@ class MetadataManager:
         if 'custom_groupings' in self.meta_config:
             self._add_custom_groupings()
 
-        # Convert timepoint to numeric
-        self.metadata[timepoint_col] = pd.to_numeric(
-            self.metadata[timepoint_col],
-            errors='coerce'
-        )
+        # Convert timepoint to numeric (studies without a time dimension may omit it)
+        if timepoint_col and timepoint_col in self.metadata.columns:
+            self.metadata[timepoint_col] = pd.to_numeric(
+                self.metadata[timepoint_col],
+                errors='coerce'
+            )
 
         # Convert treatment column to string category if present
         if treatment_col in self.metadata.columns:
@@ -128,9 +139,11 @@ class MetadataManager:
         # Check for missing values in critical columns
         sample_col = self.meta_config['sample_column']
         group_col = self.meta_config['group_column']
-        timepoint_col = self.meta_config['timepoint_column']
+        timepoint_col = self.meta_config.get('timepoint_column')
 
         for col in [sample_col, group_col, timepoint_col]:
+            if col is None or col not in self.metadata.columns:
+                continue
             if self.metadata[col].isna().any():
                 n_missing = self.metadata[col].isna().sum()
                 warnings.warn(f"{n_missing} missing values in {col}")
@@ -145,7 +158,7 @@ class MetadataManager:
         """Print metadata summary."""
         sample_col = self.meta_config['sample_column']
         group_col = self.meta_config['group_column']
-        timepoint_col = self.meta_config['timepoint_column']
+        timepoint_col = self.meta_config.get('timepoint_column')
         treatment_col = self.meta_config.get('treatment_column', 'treatment')
 
         print("\n" + "="*80)
@@ -161,9 +174,10 @@ class MetadataManager:
             for group, count in self.metadata['main_group'].value_counts().items():
                 print(f"  - {group}: {count} samples")
 
-        print(f"\nTimepoints ({timepoint_col}):")
-        timepoints = sorted(self.metadata[timepoint_col].dropna().unique())
-        print(f"  - {timepoints}")
+        if timepoint_col and timepoint_col in self.metadata.columns:
+            print(f"\nTimepoints ({timepoint_col}):")
+            timepoints = sorted(self.metadata[timepoint_col].dropna().unique())
+            print(f"  - {timepoints}")
 
         if treatment_col in self.metadata.columns:
             print(f"\nTreatment ({treatment_col}):")

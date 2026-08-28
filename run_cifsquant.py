@@ -30,8 +30,11 @@ def load_project(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def validate_project(project: dict, path: Path):
-    """Check for common configuration errors before wasting a run."""
+def validate_project(project: dict, path: Path = Path('project.yaml')) -> bool:
+    """Check for common configuration errors before wasting a run.
+
+    Returns True if the config is valid, False otherwise (errors are printed).
+    """
     errors = []
 
     if 'markers' not in project:
@@ -79,9 +82,10 @@ def validate_project(project: dict, path: Path):
         print(f"\n  Validation errors in {path}:")
         for e in errors:
             print(f"    - {e}")
-        sys.exit(1)
+        return False
 
     print(f"  Validated: {path}")
+    return True
 
 
 def generate_markers_csv(project: dict, output_path: Path = Path('markers.csv')):
@@ -180,7 +184,8 @@ Examples:
         print("Mode:           DRY RUN (validate only)")
 
     project = load_project(project_path)
-    validate_project(project, project_path)
+    if not validate_project(project, project_path):
+        sys.exit(1)
     generate_markers_csv(project)
 
     gating_flags = []

@@ -453,7 +453,6 @@ process RUN_CELLPOSE_CYTO_SEEDED {
     def immune_channels = params.immune_channels ?: '2,9'
     def tumor_weight = params.tumor_weight ?: 0.7
     def immune_weight = params.immune_weight ?: 0.3
-    def custom_weights = params.custom_channel_weights ?: ''
 
     """
     set -euo pipefail
@@ -818,10 +817,9 @@ process CYLINTER_QC {
     
     input:
     path combined_csv
-    path full_mask
     path markers_csv
     val sample_name
-    
+
     output:
     path "*_QC_pass.csv", emit: cleaned
     path "qc_report.txt", emit: report
@@ -970,6 +968,7 @@ else:
 // Replace the workflow section starting around line 1000-1036:
 
 workflow {
+    main:
     if (!params.input_image) {
         error "Please provide --input_image parameter"
     }
@@ -994,6 +993,7 @@ workflow {
         
         TILE_LARGE_IMAGE(
             input_image_ch,
+            file(params.markers_csv ?: 'markers.csv'),
             params.sample_name,
             params.tile_size,
             params.overlap,
@@ -1012,8 +1012,8 @@ workflow {
         log.info "Tiles flattened"
         
         if (params.background_subtract) {
-            tiles_corrected = BACKGROUND_SUBTRACT(tiles_flattened).corrected
-            tiles_to_use = tiles_corrected
+            BACKGROUND_SUBTRACT(tiles_flattened)
+            tiles_to_use = BACKGROUND_SUBTRACT.out.corrected
         } else {
             tiles_to_use = tiles_flattened
         }
@@ -1098,9 +1098,8 @@ workflow {
             }
         }
     }
-}
 
-workflow.onComplete {
+    onComplete:
     println ""
     println "=== BATCH CELLPOSE PIPELINE COMPLETED ==="
     println "Execution status: ${ workflow.success ? 'OK' : 'failed' }"
