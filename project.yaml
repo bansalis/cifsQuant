@@ -53,8 +53,12 @@ marker_hierarchy:
 # These keys are passed directly to Nextflow as params.* via -params-file.
 # Infrastructure settings (containers, compute) stay in nextflow.config.
 
-# Input
-input_image: null           # path to your OME-TIFF or multi-cycle image
+# Input — choose ONE of the two modes:
+input_image: null           # (a) STACKED: one multi-channel OME-TIFF per run
+rawdata_dir: null           # (b) PER-CHANNEL: folder with one subfolder per sample,
+                            #     each holding per-channel .ome.tif files matched to
+                            #     the channel names above. If input_image is null and
+                            #     ./rawdata contains sample folders, it is auto-detected.
 markers_csv: markers.csv    # auto-generated from 'markers:' above; or set path manually
 outdir: ./results
 sample_name: sample

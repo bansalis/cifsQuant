@@ -44,3 +44,6 @@ venv/
 .DS_Store
 *.tmp
 Thumbs.db
+
+# Generated per-run channel-matching csv (per-channel rawdata mode)
+markers_channels.csv

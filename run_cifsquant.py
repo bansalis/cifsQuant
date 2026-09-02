@@ -122,7 +122,92 @@ def generate_markers_csv(project: dict, output_path: Path = Path('markers.csv'))
     print(f"  Generated {output_path} ({len(rows)} markers)")
 
 
-def run_segmentation(project_path: Path, dry_run: bool):
+def generate_channel_markers_csv(project: dict, output_path: Path):
+    """markers csv keyed by CHANNEL names, for matching per-channel raw files.
+
+    Quantification columns then carry channel names, which Stage 2 renames to
+    display names via the project's markers map (load_and_combine).
+    """
+    rows = []
+    for cycle, channel_name in enumerate(project.get('markers', {}), start=1):
+        rows.append({'cycle': cycle, 'channel_number': cycle, 'marker_name': channel_name})
+    with open(output_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['cycle', 'channel_number', 'marker_name'])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  Generated {output_path} ({len(rows)} channels)")
+
+
+def discover_rawdata_samples(rawdata_dir) -> list:
+    """Sample folders under rawdata/: one subfolder per sample, each holding
+    per-channel .ome.tif files."""
+    rawdata_dir = Path(rawdata_dir)
+    if not rawdata_dir.is_dir():
+        return []
+    return sorted(p for p in rawdata_dir.iterdir()
+                  if p.is_dir() and not p.name.startswith('.'))
+
+
+def run_segmentation(project: dict, project_path: Path, dry_run: bool):
+    repo = Path(__file__).parent
+
+    # Per-channel mode: rawdata/<sample>/ folders of per-channel .ome.tif files.
+    # Explicit via 'rawdata_dir' in project.yaml, or auto-detected at ./rawdata
+    # when no input_image is set.
+    rawdata_dir = project.get('rawdata_dir')
+    if not rawdata_dir and not project.get('input_image') and discover_rawdata_samples(repo / 'rawdata'):
+        rawdata_dir = repo / 'rawdata'
+
+    if rawdata_dir:
+        samples = discover_rawdata_samples(rawdata_dir)
+        if not samples:
+            print(f"  No sample folders found in {rawdata_dir}")
+            sys.exit(1)
+        print(f"  Per-channel mode: {len(samples)} sample(s) in {rawdata_dir}")
+
+        outdir = Path(project.get('outdir', './results'))
+        channel_csv = Path('markers_channels.csv')
+        if not dry_run:
+            generate_channel_markers_csv(project, channel_csv)
+
+        # The tiler's dapi index refers to the generated csv order (= the
+        # markers: mapping order), so derive it from the DAPI entry directly
+        display_names = [str(n).upper() for n in project.get('markers', {}).values()]
+        if 'DAPI' in display_names:
+            dapi_idx = display_names.index('DAPI')
+        else:
+            dapi_idx = int(project.get('dapi_channel', 0))
+
+        for sample_dir in samples:
+            sample = sample_dir.name
+            tiles_dir = outdir / sample / 'tiles'
+            tile_cmd = [
+                sys.executable, str(repo / 'scripts' / 'tile_from_channels.py'),
+                '--sample_dir', str(sample_dir),
+                '--markers_csv', str(channel_csv),
+                '--output_dir', str(tiles_dir),
+                '--tile_size', str(project.get('tile_size', 4096)),
+                '--overlap', str(project.get('overlap', 512)),
+                '--dapi_channel', str(dapi_idx),
+                '--allow_missing_channels',
+            ]
+            nf_cmd = ['nextflow', 'run', str(repo / 'mcmicro-tiled.nf'),
+                      '-params-file', str(project_path),
+                      '--skip_tiling', 'true', '--tiles_dir', str(tiles_dir),
+                      '--sample_name', sample, '--outdir', str(outdir / sample),
+                      '-resume']
+            if dry_run:
+                print(f"  [dry-run] {' '.join(tile_cmd)}")
+                print(f"  [dry-run] {' '.join(nf_cmd)}")
+                continue
+            if (tiles_dir / 'tile_info.json').exists():
+                print(f"  {sample}: reusing existing tiles in {tiles_dir}")
+            else:
+                subprocess.run(tile_cmd, check=True)
+            subprocess.run(nf_cmd, check=True)
+        return
+
+    # Stacked mode: one multi-channel OME-TIFF per run (input_image)
     cmd = ['nextflow', 'run', 'mcmicro-tiled.nf', '-params-file', str(project_path), '-resume']
     if dry_run:
         print(f"  [dry-run] {' '.join(cmd)}")
@@ -213,7 +298,7 @@ Examples:
         print('='*70)
 
         if stage == 'segmentation':
-            run_segmentation(project_path, args.dry_run)
+            run_segmentation(project, project_path, args.dry_run)
         elif stage == 'gating':
             run_gating(project_path, args.results_dir, args.n_jobs, gating_flags, args.dry_run)
         elif stage == 'spatial':

@@ -42,6 +42,7 @@ params.models_cache = './models_cache'  // Local cache directory for Cellpose mo
 params.nuclei_batch_size = 6    // Process 6 tiles per nuclei batch
 params.cyto_batch_size_tiles = 4  // Process 4 tiles per cyto batch
 params.skip_tiling = false  // Set to true if tiles are pre-generated
+params.tiles_dir = null     // Pre-generated tiles directory (with skip_tiling); replaces the old pseudo input_image anchor
 
 /*
  * Process that creates tiles
@@ -969,18 +970,15 @@ else:
 
 workflow {
     main:
-    if (!params.input_image) {
-        error "Please provide --input_image parameter"
+    if (!params.input_image && !(params.skip_tiling && params.tiles_dir)) {
+        error "Please provide --input_image, or --skip_tiling with --tiles_dir"
     }
     
     log.info "=== MCMICRO BATCH CELLPOSE PIPELINE ==="
-    log.info "Input image: ${params.input_image}"
     
     if (params.skip_tiling) {
-        log.info "SKIP_TILING enabled - using pre-existing tiles from ${file(params.input_image).parent}"
-        
-        // Create channels from existing files
-        def tiles_dir = file(params.input_image).parent
+        def tiles_dir = params.tiles_dir ? file(params.tiles_dir) : file(params.input_image).parent
+        log.info "SKIP_TILING enabled - using pre-existing tiles from ${tiles_dir}"
         tiles_ch = Channel.fromPath("${tiles_dir}/tile_*.tif")
         tile_info_ch = Channel.fromPath("${tiles_dir}/tile_info.json")
         markers_ch = Channel.fromPath("${tiles_dir}/markers_tiled.csv")
