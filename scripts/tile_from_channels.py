@@ -60,8 +60,8 @@ def find_matching_channels(sample_dir, marker_names, allow_missing=False):
         for fpath in all_files:
             fname = fpath.stem
 
-            # Check if round number matches
-            if round_num not in fname:
+            # Check if round number matches (case-insensitive, like the other tokens)
+            if round_num.lower() not in fname.lower():
                 continue
 
             # Check if fluorophore matches (case-insensitive)

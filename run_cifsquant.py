@@ -138,6 +138,44 @@ def generate_channel_markers_csv(project: dict, output_path: Path):
     print(f"  Generated {output_path} ({len(rows)} channels)")
 
 
+_channel_matcher = None
+
+
+def match_channels_report(sample_dir, channel_names) -> list:
+    """Soft-match each channel name against the raw files in one sample folder.
+
+    Uses the tiler's own matcher (round/fluorophore/protein substring matching),
+    so this report shows exactly what a real tiling run would pick up.
+    Returns [{'channel', 'file', 'matched'}] in channel order.
+    """
+    global _channel_matcher
+    if _channel_matcher is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'tile_from_channels',
+            Path(__file__).parent / 'scripts' / 'tile_from_channels.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _channel_matcher = mod.find_matching_channels
+
+    import contextlib, io
+    with contextlib.redirect_stdout(io.StringIO()):
+        files = _channel_matcher(str(sample_dir), list(channel_names), allow_missing=True)
+    return [{'channel': name, 'file': (f.name if f is not None else None),
+             'matched': f is not None}
+            for name, f in zip(channel_names, files)]
+
+
+def print_match_report(sample: str, report: list):
+    matched = sum(r['matched'] for r in report)
+    print(f"  {sample}: {matched}/{len(report)} channels matched")
+    for r in report:
+        if r['matched']:
+            print(f"    ✓ {r['channel']:24s} -> {r['file']}")
+        else:
+            print(f"    ⚠ {r['channel']:24s} -> NO MATCH (will be zero-filled)")
+
+
 def discover_rawdata_samples(rawdata_dir) -> list:
     """Sample folders under rawdata/: one subfolder per sample, each holding
     per-channel .ome.tif files."""
@@ -180,6 +218,10 @@ def run_segmentation(project: dict, project_path: Path, dry_run: bool):
 
         for sample_dir in samples:
             sample = sample_dir.name
+            # Show how each channel name soft-matched a raw file BEFORE running,
+            # so a bad panel/filename mismatch is caught here, not hours later
+            print_match_report(sample, match_channels_report(
+                sample_dir, list(project.get('markers', {}).keys())))
             tiles_dir = outdir / sample / 'tiles'
             tile_cmd = [
                 sys.executable, str(repo / 'scripts' / 'tile_from_channels.py'),

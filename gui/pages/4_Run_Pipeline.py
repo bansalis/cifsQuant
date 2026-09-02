@@ -49,6 +49,43 @@ with col4:
 
 st.divider()
 
+# ── Raw data pre-flight (per-channel mode) ────────────────────────────────────
+from run_cifsquant import discover_rawdata_samples, match_channels_report
+
+_rawdata_dir = config.get('rawdata_dir') or (
+    project_dir / 'rawdata' if not config.get('input_image') else None)
+_samples = discover_rawdata_samples(_rawdata_dir) if _rawdata_dir else []
+
+if _samples:
+    st.subheader('Raw data · per-channel mode')
+    st.caption(
+        f'{len(_samples)} sample folder(s) in `{_rawdata_dir}`. Each channel name from your '
+        'panel is soft-matched against the raw filenames (round / fluorophore / protein '
+        'substrings). Confirm every row below before running Stage 1 — unmatched channels '
+        'are zero-filled, not errors.'
+    )
+    channel_names = list(config.get('markers', {}).keys())
+    if not channel_names:
+        st.warning('No channels defined in the panel — complete Panel Setup first.')
+    for sample_dir in _samples:
+        report = match_channels_report(sample_dir, channel_names)
+        n_ok = sum(r['matched'] for r in report)
+        icon = '✅' if n_ok == len(report) else '⚠️'
+        with st.expander(f'{icon} {sample_dir.name} — {n_ok}/{len(report)} channels matched',
+                         expanded=(n_ok < len(report))):
+            for r in report:
+                if r['matched']:
+                    st.markdown(f'✓ `{r["channel"]}` → `{r["file"]}`')
+                else:
+                    st.markdown(f'⚠ `{r["channel"]}` → **no matching file** (will be zero-filled)')
+            if n_ok < len(report):
+                st.info('Rename the raw files or fix the channel names in Panel Setup '
+                        'so every channel you expect to quantify has a match.')
+    st.divider()
+elif _rawdata_dir and not config.get('input_image'):
+    st.caption(f'No `rawdata/` sample folders found and no `input_image` set — '
+               f'Stage 1 needs one of the two (see README, "Input modes").')
+
 # ── Stage selection ───────────────────────────────────────────────────────────
 # (rendered before validation: the validate button reads selected_stages)
 st.subheader('Select stages to run')

@@ -311,3 +311,253 @@ class TestSpatialViewer:
         result = find_h5ad(tmp_path, 'gated_data.h5ad')
         assert result is not None
         assert result == target
+
+
+# ── Rawdata channel matching (soft marker-name → filename matching) ──────────
+
+class TestChannelMatching:
+
+    def _make_sample(self, tmp_path):
+        sample = tmp_path / 'rawdata' / 'JL216'
+        sample.mkdir(parents=True)
+        for name in ('R1_DAPI.ome.tif', 'R1_Cy3_CD3.ome.tif', 'R2_Cy5_CD8.ome.tif'):
+            (sample / name).touch()
+        return sample
+
+    def test_all_channels_match(self, tmp_path):
+        """Each channel name soft-matches its raw file by fluor/protein substrings."""
+        from run_cifsquant import match_channels_report
+
+        sample = self._make_sample(tmp_path)
+        report = match_channels_report(sample, ['DAPI', 'Cy3_CD3', 'Cy5_CD8'])
+
+        assert [r['matched'] for r in report] == [True, True, True]
+        assert report[1]['file'] == 'R1_Cy3_CD3.ome.tif'
+        assert report[2]['file'] == 'R2_Cy5_CD8.ome.tif'
+
+    def test_missing_channel_reported_not_raised(self, tmp_path):
+        """A channel with no raw file is reported unmatched, never an exception."""
+        from run_cifsquant import match_channels_report
+
+        sample = self._make_sample(tmp_path)
+        report = match_channels_report(sample, ['DAPI', 'Cy3_CD3', 'FITC_B220'])
+
+        assert report[2] == {'channel': 'FITC_B220', 'file': None, 'matched': False}
+        assert report[0]['matched'] and report[1]['matched']
+
+    def test_fluorophore_matching_is_case_insensitive(self, tmp_path):
+        """CY3 vs Cy3 casing differences must not break the match."""
+        from run_cifsquant import match_channels_report
+
+        sample = self._make_sample(tmp_path)
+        report = match_channels_report(sample, ['CY3_CD3'])
+        assert report[0]['matched']
+        assert report[0]['file'] == 'R1_Cy3_CD3.ome.tif'
+
+    def test_report_preserves_channel_order(self, tmp_path):
+        from run_cifsquant import match_channels_report
+
+        sample = self._make_sample(tmp_path)
+        report = match_channels_report(sample, ['Cy5_CD8', 'DAPI'])
+        assert [r['channel'] for r in report] == ['Cy5_CD8', 'DAPI']
+
+    def test_matcher_is_quiet(self, tmp_path, capsys):
+        """The report helper must not leak the tiler's console chatter."""
+        from run_cifsquant import match_channels_report
+
+        sample = self._make_sample(tmp_path)
+        match_channels_report(sample, ['DAPI'])
+        assert capsys.readouterr().out == ''
+
+    def test_dry_run_prints_match_report(self, tmp_path, capsys):
+        """CLI dry-run in rawdata mode shows the per-sample matching table."""
+        from run_cifsquant import run_segmentation
+
+        self._make_sample(tmp_path)
+        project = {
+            'markers': {'DAPI': 'DAPI', 'Cy3_CD3': 'CD3', 'FITC_B220': 'B220'},
+            'rawdata_dir': str(tmp_path / 'rawdata'),
+            'outdir': str(tmp_path / 'results'),
+        }
+        run_segmentation(project, tmp_path / 'project.yaml', dry_run=True)
+
+        out = capsys.readouterr().out
+        assert 'JL216: 2/3 channels matched' in out
+        assert '✓ DAPI' in out and 'R1_DAPI.ome.tif' in out
+        assert 'NO MATCH' in out and 'FITC_B220' in out
+
+
+# ── Full-page renders via Streamlit AppTest ──────────────────────────────────
+
+def _page(name):
+    return os.path.join(GUI_ROOT, 'pages', name)
+
+
+def _make_project_dir(tmp_path, with_rawdata=False, missing_channel=False):
+    """A self-contained project directory the pages can render against."""
+    project = {
+        'markers': {'DAPI': 'DAPI', 'Cy3_CD3': 'CD3', 'Cy5_CD8': 'CD8'},
+        'marker_hierarchy': {'CD8': 'CD3'},
+        'input_image': None,
+        'gating': {
+            'use_shared_gates': True,
+            'normalization_method': 'percentile_99',
+            'gates': {'DAPI': None, 'CD3': None, 'CD8': None},
+            'tile_correction': {'enabled': False, 'markers': []},
+            'liberal_gating': {'enabled': False, 'liberal_markers': []},
+        },
+        'spatial': {
+            'input': {'gated_data': 'manual_gating_output/gated_data.h5ad',
+                      'metadata': 'sample_metadata.csv'},
+            'output': {'base_directory': 'spatial_quantification_results'},
+            'metadata': {'sample_column': 'sample_id', 'group_column': 'group'},
+            'tumor_definition': {'base_phenotype': 'Primary_Structure',
+                                 'required_positive': ['CD3'],
+                                 'structure_detection': {'eps': 500, 'min_samples': 50}},
+            'phenotypes': {
+                'Primary_Structure': {'positive': ['CD3']},
+                'CD8_T_cells': {'base': 'Primary_Structure', 'positive': ['CD8']},
+            },
+            'statistics': {'test': 'mann_whitney'},
+            'visualization': {'enabled': False},
+        },
+    }
+    (tmp_path / 'project.yaml').write_text(yaml.dump(project, sort_keys=False))
+    pd.DataFrame({'sample_id': ['S1'], 'group': ['GroupA']}).to_csv(
+        tmp_path / 'sample_metadata.csv', index=False)
+    if with_rawdata:
+        sample = tmp_path / 'rawdata' / 'JL216'
+        sample.mkdir(parents=True)
+        (sample / 'R1_DAPI.ome.tif').touch()
+        (sample / 'R1_Cy3_CD3.ome.tif').touch()
+        if not missing_channel:
+            (sample / 'R2_Cy5_CD8.ome.tif').touch()
+    return tmp_path
+
+
+def _write_h5ad(tmp_path, filename, n=200, seed=0):
+    """Synthetic checkpoint with layers['aligned'] as the gating pages expect."""
+    rng = np.random.default_rng(seed)
+    markers = ['DAPI', 'CD3', 'CD8']
+    # bimodal CD3 so GMM auto-suggest has two modes to find
+    cd3 = np.concatenate([rng.normal(0.1, 0.03, n // 2),
+                          rng.normal(0.7, 0.08, n - n // 2)]).clip(0, 1)
+    X = np.column_stack([rng.uniform(0, 1, n), cd3,
+                         rng.uniform(0, 1, n)]).astype('float32')
+    obs = pd.DataFrame({
+        'sample_id': ['S1'] * n,
+        'X_centroid': rng.uniform(0, 100, n),
+        'Y_centroid': rng.uniform(0, 100, n),
+    })
+    obs.index = [f'c{i}' for i in range(n)]
+    adata = anndata.AnnData(X=X, obs=obs, var=pd.DataFrame(index=markers))
+    adata.layers['aligned'] = X.copy()
+    out = tmp_path / 'manual_gating_output'
+    out.mkdir(exist_ok=True)
+    adata.write(out / filename)
+
+
+class TestPageRenders:
+    """Every page must render exception-free against a provisioned project dir."""
+
+    def _apptest(self, page, project_dir):
+        from streamlit.testing.v1 import AppTest
+        at = AppTest.from_file(_page(page) if not page.endswith('app.py')
+                               else os.path.join(GUI_ROOT, 'app.py'),
+                               default_timeout=60)
+        at.session_state['project_dir'] = str(project_dir)
+        at.session_state['project_config'] = {}
+        at.session_state['gates'] = {}
+        at.run()
+        return at
+
+    def test_home_renders(self, tmp_path):
+        at = self._apptest('app.py', _make_project_dir(tmp_path))
+        assert not at.exception, at.exception[0].message
+
+    def test_panel_setup_renders(self, tmp_path):
+        at = self._apptest('1_Panel_Setup.py', _make_project_dir(tmp_path))
+        assert not at.exception, at.exception[0].message
+
+    def test_gating_renders_and_autosuggest_moves_slider(self, tmp_path):
+        """Page 2 must survive a direct load AND auto-suggest must move the slider
+        (regression: widget state used to swallow the GMM suggestion)."""
+        project_dir = _make_project_dir(tmp_path)
+        _write_h5ad(project_dir, 'normalized_data.h5ad')
+
+        at = self._apptest('2_Gating.py', project_dir)
+        assert not at.exception, at.exception[0].message
+
+        before = [s for s in at.slider if 'CD3 threshold' in str(s.label)][0].value
+        [b for b in at.button if b.key == 'auto_CD3'][0].click().run()
+        assert not at.exception, at.exception[0].message
+        after = [s for s in at.slider if 'CD3 threshold' in str(s.label)][0].value
+        assert after != before and after > 0
+
+    def test_spatial_config_renders_and_keeps_base_phenotype(self, tmp_path):
+        """Page 3 must not wipe tumor_definition.base_phenotype on render
+        (regression: off-by-one in the dropdown preselect)."""
+        project_dir = _make_project_dir(tmp_path)
+        _write_h5ad(project_dir, 'gated_data.h5ad')
+
+        at = self._apptest('3_Spatial_Config.py', project_dir)
+        assert not at.exception, at.exception[0].message
+        sels = [s for s in at.selectbox if s.label == 'Base phenotype']
+        assert sels and sels[0].value == 'Primary_Structure'
+
+    def test_run_pipeline_renders(self, tmp_path):
+        at = self._apptest('4_Run_Pipeline.py', _make_project_dir(tmp_path))
+        assert not at.exception, at.exception[0].message
+
+    def test_run_pipeline_validate_click(self, tmp_path):
+        """Regression: 'Validate config' used to NameError on first click."""
+        at = self._apptest('4_Run_Pipeline.py', _make_project_dir(tmp_path))
+        [b for b in at.button if 'Validate' in str(b.label)][0].click().run()
+        assert not at.exception, at.exception[0].message
+
+    def test_results_renders(self, tmp_path):
+        at = self._apptest('5_Results.py', _make_project_dir(tmp_path))
+        assert not at.exception, at.exception[0].message
+
+
+class TestRunPipelineRawdataPreflight:
+    """The per-channel matching table on page 4."""
+
+    def _render(self, tmp_path, **kw):
+        from streamlit.testing.v1 import AppTest
+        project_dir = _make_project_dir(tmp_path, with_rawdata=True, **kw)
+        at = AppTest.from_file(_page('4_Run_Pipeline.py'), default_timeout=60)
+        at.session_state['project_dir'] = str(project_dir)
+        at.session_state['project_config'] = {}
+        at.run()
+        return at
+
+    def test_matching_table_shown_when_all_match(self, tmp_path):
+        at = self._render(tmp_path)
+        assert not at.exception, at.exception[0].message
+        md = ' '.join(str(m.value) for m in at.markdown)
+        assert 'R1_Cy3_CD3.ome.tif' in md
+        assert 'no matching file' not in md
+        assert any('per-channel mode' in str(s.value) for s in at.subheader)
+
+    def test_unmatched_channel_flagged(self, tmp_path):
+        at = self._render(tmp_path, missing_channel=True)
+        assert not at.exception, at.exception[0].message
+        md = ' '.join(str(m.value) for m in at.markdown)
+        assert 'no matching file' in md
+        assert 'Cy5_CD8' in md
+
+    def test_no_rawdata_section_in_stacked_mode(self, tmp_path):
+        from streamlit.testing.v1 import AppTest
+        project_dir = _make_project_dir(tmp_path)
+        # stacked mode: input_image set, no rawdata/
+        cfg = yaml.safe_load((project_dir / 'project.yaml').read_text())
+        cfg['input_image'] = 'sample.ome.tif'
+        (project_dir / 'project.yaml').write_text(yaml.dump(cfg))
+
+        at = AppTest.from_file(_page('4_Run_Pipeline.py'), default_timeout=60)
+        at.session_state['project_dir'] = str(project_dir)
+        at.session_state['project_config'] = {}
+        at.run()
+        assert not at.exception, at.exception[0].message
+        assert not any('per-channel mode' in str(s.value) for s in at.subheader)

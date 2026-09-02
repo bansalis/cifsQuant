@@ -55,20 +55,38 @@ Set to `null` to disable hierarchy enforcement for that marker.
 
 ## Stage 1: Segmentation (Nextflow params)
 
-These top-level keys are passed directly to Nextflow via `-params-file project.yaml`. They control Cellpose segmentation behavior.
+These top-level keys are passed directly to Nextflow via `-params-file project.yaml`. They control input mode, tiling, and Cellpose segmentation behavior.
+
+### Input mode — set exactly one
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `dapi_channel` | int | `0` | Zero-indexed position of the DAPI channel in the OME-TIFF |
+| `input_image` | path/null | `null` | **Stacked mode:** one multi-channel OME-TIFF per run |
+| `rawdata_dir` | path/null | `null` | **Per-channel mode:** folder with one subfolder per sample, each holding per-channel `.ome.tif` files. If both keys are null and `./rawdata` contains sample folders, per-channel mode is auto-detected. All samples run in one command, each into `results/<sample>/` |
+
+In per-channel mode, channel names from `markers:` are soft-matched against raw filenames (round / fluorophore / protein substrings); the match is printed per sample before running and shown on the GUI's Run Pipeline page. Unmatched channels are zero-filled. The DAPI channel for tile prescreening is derived from the `markers:` entry whose display name is `DAPI`.
+
+### Tiling and segmentation
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `sample_name` | string | `'sample'` | Sample label (stacked mode; per-channel mode uses the folder name) |
+| `outdir` | path | `./results` | Segmentation output directory |
+| `tile_size` | int | `4096` | Tile edge length in pixels |
+| `overlap` | int | `512` | Tile overlap in pixels |
+| `pyramid_level` | int | `1` | Pyramid level to read from a stacked OME-TIFF (0 = full resolution) |
+| `dapi_channel` | int | `0` | Zero-indexed DAPI channel in a stacked OME-TIFF |
 | `nuc_diameter` | int | `12` | Expected nucleus diameter in pixels (Cellpose nuclear segmentation) |
+| `cyto_model` | string | `'cyto2'` | Cellpose cytoplasm model (`cyto2` recommended for tissue CyCIF) |
 | `cyto_diameter` | int | `24` | Expected cell diameter in pixels (Cellpose cytoplasmic expansion) |
-| `custom_channel_weights` | string | `''` | Comma-separated `index:weight` pairs for weighted cytoplasm channel (e.g. `'0:0.7,1:0.15,4:0.15'`). Empty = uniform |
-| `cellpose_model` | string | `'cyto2'` | Cellpose model name. `'cyto2'` recommended for tissue CyCIF |
-| `use_gpu` | bool | `true` | Enable GPU acceleration. Falls back to CPU if unavailable |
+| `custom_channel_weights` | string | `''` | Comma-separated `index:weight` pairs for the weighted cytoplasm composite (e.g. `'0:0.7,1:0.15,4:0.15'`). Empty = uniform. Indices refer to the panel's channel order |
+| `skip_tiling` / `tiles_dir` | bool / path | `false` / `null` | Advanced: consume pre-generated tiles directly (the orchestrator sets these itself in per-channel mode) |
+
+GPU use is auto-detected (`torch.cuda.is_available()`); there is no config key for it.
 
 **Tuning notes:**
 - `nuc_diameter`: measure a representative nucleus in FIJI/Napari; typical CyCIF values are 10–15 px at 20× magnification
-- `custom_channel_weights`: use when a non-DAPI cytoplasmic marker (e.g. TOM reporter, EpCAM) reliably marks cell boundaries
+- `custom_channel_weights`: use when a non-DAPI cytoplasmic marker (e.g. TOM reporter, EpCAM) reliably marks cell boundaries — never reuse weights across different panels
 - `cyto_diameter`: set to ~2× `nuc_diameter` for most tissue types
 
 ---

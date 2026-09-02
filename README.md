@@ -6,13 +6,15 @@ End-to-end spatial quantification pipeline for cyclic immunofluorescence (cIF) i
 
 ## Pipeline Overview
 
+One config (`project.yaml`), one orchestrator (`run_cifsquant.py`), three stages. A Streamlit GUI (`gui/`) drives the same orchestrator for point-and-click use.
+
 ```
-Raw OME-TIFF images
+Raw images (stacked OME-TIFF, or per-channel files per sample)
        │
        ▼
 ┌─────────────────────────────┐
-│  Stage 1: Segmentation      │  run_pipeline.sh
-│  GPU-accelerated cell       │  Nextflow + Docker
+│  Stage 1: Segmentation      │  run_cifsquant.py --stages segmentation
+│  GPU-accelerated cell       │  Nextflow + Docker (mcmicro-tiled.nf)
 │  detection via Cellpose     │
 │  → per-cell marker counts   │
 └─────────────────────────────┘
@@ -44,7 +46,7 @@ Raw OME-TIFF images
 |---|---|---|
 | conda / mamba | any | Python environment management |
 | Docker | ≥ 20.x | Stage 1 segmentation containers |
-| Nextflow | ≥ 23.10 | Stage 1 pipeline orchestration |
+| Nextflow | ≥ 25.04 (tested on 26.04) | Stage 1 pipeline orchestration (strict-parser syntax) |
 | NVIDIA GPU | any | Recommended for Stage 1 (CPU fallback available) |
 | RAM | ≥ 32 GB | Recommended for large datasets |
 
@@ -86,17 +88,26 @@ Also edit `sample_metadata.csv` with your sample IDs, groups, timepoints, and (o
 
 See `configs/examples/` for complete real-study configurations.
 
-**4. Place your raw images**
+**4. Place your raw images — two input modes**
+
+*(a) Per-channel mode (recommended — no stacking needed).* One folder per sample under `rawdata/`, each holding per-channel `.ome.tif` files:
 ```
 rawdata/
-├── SAMPLE1.ome.tif
-├── SAMPLE2.ome.tif
-└── ...
+├── JL216/
+│   ├── R1_DAPI.ome.tif
+│   ├── R1_Cy3_CD3.ome.tif
+│   └── ...
+└── JL217/
+    └── ...
 ```
+With `input_image: null` in project.yaml, `./rawdata` is auto-detected (or point `rawdata_dir:` elsewhere). Each channel name from `markers:` is soft-matched against the raw filenames by round / fluorophore / protein substrings — the match is printed per sample before anything runs (and shown in the GUI's Run Pipeline page), so confirm it there; unmatched channels are zero-filled, not errors. All samples are processed in one command, each into `results/<sample>/`.
+
+*(b) Stacked mode.* One multi-channel OME-TIFF per run, referenced by `input_image:` in project.yaml.
 
 **5. Run the full pipeline**
 ```bash
-python run_cifsquant.py --project project.yaml
+python run_cifsquant.py --project project.yaml     # CLI
+streamlit run gui/app.py                           # or the GUI (same orchestrator)
 ```
 
 Or run individual stages:
@@ -235,7 +246,7 @@ conda activate cifsquant
 pytest tests/ -v
 ```
 
-Smoke tests validate config logic, gating functions, and spatial analysis module instantiation on synthetic data. No real images required. See `tests/README.md`.
+Smoke tests cover config validation, gating functions, spatial module instantiation, per-channel rawdata mode, and the GUI (rendered headlessly via Streamlit's AppTest). All run on synthetic data — no real images required. See `tests/README.md`.
 
 ---
 

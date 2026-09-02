@@ -14,6 +14,8 @@ conda activate cifsquant
 
 See `README.md` for system requirements.
 
+**Prefer a browser?** Every step below can also be done in the GUI (`streamlit run gui/app.py`): Panel Setup = Steps 2–4, Gating = Step 5, Spatial Config = Steps 6–9, Run Pipeline = Steps 10–11 with a raw-data matching pre-flight.
+
 ---
 
 ## Step 1: Copy an example config
@@ -74,9 +76,25 @@ marker_hierarchy:
 
 ---
 
-## Step 4: Configure segmentation params (Stage 1)
+## Step 4: Point the pipeline at your raw images (Stage 1 input)
 
-Edit the flat top-level keys for Cellpose:
+**Per-channel mode (recommended):** one folder per sample under `rawdata/`, each with per-channel `.ome.tif` files. Leave `input_image: null` — `./rawdata` is auto-detected (or set `rawdata_dir:`).
+
+```
+rawdata/
+└── JL216/
+    ├── R1_DAPI.ome.tif
+    ├── R1_Cy3_CD3.ome.tif
+    └── ...
+```
+
+Channel names from `markers:` are **soft-matched** to filenames by round / fluorophore / protein substrings (`Cy3_CD3` matches `R1_Cy3_CD3.ome.tif`). Always confirm the match before a long run:
+- CLI: `python run_cifsquant.py --dry-run` prints `✓ channel -> file` per sample
+- GUI: the Run Pipeline page shows the same table with warnings for unmatched channels (which are zero-filled, not errors)
+
+**Stacked mode:** a single multi-channel OME-TIFF per run via `input_image:`.
+
+Then edit the flat top-level keys for Cellpose:
 
 ```yaml
 dapi_channel: 0       # which channel index is DAPI (0-indexed)
@@ -104,7 +122,7 @@ gating:
     # ...
 ```
 
-Run the pipeline through Stage 2, review the gate diagnostic plots in `tile_correction_diagnostics/`, then override specific markers where the auto-threshold is wrong:
+Run the pipeline through Stage 2, review the gate diagnostic plots in `manual_gating_output/gating_diagnostics/` (or adjust thresholds live on the GUI's Gating page), then override specific markers where the auto-threshold is wrong:
 
 ```yaml
 gating:
